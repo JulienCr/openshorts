@@ -80,17 +80,28 @@ async def send_clips_ready_email(email: str, job_title: str, clip_count: int,
 
 
 async def send_out_of_minutes_email(email: str, upgrade_url: str):
-    """Free user hit their monthly quota — the natural upgrade moment."""
+    """Free user hit their monthly quota — the natural upgrade moment.
+
+    Mirrors the in-app upgrade modal: lead with what they lose by staying free
+    (watermark, clips deleted after 7 days) and one concrete plan, not a
+    generic pricing link.
+    """
     html = f"""
       <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
-        <h2>You've used your free minutes 🚀</h2>
-        <p>You've hit this month's free allowance. That usually means the clips
-           are working for you — Starter gives you <strong>100 minutes a month</strong>,
-           no watermark, and a durable clip library.</p>
+        <h2>Your video is still waiting 🎬</h2>
+        <p>You've used this month's 20 free minutes — which usually means the
+           clips are working for you. Here's what <strong>Starter ($12/mo)</strong>
+           changes today:</p>
+        <ul style="line-height:1.9;padding-left:20px">
+          <li><strong>100 minutes</strong> every month (5&times; your free quota)</li>
+          <li><strong>No watermark</strong> on your clips</li>
+          <li>Clips stored <strong>forever</strong> &mdash; free clips are deleted after 7 days</li>
+        </ul>
         <p><a href="{upgrade_url}" style="display:inline-block;background:#111;color:#fff;
-           padding:12px 20px;border-radius:8px;text-decoration:none">See plans</a></p>
-        <p style="color:#666;font-size:13px">Your free minutes reset on the 1st of
-           every month.</p>
+           padding:12px 20px;border-radius:8px;text-decoration:none">Upgrade and finish your video</a></p>
+        <p style="color:#666;font-size:13px">Cancel anytime. Your free minutes
+           reset on the 1st of every month.</p>
       </div>
     """
-    await send_email(email, "You've used your free OpenShorts minutes", html)
+    print(f"✉️  Out-of-minutes upsell email → {email}")
+    await send_email(email, "Your video is waiting — you're out of free minutes", html)

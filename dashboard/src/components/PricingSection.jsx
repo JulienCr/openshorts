@@ -110,7 +110,7 @@ export default function PricingSection({ onRequireLogin }) {
               className={`relative card p-6 flex flex-col ${highlight ? 'border-brass' : ''}`}
             >
               {highlight && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 badge-brass">
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 badge-float">
                   Most popular
                 </span>
               )}

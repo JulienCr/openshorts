@@ -116,7 +116,7 @@
   }
   .btn-danger:hover { background: color-mix(in oklab, var(--color-danger) 12%, transparent); }
 
-  .badge-ok, .badge-warn, .badge-danger, .badge-brass {
+  .badge-ok, .badge-warn, .badge-danger, .badge-brass, .badge-float {
     font-family: var(--font-mono);
     font-size: 10.5px;
     letter-spacing: var(--tracking-micro);
@@ -131,6 +131,12 @@
   .badge-warn   { color: var(--color-warn);   background: color-mix(in oklab, var(--color-warn) 12%, transparent); }
   .badge-danger { color: var(--color-danger); background: color-mix(in oklab, var(--color-danger) 12%, transparent); }
   .badge-brass  { color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 12%, transparent); }
+  /* Floating badge overlapping a card border ("most popular"): needs an OPAQUE
+     base or the border line shows straight through the pill. */
+  .badge-float  {
+    color: var(--color-accent);
+    background: color-mix(in oklab, var(--color-accent) 12%, var(--color-paper));
+  }
 
   /* narrow phones: tighter pill padding so CTA labels stay on one line */
   @media (max-width: 379px) {

@@ -1,54 +1,153 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Zap } from 'lucide-react';
+import { Loader2, Check, Zap, Clock } from 'lucide-react';
 import { apiJson } from '../lib/api';
+import { track } from '../lib/analytics';
 import Modal from './ui/Modal';
-import StarBanner from './StarBanner';
 
-// Opens when a job hits a 402 (quota exceeded). Lets the user buy more minutes.
+// Opens when a job hits a 402 (quota exceeded). This is the highest-intent
+// moment in the product — the user WANTS to clip a video and can't — so it
+// sells the subscription first (recurring value: minutes, no watermark,
+// permanent clips) and keeps one-time top-ups as a secondary escape hatch.
+//
+// Conversion techniques used (all honest — no fake scarcity or countdowns):
+// - Goal-gradient: copy centers on finishing THIS video, not abstract quota.
+// - Compromise effect: all three tiers shown, creator highlighted in the
+//   middle — starter floors the price, pro anchors it, creator reads as the
+//   sensible pick (and matches the pricing page's "most popular").
+// - Loss framing: what free actually costs them (watermark, clips deleted
+//   after 7 days) — both real product facts.
+// - Risk reversal: "cancel anytime" on the CTA.
+const PLAN_BLURBS = {
+  starter: 'for getting started',
+  creator: 'for daily posting',
+  pro: 'for power users',
+};
+
 export default function TopUpModal({ onClose, required, remaining }) {
+  const [plans, setPlans] = useState([]);
   const [topups, setTopups] = useState([]);
-  const [busy, setBusy] = useState(false);
+  const [showTopups, setShowTopups] = useState(false);
+  const [busyPrice, setBusyPrice] = useState(null);
 
   useEffect(() => {
-    apiJson('/api/billing/plans').then((d) => setTopups(d.topups || [])).catch(() => {});
+    track('QuotaWallSeen', { props: { required: required ?? null, remaining: remaining ?? null } });
+    apiJson('/api/billing/plans')
+      .then((d) => {
+        const monthly = (d.plans || []).filter((p) => p.interval === 'month');
+        setPlans(['starter', 'creator', 'pro']
+          .map((name) => monthly.find((p) => p.plan === name))
+          .filter(Boolean));
+        setTopups(d.topups || []);
+      })
+      .catch(() => {});
   }, []);
 
-  const buy = async (price_id) => {
-    setBusy(true);
+  const buy = async (entry, kind) => {
+    setBusyPrice(entry.price_id);
+    track('QuotaWallCheckout', { props: { kind, plan: entry.plan || null, minutes: entry.minutes } });
     try {
       const { url } = await apiJson('/api/billing/checkout', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ price_id }),
+        body: JSON.stringify({ price_id: entry.price_id }),
       });
       window.location.href = url;
-    } catch (e) { setBusy(false); alert('Could not start checkout.'); }
+    } catch (e) { setBusyPrice(null); alert('Could not start checkout.'); }
   };
 
-  const fmt = (a, c) => new Intl.NumberFormat('en-US', { style: 'currency', currency: (c || 'usd').toUpperCase(), maximumFractionDigits: 0 }).format((a || 0) / 100);
+  const fmt = (a, c) => new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: (c || 'usd').toUpperCase(), maximumFractionDigits: 0,
+  }).format((a || 0) / 100);
+
+  const blockedByLength = typeof required === 'number' && typeof remaining === 'number';
 
   return (
-    <Modal isOpen onClose={onClose} eyebrow="QUOTA" title="You're out of minutes" size="md">
-      <div className="flex items-start gap-3 mb-5">
-        <div className="p-2 bg-paper3 rounded-input text-warn shrink-0"><Zap size={18} /></div>
-        <p className="text-muted text-sm pt-1">
-          {typeof required === 'number'
-            ? <>This video needs <b className="text-ink font-medium">{required} min</b> but you have <b className="text-ink font-medium">{Math.round((remaining || 0) * 10) / 10} min</b> left.</>
-            : 'Add more minutes to keep generating.'}
-        </p>
+    <Modal isOpen onClose={onClose} eyebrow="UPGRADE" title="Your video is ready to clip" size="xl">
+      {/* Goal-gradient framing: they're one step from the thing they came for. */}
+      <p className="text-muted text-sm mb-5">
+        {blockedByLength
+          ? <>This video needs <b className="text-ink font-medium">{required} min</b> and you have{' '}
+              <b className="text-ink font-medium">{Math.max(0, Math.round((remaining || 0) * 10) / 10)} min</b> left
+              this month. Upgrade and it starts processing right away.</>
+          : <>You've used your free minutes for this month. Upgrade and keep clipping right away.</>}
+      </p>
+
+      <div className="grid sm:grid-cols-3 gap-3">
+        {plans.map((entry) => {
+          const highlight = entry.plan === 'creator';
+          return (
+            <div key={entry.price_id}
+                 className={`relative card p-5 flex flex-col ${highlight ? 'border-brass' : ''}`}>
+              {highlight && (
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 badge-float">
+                  Most popular
+                </span>
+              )}
+              <h3 className="font-display lowercase text-lg text-ink">{entry.plan}</h3>
+              <p className="text-muted text-xs mb-3 lowercase">{PLAN_BLURBS[entry.plan] || ''}</p>
+              <div className="mb-3 flex items-baseline gap-1.5">
+                <span className="font-display text-3xl text-ink tabular-nums">{fmt(entry.amount, entry.currency)}</span>
+                <span className="readout">/mo</span>
+              </div>
+              <ul className="space-y-1.5 text-sm text-ink2 mb-4 flex-1">
+                <li className="flex items-start gap-2">
+                  <Check size={15} className="text-ok shrink-0 mt-0.5" />
+                  <span><b>{entry.minutes} min</b> every month ({Math.round(entry.minutes / 20)}× your free quota)</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Check size={15} className="text-ok shrink-0 mt-0.5" />
+                  <span><b>No watermark</b> on your clips</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Check size={15} className="text-ok shrink-0 mt-0.5" />
+                  <span>Clips stored <b>forever</b> — free clips delete after 7 days</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Zap size={15} className="text-brass shrink-0 mt-0.5" />
+                  <span>Skips the free queue</span>
+                </li>
+              </ul>
+              <button onClick={() => buy(entry, 'subscription')} disabled={busyPrice !== null}
+                      className={`w-full ${highlight ? 'btn-primary' : 'btn-ghost'}`}>
+                {busyPrice === entry.price_id
+                  ? <Loader2 size={18} className="animate-spin" />
+                  : `Get ${entry.plan}`}
+              </button>
+              <p className="text-center text-xs text-muted mt-2 lowercase">cancel anytime.</p>
+            </div>
+          );
+        })}
+        {plans.length === 0 && (
+          <div className="sm:col-span-3 flex justify-center py-8">
+            <Loader2 className="animate-spin text-brass" />
+          </div>
+        )}
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        {topups.map((t) => (
-          <button key={t.price_id} onClick={() => buy(t.price_id)} disabled={busy}
-            className="border border-rule hover:border-brass rounded-card p-4 text-left transition-colors disabled:opacity-50">
-            <div className="text-ink font-medium">+{t.minutes} min</div>
-            <div className="readout mt-1">{fmt(t.amount, t.currency)}</div>
+
+      {/* Secondary escape hatch: one-time packs, deliberately de-emphasized. */}
+      <div className="mt-4 text-center">
+        {!showTopups ? (
+          <button onClick={() => setShowTopups(true)}
+                  className="text-xs text-muted underline underline-offset-2 lowercase hover:text-ink2">
+            just need a few extra minutes? one-time packs
           </button>
-        ))}
-        {topups.length === 0 && <div className="col-span-2 flex justify-center py-4"><Loader2 className="animate-spin text-brass" /></div>}
-      </div>
-      <p className="text-muted text-xs mt-4 text-center lowercase">Or upgrade your plan for more monthly minutes.</p>
-      <div className="mt-4">
-        <StarBanner message="Not ready to buy?" />
+        ) : (
+          <div className="grid grid-cols-2 gap-3 mt-2">
+            {topups.map((t) => (
+              <button key={t.price_id} onClick={() => buy(t, 'topup')} disabled={busyPrice !== null}
+                      className="border border-rule hover:border-brass rounded-card p-3 text-left transition-colors disabled:opacity-50">
+                <div className="text-ink text-sm font-medium flex items-center gap-1.5">
+                  <Clock size={14} className="text-muted" />+{t.minutes} min
+                </div>
+                <div className="readout mt-0.5">{fmt(t.amount, t.currency)} · one-time</div>
+              </button>
+            ))}
+            {topups.length === 0 && (
+              <div className="col-span-2 flex justify-center py-3">
+                <Loader2 className="animate-spin text-brass" size={18} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );
