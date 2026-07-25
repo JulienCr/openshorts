@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from .config import settings, PLAN_MINUTES, TRIAL_DAYS, SUBSCRIPTION_LOOKUP_KEYS, TOPUP_LOOKUP_KEYS
-from . import database
+from . import config, database
 from .models import User, Subscription, CreditTopup, StripeEvent
 from .auth import get_current_user_required
 
@@ -102,21 +102,24 @@ async def ensure_stripe_customer(user_id, email) -> str:
             return cust.id
 
 
-async def _active_sub_exists(user_id) -> bool:
+async def _blocking_sub_status(user_id):
+    """Return the status of a subscription that must block a new checkout, else None."""
     async with database.session() as s:
         sub = (await s.execute(
             select(Subscription).where(Subscription.user_id == user_id)
         )).scalar_one_or_none()
-    # Block a second checkout for ANY non-terminal subscription, not just
-    # active/trialing. A first charge that fails leaves the sub in past_due /
-    # unpaid / incomplete; those must still block, otherwise the user can spawn a
-    # second subscription while the first one keeps dunning (real case: annual
-    # trial -> end-trial -> card declined -> past_due, then a fresh monthly sub).
+    # Block a second checkout while a subscription is live or actively dunning:
+    # past_due / unpaid / paused all have Stripe still retrying a charge, so a
+    # fresh subscription would double-bill (real case: annual trial -> end-trial
+    # -> card declined -> past_due, then a fresh monthly sub).
+    #
+    # 'incomplete' is deliberately NOT here. It means a checkout was started and
+    # the payment never completed (3DS abandoned, card declined at confirm) —
+    # nothing is being collected, and Stripe expires the row within 24h. Blocking
+    # it only stops the retry, exactly when the user is most willing to pay.
     # Terminal states (canceled, incomplete_expired) do NOT block. Free-plan
     # users have no Subscription row at all, so their upgrade checkout passes.
-    return bool(sub and sub.status in (
-        "active", "trialing", "past_due", "unpaid", "incomplete", "paused",
-    ))
+    return sub.status if (sub and sub.status in config.CHECKOUT_BLOCKING_STATES) else None
 
 
 # --------------------------------------------------------------------------- #
@@ -141,9 +144,18 @@ async def create_checkout(body: CheckoutRequest, request: Request):
         raise HTTPException(status_code=400, detail="Unknown price")
 
     mode = "subscription" if entry["kind"] == "subscription" else "payment"
-    if mode == "subscription" and await _active_sub_exists(user.id):
-        raise HTTPException(status_code=409,
-                            detail="You already have an active plan. Manage it from your account.")
+    if mode == "subscription":
+        blocked = await _blocking_sub_status(user.id)
+        if blocked in ("past_due", "unpaid"):
+            # Their card failed. Telling them "you already have a plan" is both
+            # false (they get no minutes) and a dead end — point at the portal.
+            raise HTTPException(status_code=409, detail=(
+                "Your last payment didn't go through, so we can't start a new plan "
+                "yet. Update your card under Manage billing and it resumes right away."))
+        if blocked:
+            raise HTTPException(
+                status_code=409,
+                detail="You already have an active plan. Manage it from your account.")
 
     customer_id = await ensure_stripe_customer(user.id, user.email)
     fe = settings.frontend_url

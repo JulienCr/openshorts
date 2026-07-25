@@ -6,6 +6,10 @@ import { track } from '../lib/analytics';
 
 const fmt1 = (n) => Math.round((n || 0) * 10) / 10;
 
+// Mirrors cloud/config.BILLING_ATTENTION_STATES: states where the customer has
+// to do something (fix a card, finish a payment) before minutes come back.
+const PAYMENT_ISSUE_STATES = ['past_due', 'unpaid', 'incomplete', 'paused'];
+
 // Account/billing page: plan, usage meter, top-ups, manage billing, logout.
 export default function AccountPage() {
   const { me, refreshMe, logout, plan, minutes } = useAuth();
@@ -84,7 +88,7 @@ export default function AccountPage() {
         body: JSON.stringify({ price_id }),
       });
       window.location.href = url;
-    } catch (e) { setBusy(false); alert('Could not start checkout.'); }
+    } catch (e) { setBusy(false); alert(e?.detail || 'Could not start checkout.'); }
   }, []);
 
   if (!me) return <div className="flex justify-center py-16"><Loader2 className="animate-spin text-brass" /></div>;
@@ -117,23 +121,45 @@ export default function AccountPage() {
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-ink font-medium capitalize">{plan ? `${plan} plan` : 'No active plan'}</span>
-            {me.status && me.status !== 'active' && (
+            {/* Payment-issue states get the explanatory banner below instead —
+                showing raw Stripe jargon ("past_due") twice explains nothing. */}
+            {me.status && me.status !== 'active'
+              && !PAYMENT_ISSUE_STATES.includes(me.status) && (
               <span className="badge-warn">{me.status}</span>
             )}
             {me.cancel_at_period_end && (
               <span className="badge-warn">cancels at period end</span>
             )}
           </div>
-          {plan === 'free' ? (
-            <button onClick={() => { window.location.hash = '#/pricing'; }} className="btn-primary px-4 py-2 shrink-0 text-xs">
-              Upgrade
-            </button>
-          ) : (
+          {/* Any Stripe relationship — live OR broken (past_due, unpaid) — must
+              keep the portal reachable. A declined card demotes `plan` to free,
+              so keying this off the plan alone hid the one button that fixes it. */}
+          {me.has_billing_account ? (
             <button onClick={openPortal} disabled={busy} className="btn-ghost px-4 py-2 shrink-0">
               <CreditCard size={16} /> Manage billing
             </button>
+          ) : (
+            <button onClick={() => { window.location.hash = '#/pricing'; }} className="btn-primary px-4 py-2 shrink-0 text-xs">
+              Upgrade
+            </button>
           )}
         </div>
+
+        {/* A bare "past_due" chip explains nothing. Say what happened and what
+            fixes it — this is the whole reason the account reads as free. */}
+        {PAYMENT_ISSUE_STATES.includes(me.status) && (
+          <div className="mb-4 rounded-card border border-warn/40 bg-warn/5 p-3 text-sm text-ink2">
+            <b className="text-ink">We couldn't charge your card.</b>{' '}
+            {me.status === 'incomplete'
+              ? 'Your payment was never completed, so the plan never started.'
+              : 'Your plan is paused and you\'re on free minutes until it goes through.'}{' '}
+            <button onClick={openPortal} disabled={busy}
+                    className="underline underline-offset-2 hover:text-ink">
+              Update your card
+            </button>{' '}
+            and it resumes right away.
+          </div>
+        )}
 
         <div className="space-y-2">
           <div className="flex justify-between text-sm">

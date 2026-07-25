@@ -47,6 +47,20 @@ FREE_CLIP_RETENTION_DAYS = 7
 # cancel (grandfathering).
 TRIAL_DAYS = 0
 
+# Subscription states that grant no minutes but still need the customer to act
+# (fix a card, finish a payment). They must stay VISIBLE in /api/me and keep the
+# billing-portal route reachable — otherwise the account silently reads as free
+# and the user has no way out. Terminal states (canceled, incomplete_expired)
+# are deliberately absent: nothing to fix, so nothing to nag about.
+BILLING_ATTENTION_STATES = ("past_due", "unpaid", "incomplete", "paused")
+
+# Subscription states that must block a NEW subscription checkout. Narrower than
+# BILLING_ATTENTION_STATES on purpose: Stripe is still trying to collect on
+# past_due/unpaid/paused, so a second subscription would double-bill. It is NOT
+# collecting on 'incomplete' (payment abandoned at 3DS/confirm, expired by Stripe
+# within 24h), so blocking that would only stop the retry.
+CHECKOUT_BLOCKING_STATES = ("active", "trialing", "past_due", "unpaid", "paused")
+
 # Minute cap DURING the trial (across all plans). Kept for grandfathered
 # 'trialing' subscriptions; removable once no subscription has status
 # 'trialing'.

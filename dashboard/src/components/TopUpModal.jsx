@@ -58,7 +58,7 @@ export default function TopUpModal({ onClose, required, remaining, context = 'wa
         body: JSON.stringify({ price_id: entry.price_id }),
       });
       window.location.href = url;
-    } catch (e) { setBusyPrice(null); alert('Could not start checkout.'); }
+    } catch (e) { setBusyPrice(null); alert(e?.detail || 'Could not start checkout.'); }
   };
 
   const fmt = (a, c) => new Intl.NumberFormat('en-US', {

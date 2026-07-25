@@ -111,13 +111,28 @@ def probe_url_minutes(url: str) -> float:
 # --------------------------------------------------------------------------- #
 # Balance computation (assumes caller holds the user lock when mutating)
 # --------------------------------------------------------------------------- #
-async def _active_subscription(session, user_id):
-    row = (await session.execute(
+async def _subscription_row(session, user_id):
+    """The user's subscription row whatever its status (None if never subscribed).
+
+    Distinct from ``_active_subscription``: a row in a state that grants no
+    minutes (past_due, incomplete, ...) still has to be visible to the UI, or a
+    customer whose card failed silently reads as a plain free account with no
+    way to fix it. Entitlement decisions must use ``_active_subscription``.
+    """
+    return (await session.execute(
         select(Subscription).where(Subscription.user_id == user_id)
     )).scalar_one_or_none()
-    if row and row.status in ("active", "trialing") and row.current_period_end > _now():
-        return row
-    return None
+
+
+def _entitles(row) -> bool:
+    """True if this subscription row grants plan minutes right now."""
+    return bool(row and row.status in ("active", "trialing")
+                and row.current_period_end > _now())
+
+
+async def _active_subscription(session, user_id):
+    row = await _subscription_row(session, user_id)
+    return row if _entitles(row) else None
 
 
 def free_plan_eligible(user) -> bool:
@@ -184,7 +199,8 @@ async def _balance(session, user_id, user=None):
     ``user`` may be a pre-fetched ``User`` row to save a lookup; it is only
     consulted on the subscription-less path (free-plan eligibility).
     """
-    sub = await _active_subscription(session, user_id)
+    sub_row = await _subscription_row(session, user_id)
+    sub = sub_row if _entitles(sub_row) else None
     if sub:
         plan_name = sub.plan
         plan_allowance = _D(sub.minutes_per_period)
@@ -222,6 +238,7 @@ async def _balance(session, user_id, user=None):
         "remaining": float(plan_remaining + topup_remaining),
         "period_end": period_end,
         "_sub": sub,
+        "_sub_row": sub_row,
         "_plan_remaining_d": plan_remaining,
         "_topups": topups,
     }

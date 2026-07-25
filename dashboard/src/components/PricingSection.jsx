@@ -52,7 +52,7 @@ export default function PricingSection({ onRequireLogin }) {
       window.location.href = url;
     } catch (e) {
       setBusyPrice(null);
-      alert('Could not start checkout. Please try again.');
+      alert(e?.detail || 'Could not start checkout. Please try again.');
     }
   };
 

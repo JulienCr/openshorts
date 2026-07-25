@@ -18,7 +18,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select, func, and_
 
 from .config import settings
-from . import database, metering, email_policy
+from . import config, database, metering, email_policy
 from .models import User, MagicLinkToken, UploadPostProfile
 
 router = APIRouter()
@@ -205,14 +205,26 @@ async def get_me(request: Request):
     async with database.session() as session:
         bal = await metering._balance(session, user.id)
         sub = bal["_sub"]
+    # Report the entitling subscription when there is one; otherwise fall back to
+    # a row that needs the customer's attention (card declined, payment never
+    # finished). Without this a past_due customer sees a plain free account and
+    # never learns their card failed. `plan` stays as computed — the entitlement
+    # really is free — so the UI shows "free plan" plus the warning badge.
+    attention = bal["_sub_row"]
+    if attention is not None and attention.status not in config.BILLING_ATTENTION_STATES:
+        attention = None
+    shown = sub or attention
     return {
         "user": {"id": str(user.id), "email": user.email},
         "entitled": user.entitled,
         "plan": bal["plan"],
-        "status": sub.status if sub else None,
-        "interval": sub.interval if sub else None,
+        "status": shown.status if shown else None,
+        "interval": shown.interval if shown else None,
         "period_end": bal["period_end"].isoformat() if bal["period_end"] else None,
-        "cancel_at_period_end": sub.cancel_at_period_end if sub else False,
+        "cancel_at_period_end": shown.cancel_at_period_end if shown else False,
+        # Drives the "Manage billing" route in the UI: any Stripe relationship,
+        # live or broken, must keep the portal reachable.
+        "has_billing_account": bool(sub or attention),
         "minutes": {
             "plan_allowance": bal["plan_allowance"],
             "plan_used": bal["plan_used"],

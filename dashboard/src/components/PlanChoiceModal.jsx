@@ -32,7 +32,7 @@ export default function PlanChoiceModal({ onClose }) {
         body: JSON.stringify({ price_id }),
       });
       window.location.href = url;
-    } catch (e) { setBusy(null); alert('Could not start checkout. Please try again.'); }
+    } catch (e) { setBusy(null); alert(e?.detail || 'Could not start checkout. Please try again.'); }
   };
 
   const startFree = () => {
