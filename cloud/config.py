@@ -82,6 +82,21 @@ MANAGED_ANALYSIS_MINUTES = 1
 # Remotion render proxy do real server compute per call. Meter a small fixed
 # cost so an entitled user can't loop them for free off-quota.
 SUBTITLE_MINUTES = 2
+
+
+def subtitle_minutes_for(filename: str) -> int:
+    """Minutes charged for burning captions onto ``filename``.
+
+    Zero for the normal path: the SRT comes from the transcript already stored
+    in metadata.json and the burn is one short FFmpeg pass, so there is nothing
+    to recover. Captions are also table stakes for short-form — charging 2 min
+    (10% of the free monthly quota) per clip priced them out of the product and
+    only 9% of delivered clips ever had them (prod audit, 25-jul-2026).
+
+    Dubbed clips are the exception: subtitling them re-runs Whisper over the
+    translated audio, which is real compute, so they keep the charge.
+    """
+    return SUBTITLE_MINUTES if str(filename).startswith("translated_") else 0
 HOOK_MINUTES = 1
 RENDER_MINUTES = 3
 

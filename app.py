@@ -234,6 +234,11 @@ async def reserve_managed_action(request, minutes, job_id, job_type):
     """
     if not BILLING_ENABLED:
         return None
+    if minutes <= 0:
+        # Free action (e.g. burning captions). Skip the ledger entirely rather
+        # than writing a 0-minute row on every call — the endpoint's own
+        # entitlement gate is what bounds it.
+        return None
     user = await _user_from_request(request)
     if not managed_keys.has_active_entitlement(user):
         return None  # BYOK header path (self-host) — not metered
@@ -1980,17 +1985,27 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
     output_filename = f"subtitled_{generation_id}_{filename}"
     output_path = os.path.join(output_dir, output_filename)
 
-    # Meter the FFmpeg re-encode (and any dubbed-video re-transcription) so it
-    # can't be looped for free off-quota. No-op for BYOK / self-host.
-    subtitle_minutes = _cloud_config.SUBTITLE_MINUTES if BILLING_ENABLED else 0
+    # Burning captions is FREE. They're table stakes for short-form — a clip
+    # without them barely works on any platform — and the cost is nil: the SRT
+    # comes from the transcript already sitting in metadata.json, and the burn is
+    # a single short FFmpeg pass (4s on CPU for a 12s clip, 1-2s on the GPU).
+    # Charging 2 minutes for that meant 10% of the whole free monthly quota per
+    # captioned clip, roughly what generating the clip cost in the first place —
+    # so people skipped it: only 9% of delivered clips had captions (prod audit,
+    # 25-jul-2026). The endpoint is already gated by require_managed_entitlement
+    # above, so this is not an open door.
+    #
+    # The dubbed path is the exception and keeps the charge: it runs a fresh
+    # Whisper transcription over the translated audio, which is real work.
+    is_dubbed = filename.startswith("translated_")
+    subtitle_minutes = (_cloud_config.subtitle_minutes_for(filename)
+                        if BILLING_ENABLED else 0)
     reservation_id = await reserve_managed_action(
         request, subtitle_minutes, req.job_id, "subtitle")
 
     try:
-        # 1. Generate SRT
-        # Check if this is a dubbed video - if so, transcribe it fresh
-        is_dubbed = filename.startswith("translated_")
-
+        # 1. Generate SRT — from the existing transcript, or a fresh
+        # transcription when the audio was dubbed (see the metering note above).
         if is_dubbed:
             print(f"🎙️ Dubbed video detected, transcribing audio for subtitles...")
             def run_transcribe_srt():
