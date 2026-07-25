@@ -2097,6 +2097,70 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
         "new_video_url": f"/videos/{req.job_id}/{output_filename}"
     }
 
+class RemoveSubtitlesRequest(BaseModel):
+    job_id: str
+    clip_index: int
+    input_filename: Optional[str] = None
+
+
+@app.post("/api/subtitle/remove")
+async def remove_subtitles(req: RemoveSubtitlesRequest, request: Request):
+    """Point a clip back at its un-captioned original.
+
+    Clips ship captioned by default now, so there has to be a way out — without
+    this, a user who doesn't want captions is stuck with them. No re-encode and
+    no quota: the pipeline always keeps the clean file next to the derived
+    ``subtitled_<ts>_`` one, so removing is just choosing the other file.
+    """
+    await require_managed_entitlement(request)
+    await _ensure_job_files(req.job_id, request)
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = jobs[req.job_id]
+    await _assert_job_owner(request, job)
+
+    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+    with open(json_files[0], 'r') as f:
+        data = json.load(f)
+    clips = data.get('shorts', [])
+    if req.clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    filename = os.path.basename(
+        req.input_filename
+        or (clips[req.clip_index].get('video_url') or '').split('/')[-1]
+        or f"{os.path.basename(json_files[0]).replace('_metadata.json', '')}"
+           f"_clip_{req.clip_index + 1}.mp4")
+
+    # Same walk-back the burn path uses, so this undoes any number of restyles.
+    while True:
+        m = re.match(r'^subtitled_\d+_(.+)$', filename)
+        if not m or not os.path.exists(os.path.join(output_dir, m.group(1))):
+            break
+        filename = m.group(1)
+
+    if not os.path.exists(os.path.join(output_dir, filename)):
+        raise HTTPException(status_code=404,
+                            detail="The original clip is no longer available.")
+
+    new_url = f"/videos/{req.job_id}/{filename}"
+    if req.clip_index < len(job.get('result', {}).get('clips', [])):
+        job['result']['clips'][req.clip_index]['video_url'] = new_url
+    try:
+        clips[req.clip_index]['video_url'] = new_url
+        data['shorts'] = clips
+        with open(json_files[0], 'w') as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"⚠️ Failed to update metadata.json: {e}")
+
+    _archive_clip_edit_bg(req.job_id, req.clip_index, filename)
+    return {"success": True, "new_video_url": new_url}
+
+
 class HookRequest(BaseModel):
     job_id: str
     clip_index: int

@@ -65,7 +65,7 @@ const swatchClass = (selected) =>
         ? 'ring-2 ring-[color:var(--color-accent)] ring-offset-2 ring-offset-[color:var(--color-paper-2)]'
         : 'ring-1 ring-[color:var(--color-rule-2)] hover:ring-[color:var(--color-accent)]'}`;
 
-export default function SubtitleModal({ isOpen, onClose, onGenerate, onApplyAll, isProcessing, videoUrl, jobId, clipIndex, existingHook, bulkCount = 0, bulkProgress }) {
+export default function SubtitleModal({ isOpen, onClose, onGenerate, onApplyAll, onRemove, isProcessing, videoUrl, jobId, clipIndex, existingHook, bulkCount = 0, bulkProgress }) {
     const [position, setPosition] = useState('bottom');
     const [fontSize] = useState(24);
     const [fontName, setFontName] = useState('Verdana');
@@ -476,6 +476,18 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, onApplyAll,
                                             {bulkRunning
                                                 ? <><Loader2 size={16} className="animate-spin" />applying to all… {bulkProgress.current}/{bulkProgress.total}</>
                                                 : `apply this style to all ${bulkCount} clips`}
+                                        </button>
+                                    )}
+                                    {/* Clips ship captioned by default, so the way
+                                        out has to be here — otherwise a user who
+                                        doesn't want captions is stuck with them. */}
+                                    {onRemove && (
+                                        <button
+                                            onClick={onRemove}
+                                            disabled={isProcessing}
+                                            className="text-xs text-muted underline underline-offset-2 lowercase hover:text-ink2 disabled:opacity-50"
+                                        >
+                                            remove captions from this clip
                                         </button>
                                     )}
                                 </>

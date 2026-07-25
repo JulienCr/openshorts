@@ -277,6 +277,49 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
         }
     };
 
+    // Clips are captioned by default, so "no captions" has to be reachable.
+    // Nothing is re-encoded: the server still holds the clean file next to the
+    // captioned one and just points this clip back at it.
+    const handleRemoveSubtitles = async () => {
+        setIsSubtitling(true);
+        setEditError(null);
+        try {
+            const res = await apiFetch('/api/subtitle/remove', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    job_id: jobId, clip_index: index, input_filename: serverVideoFile,
+                }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+            if (data.new_video_url) {
+                const serverUrl = getApiUrl(data.new_video_url);
+                setServerVideoFile(data.new_video_url.split('/').pop());
+                const remaining = { ...activeLayers, subtitles: null };
+                setActiveLayers(remaining);
+                if (remaining.hook || remaining.effects) {
+                    setCurrentVideoUrl(await renderInBrowser({
+                        videoUrl: serverUrl,
+                        durationInSeconds: clipDuration,
+                        subtitles: null,
+                        hook: remaining.hook,
+                        effects: remaining.effects,
+                    }));
+                } else {
+                    setCurrentVideoUrl(serverUrl);
+                }
+                if (videoRef.current) videoRef.current.load();
+                setShowSubtitleModal(false);
+            }
+        } catch (e) {
+            setEditError(e.message);
+            setTimeout(() => setEditError(null), 5000);
+        } finally {
+            setIsSubtitling(false);
+        }
+    };
+
     const handleSubtitle = async (options) => {
         setIsSubtitling(true);
         setEditError(null);
@@ -890,6 +933,7 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
                     await onBulkSubtitle(options);
                     setShowSubtitleModal(false);
                 } : undefined}
+                onRemove={handleRemoveSubtitles}
                 bulkCount={clipCount}
                 bulkProgress={bulkProgress}
                 isProcessing={isSubtitling || (bulkProgress?.running ?? false)}
