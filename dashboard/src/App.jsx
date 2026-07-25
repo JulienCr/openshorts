@@ -780,9 +780,14 @@ function App() {
               />
             )}
 
-            {/* Cloud: minutes meter + account/sign-in */}
+            {/* Cloud: minutes meter + account/sign-in. For free users the meter
+                opens the upgrade modal — otherwise the only path to a plan is
+                failing against the quota wall. */}
             {billingEnabled && isManaged && (
-              <UsageMeter onClick={() => { window.location.hash = '#/account'; }} />
+              <UsageMeter onClick={() => {
+                if (plan === 'free') { setTopUpInfo({ context: 'upsell' }); setShowTopUp(true); }
+                else { window.location.hash = '#/account'; }
+              }} />
             )}
             {billingEnabled && isSignedIn && !isManaged && (
               <button onClick={() => setShowPlanChoice(true)}
@@ -1376,15 +1381,19 @@ function App() {
 
                 {status === 'complete' && results?.clips?.length > 0 && (
                   <div className="mb-2 space-y-2">
-                    <StarBanner message="Happy with your clips?" />
+                    {/* Peak-moment upsell: they just SAW their clips — sell while
+                        they're proud of the result, before asking for stars. */}
                     {plan === 'free' && (
                       <button
-                        onClick={() => { window.location.hash = '#/pricing'; }}
-                        className="w-full text-left px-3 py-2 rounded-input bg-paper3 border border-rule text-sm text-muted hover:text-ink transition-colors"
+                        onClick={() => { setTopUpInfo({ context: 'upsell' }); setShowTopUp(true); }}
+                        className="w-full text-left px-3 py-2.5 rounded-input bg-paper3 border border-brass/40 hover:border-brass text-sm transition-colors"
                       >
-                        Free clips carry a watermark and expire in 7 days — <span className="text-brass">upgrade to remove both</span>.
+                        <span className="text-ink">Like these clips?</span>{' '}
+                        <span className="text-muted">They carry a watermark and delete in 7 days.</span>{' '}
+                        <span className="text-brass font-medium">Keep them forever →</span>
                       </button>
                     )}
+                    <StarBanner message="Happy with your clips?" />
                   </div>
                 )}
 
@@ -1574,6 +1583,7 @@ function App() {
           onClose={() => setShowTopUp(false)}
           required={topUpInfo.required}
           remaining={topUpInfo.remaining}
+          context={topUpInfo.context || 'wall'}
         />
       )}
       {showTrialUpgrade && (

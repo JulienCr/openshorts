@@ -11,7 +11,7 @@ from sqlalchemy import select, delete
 
 from .config import settings, VIDEO_RETENTION_GRACE_DAYS, FREE_CLIP_RETENTION_DAYS
 from . import database, storage, metering
-from .models import UserVideo, Subscription, Project
+from .models import UserVideo, Subscription, Project, User
 from .auth import get_current_user_required
 
 router = APIRouter()
@@ -333,6 +333,52 @@ async def purge_free_expired():
             print(f"⚠️  Free retention purge failed for {user_id}: {e}")
 
 
+# Video ids already covered by an expiry-warning email, so the 6-hourly sweep
+# doesn't re-mail the same user four times during the warning window. Process
+# memory only: after a restart the worst case is one duplicate warning.
+_warned_video_ids: set = set()
+
+
+async def warn_free_expiring():
+    """Email free users whose clips enter their LAST day before deletion.
+
+    The 7-day free retention is the plan's strongest honest upgrade lever, but
+    silently deleting clips converts nobody — the user never learns they were
+    at risk. One email on day 6 turns the real deadline into a visible one.
+    """
+    from datetime import datetime, timezone
+    from .emails import send_clips_expiring_email
+    now = datetime.now(timezone.utc)
+    doomed_after = now - timedelta(days=FREE_CLIP_RETENTION_DAYS)       # already purgeable
+    warn_cutoff = now - timedelta(days=FREE_CLIP_RETENTION_DAYS - 1)   # < 1 day left
+
+    async with database.session() as s:
+        expiring = list((await s.execute(
+            select(UserVideo).where(UserVideo.created_at < warn_cutoff,
+                                    UserVideo.created_at >= doomed_after)
+        )).scalars())
+
+    by_user = {}
+    for v in expiring:
+        if v.id in _warned_video_ids:
+            continue
+        by_user.setdefault(v.user_id, []).append(v)
+
+    for user_id, vids in by_user.items():
+        async with database.session() as s:
+            if not await metering.is_free_user(s, user_id):
+                continue
+            user = await s.get(User, user_id)
+        if not user or not user.email:
+            continue
+        try:
+            await send_clips_expiring_email(user.email, len(vids))
+            _warned_video_ids.update(v.id for v in vids)
+            print(f"⏳ Expiry warning sent: {len(vids)} clip(s), user {user_id}")
+        except Exception as e:
+            print(f"⚠️  Expiry warning failed for {user_id}: {e}")
+
+
 _SWEEP_INTERVAL = 6 * 3600  # every 6 hours
 
 
@@ -340,6 +386,7 @@ async def _sweeper_loop():
     while True:
         try:
             await asyncio.sleep(_SWEEP_INTERVAL)
+            await warn_free_expiring()
             await purge_expired()
             await purge_free_expired()
         except asyncio.CancelledError:

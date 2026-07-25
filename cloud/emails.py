@@ -79,6 +79,36 @@ async def send_clips_ready_email(email: str, job_title: str, clip_count: int,
     await send_email(email, f"Your clips are ready — {title}", html)
 
 
+async def send_clips_expiring_email(email: str, clip_count: int):
+    """Free clips enter their last day before deletion — honest loss aversion.
+
+    The deadline is real (FREE_CLIP_RETENTION_DAYS); this simply makes it
+    visible instead of deleting silently. Doubles as re-engagement for users
+    who clipped once and went quiet.
+    """
+    dash = f"{settings.frontend_url}/dashboard"
+    n = clip_count
+    clips = f"{n} clip" + ("s" if n != 1 else "")
+    html = f"""
+      <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
+        <h2>Your {clips} will be deleted tomorrow ⏳</h2>
+        <p>Free clips are stored for 7 days, and {('these' if n != 1 else 'this one')}
+           {'are' if n != 1 else 'is'} about to expire. Two ways to keep them:</p>
+        <ul style="line-height:1.9;padding-left:20px">
+          <li><strong>Download them now</strong> from your dashboard, or</li>
+          <li><strong>Upgrade to Starter ($12/mo)</strong> &mdash; clips stored forever,
+              no watermark, and 100 minutes every month.</li>
+        </ul>
+        <p><a href="{dash}" style="display:inline-block;background:#111;color:#fff;
+           padding:12px 20px;border-radius:8px;text-decoration:none">Save my clips</a></p>
+        <p style="color:#666;font-size:13px">After tomorrow they're gone for good
+           &mdash; we can't recover deleted clips.</p>
+      </div>
+    """
+    print(f"⏳ Clips-expiring email → {email} ({clips})")
+    await send_email(email, f"Your {clips} will be deleted tomorrow", html)
+
+
 async def send_out_of_minutes_email(email: str, upgrade_url: str):
     """Free user hit their monthly quota — the natural upgrade moment.
 

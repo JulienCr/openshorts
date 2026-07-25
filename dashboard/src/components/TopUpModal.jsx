@@ -23,14 +23,20 @@ const PLAN_BLURBS = {
   pro: 'for power users',
 };
 
-export default function TopUpModal({ onClose, required, remaining }) {
+// context: 'wall' (default) = user hit the 402 quota wall mid-task.
+//          'upsell' = user opened it voluntarily (results banner, header meter)
+//          — different framing: they still HAVE minutes, sell the watermark
+//          removal + permanence instead of "you ran out".
+export default function TopUpModal({ onClose, required, remaining, context = 'wall' }) {
   const [plans, setPlans] = useState([]);
   const [topups, setTopups] = useState([]);
   const [showTopups, setShowTopups] = useState(false);
   const [busyPrice, setBusyPrice] = useState(null);
+  const isUpsell = context === 'upsell';
 
   useEffect(() => {
-    track('QuotaWallSeen', { props: { required: required ?? null, remaining: remaining ?? null } });
+    track(isUpsell ? 'UpsellModalSeen' : 'QuotaWallSeen',
+          { props: { required: required ?? null, remaining: remaining ?? null } });
     apiJson('/api/billing/plans')
       .then((d) => {
         const monthly = (d.plans || []).filter((p) => p.interval === 'month');
@@ -44,7 +50,8 @@ export default function TopUpModal({ onClose, required, remaining }) {
 
   const buy = async (entry, kind) => {
     setBusyPrice(entry.price_id);
-    track('QuotaWallCheckout', { props: { kind, plan: entry.plan || null, minutes: entry.minutes } });
+    track(isUpsell ? 'UpsellModalCheckout' : 'QuotaWallCheckout',
+          { props: { kind, plan: entry.plan || null, minutes: entry.minutes } });
     try {
       const { url } = await apiJson('/api/billing/checkout', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -61,14 +68,18 @@ export default function TopUpModal({ onClose, required, remaining }) {
   const blockedByLength = typeof required === 'number' && typeof remaining === 'number';
 
   return (
-    <Modal isOpen onClose={onClose} eyebrow="UPGRADE" title="Your video is ready to clip" size="xl">
+    <Modal isOpen onClose={onClose} eyebrow="UPGRADE"
+           title={isUpsell ? 'Keep your clips forever' : 'Your video is ready to clip'} size="xl">
       {/* Goal-gradient framing: they're one step from the thing they came for. */}
       <p className="text-muted text-sm mb-5">
-        {blockedByLength
-          ? <>This video needs <b className="text-ink font-medium">{required} min</b> and you have{' '}
-              <b className="text-ink font-medium">{Math.max(0, Math.round((remaining || 0) * 10) / 10)} min</b> left
-              this month. Upgrade and it starts processing right away.</>
-          : <>You've used your free minutes for this month. Upgrade and keep clipping right away.</>}
+        {isUpsell
+          ? <>Your free clips carry a watermark and are deleted after <b className="text-ink font-medium">7 days</b>.
+              Upgrade to keep them clean, permanent, and with a bigger monthly quota.</>
+          : blockedByLength
+            ? <>This video needs <b className="text-ink font-medium">{required} min</b> and you have{' '}
+                <b className="text-ink font-medium">{Math.max(0, Math.round((remaining || 0) * 10) / 10)} min</b> left
+                this month. Upgrade and it starts processing right away.</>
+            : <>You've used your free minutes for this month. Upgrade and keep clipping right away.</>}
       </p>
 
       <div className="grid sm:grid-cols-3 gap-3">
