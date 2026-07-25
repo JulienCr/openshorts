@@ -26,7 +26,36 @@ from ffmpeg_utils import video_encode_args, QUALITY_FAST, METADATA_SCRUB
 ANALYSIS_MAX_WIDTH = 640
 
 
+# Short-form platforms (TikTok / Reels / Shorts) expect a 1080-wide vertical
+# upload; anything smaller is treated as low quality and re-encoded from the
+# already-soft source. The crop region is whatever the source height allows, so
+# a 720p input yields a 406x720 crop — we scale that up to the delivery floor
+# rather than shipping sub-HD. Sources that already exceed it are left alone
+# (never downscale quality the user supplied).
+DELIVERY_MIN_WIDTH = 1080
+
+
 # --- pure helpers (CI-testable) --------------------------------------------
+
+def delivery_size(orig_w, orig_h, aspect_ratio):
+    """Output (width, height) for a reframe of this source.
+
+    Picks the largest crop the source allows, then upscales to
+    ``DELIVERY_MIN_WIDTH`` if that crop is narrower. Both dimensions come back
+    even (x264/NVENC reject odd ones).
+    """
+    out_h = orig_h
+    out_w = int(out_h * aspect_ratio)
+    if out_w > orig_w:
+        out_w = orig_w
+        out_h = int(out_w / aspect_ratio)
+
+    if out_w < DELIVERY_MIN_WIDTH:
+        out_w = DELIVERY_MIN_WIDTH
+        out_h = int(round(out_w / aspect_ratio))
+
+    return out_w + (out_w % 2), out_h + (out_h % 2)
+
 
 def dedupe_sendcmd_lines(xs, fps, target="crop@c"):
     """sendcmd lines setting crop x per frame, deduped to change-points.
@@ -165,15 +194,7 @@ def render(input_video, final_output_video, aspect_ratio):
     fps = float(fps)  # PySceneDetect can hand back a Fraction
     orig_w, orig_h = m.get_video_resolution(input_video)
 
-    out_h = orig_h
-    out_w = int(out_h * aspect_ratio)
-    if out_w > orig_w:
-        out_w = orig_w
-        out_h = int(out_w / aspect_ratio)
-    if out_w % 2:
-        out_w += 1
-    if out_h % 2:
-        out_h += 1
+    out_w, out_h = delivery_size(orig_w, orig_h, aspect_ratio)
 
     if not scenes:
         import cv2
@@ -186,6 +207,10 @@ def render(input_video, final_output_video, aspect_ratio):
     scene_boundaries = [(s.get_frames(), e.get_frames()) for s, e in scenes]
     strategies = m.analyze_scenes_strategy(input_video, scenes)
 
+    # The crop geometry comes from the SOURCE dims only — SmoothedCameraman
+    # derives crop_width/crop_height from video_width/video_height and never
+    # reads the output pair. So out_w/out_h being the (possibly upscaled)
+    # delivery size doesn't move the camera; only the final scale= uses it.
     cameraman = m.SmoothedCameraman(out_w, out_h, orig_w, orig_h, aspect_ratio=aspect_ratio)
     tracker = m.SpeakerTracker(cooldown_frames=30)
 

@@ -564,12 +564,21 @@ def download_youtube_video(url, output_dir="."):
         }
     }
 
-    # Cap at 720p when using a paid proxy (bandwidth cost); direct keeps best.
-    if _proxy:
-        hd_fmt = ('bestvideo[vcodec^=avc1][height<=720][ext=mp4]+bestaudio[ext=m4a]/'
-                  'bestvideo[vcodec^=avc1][height<=720]+bestaudio/best[height<=720][ext=mp4]/best[height<=720]/best')
-    else:
-        hd_fmt = 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1]+bestaudio/best[ext=mp4]/best'
+    # Cap at 720p ONLY when the bytes actually go through the paid proxy — that
+    # cap exists to control bandwidth cost, and the direct attempt has none.
+    #
+    # This is per-attempt on purpose. Deciding it once from `_proxy` capped the
+    # DIRECT attempt too, so with DIRECT_FIRST=1 (which serves most downloads)
+    # every YouTube source arrived at 720p and, since the reframe inherits the
+    # source height, 80% of delivered clips came out 406x720 (audited 25-jul-2026).
+    def _hd_fmt_for(proxy):
+        if proxy:
+            return ('bestvideo[vcodec^=avc1][height<=720][ext=mp4]+bestaudio[ext=m4a]/'
+                    'bestvideo[vcodec^=avc1][height<=720]+bestaudio/'
+                    'best[height<=720][ext=mp4]/best[height<=720]/best')
+        return ('bestvideo[vcodec^=avc1][height<=1080][ext=mp4]+bestaudio[ext=m4a]/'
+                'bestvideo[vcodec^=avc1][height<=1080]+bestaudio/'
+                'best[height<=1080][ext=mp4]/best[ext=mp4]/best')
     fallback_fmt = 'best[ext=mp4]/best'
 
     def _base_opts(extractor_args, proxy):
@@ -623,8 +632,8 @@ def download_youtube_video(url, output_dir="."):
                      and _proxy and hd_args and cookies_path)
 
     attempts = (
-        ([('HD-direct', hd_args, hd_fmt, None)] if _direct_first else [])
-        + ([('HD', hd_args, hd_fmt, _proxy)] if hd_args else [])
+        ([('HD-direct', hd_args, _hd_fmt_for(None), None)] if _direct_first else [])
+        + ([('HD', hd_args, _hd_fmt_for(_proxy), _proxy)] if hd_args else [])
         + [('fallback', fallback_args, fallback_fmt, _proxy)]
     )
 
@@ -827,16 +836,12 @@ def process_video_to_vertical(input_video, final_output_video, aspect_ratio=ASPE
     print("\n   🧠 Step 2: Preparing Active Tracking...")
     original_width, original_height = get_video_resolution(input_video)
     
-    OUTPUT_HEIGHT = original_height
-    OUTPUT_WIDTH = int(OUTPUT_HEIGHT * aspect_ratio)
-    # Never ask for a crop wider than the source; shrink height to fit instead.
-    if OUTPUT_WIDTH > original_width:
-        OUTPUT_WIDTH = original_width
-        OUTPUT_HEIGHT = int(OUTPUT_WIDTH / aspect_ratio)
-    if OUTPUT_WIDTH % 2 != 0:
-        OUTPUT_WIDTH += 1
-    if OUTPUT_HEIGHT % 2 != 0:
-        OUTPUT_HEIGHT += 1
+    # Same delivery floor as the v2 engine — a fallback render is still the clip
+    # the user posts, so it must not ship sub-HD. The frame loop below already
+    # resizes every cropped frame to these dims, so nothing else changes.
+    from reframe_v2 import delivery_size
+    OUTPUT_WIDTH, OUTPUT_HEIGHT = delivery_size(original_width, original_height,
+                                                aspect_ratio)
 
     # Initialize Cameraman
     cameraman = SmoothedCameraman(OUTPUT_WIDTH, OUTPUT_HEIGHT, original_width, original_height, aspect_ratio=aspect_ratio)
