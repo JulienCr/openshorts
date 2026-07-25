@@ -357,6 +357,27 @@ def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     except Exception:
         return False
 
+def _canonical_clip_file(output_dir, base_name, index):
+    """The file to serve for clip ``index``, preferring a derived version.
+
+    The pipeline writes the clean reframe as ``<base>_clip_<n>.mp4`` and any
+    post-processing (auto-captions, and /api/subtitle re-styles) as
+    ``subtitled_<ts>_<clean>.mp4``, keeping the original for re-styling. Every
+    place that rebuilds the canonical name from disk — restore after a restart,
+    the R2 upload, the download bundle — must therefore resolve to the newest
+    derived file, or clips silently lose their captions on a redeploy.
+    """
+    clean = f"{base_name}_clip_{index + 1}.mp4"
+    try:
+        derived = glob.glob(os.path.join(output_dir, f"subtitled_*_{clean}"))
+    except Exception:
+        derived = []
+    if not derived:
+        return clean
+    # Highest timestamp wins — that's the most recent styling.
+    return os.path.basename(max(derived, key=os.path.getmtime))
+
+
 def _recover_jobs_from_disk():
     """Rebuild completed jobs from OUTPUT_DIR after a restart (issue #46 / #18).
 
@@ -384,7 +405,9 @@ def _recover_jobs_from_disk():
             clips = data.get('shorts', [])
             for i, clip in enumerate(clips):
                 if not clip.get('video_url'):
-                    clip['video_url'] = f"/videos/{job_id}/{base_name}_clip_{i+1}.mp4"
+                    clip['video_url'] = (
+                        f"/videos/{job_id}/"
+                        f"{_canonical_clip_file(job_path, base_name, i)}")
             owner = None
             owner_path = os.path.join(job_path, ".owner")
             if os.path.exists(owner_path):
@@ -1104,7 +1127,7 @@ async def run_job(job_id, job_data):
                 cost_analysis = data.get('cost_analysis')
 
                 for i, clip in enumerate(clips):
-                     clip_filename = f"{base_name}_clip_{i+1}.mp4"
+                     clip_filename = _canonical_clip_file(output_dir, base_name, i)
                      clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
                 
                 jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
@@ -1358,7 +1381,8 @@ async def download_all_clips(job_id: str, request: Request):
         if i < len(mem_clips):
             url = (mem_clips[i] or {}).get('video_url')
         url = url or clip.get('video_url')
-        filename = os.path.basename(url.split('/')[-1]) if url else f"{base_name}_clip_{i+1}.mp4"
+        filename = (os.path.basename(url.split('/')[-1]) if url
+                    else _canonical_clip_file(output_dir, base_name, i))
         path = os.path.join(output_dir, filename)
         if filename and os.path.exists(path):
             files.append((i, path))
@@ -1472,7 +1496,9 @@ async def restore_project(job_id: str, request: Request):
         clips = data.get('shorts', [])
         for i, clip in enumerate(clips):
             if not clip.get('video_url'):
-                clip['video_url'] = f"/videos/{job_id}/{base_name}_clip_{i+1}.mp4"
+                clip['video_url'] = (
+                    f"/videos/{job_id}/"
+                    f"{_canonical_clip_file(job_dir, base_name, i)}")
         jobs[job_id] = {
             'status': 'completed',
             'logs': ["♻️ Project restored from your library."],

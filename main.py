@@ -713,6 +713,59 @@ def finalize_clip_passthrough(input_video, final_output_video):
     return True
 
 
+def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
+    """Burn the default caption style onto a finished clip.
+
+    Captions are mandatory for short-form to land, but they were opt-in behind a
+    modal and only 9% of delivered clips ever got them (prod audit, 25-jul-2026).
+    So every clip now ships captioned by default.
+
+    The captioned file is written ALONGSIDE the clip as
+    ``subtitled_<ts>_<clip>.mp4`` — the same convention /api/subtitle uses — so
+    the untouched original stays on disk and re-styling from the modal replaces
+    the captions instead of burning a second layer over them.
+
+    Returns the captioned path, or None when captions were skipped (silent
+    video, no words in range, AUTO_CAPTIONS=0, or any failure — a caption
+    problem must never cost the user the clip they already paid for).
+    """
+    if os.environ.get("AUTO_CAPTIONS", "1").strip() == "0":
+        return None
+    if not transcript or not transcript.get('segments'):
+        return None  # silent video: nothing to caption
+    try:
+        import subtitles as _subs
+        style = _subs.AUTO_CAPTION_STYLE
+        output_dir = os.path.dirname(clip_path)
+        stem = os.path.basename(clip_path)
+        generation_id = int(time.time())
+        ass_path = os.path.join(output_dir, f"autosubs_{generation_id}_{stem}.ass")
+        out_path = os.path.join(output_dir, f"subtitled_{generation_id}_{stem}")
+
+        if not _subs.generate_ass(
+                transcript, clip_start, clip_end, ass_path,
+                max_chars=style["max_chars"], max_duration=style["max_duration"],
+                alignment=style["alignment"], fontsize=style["font_size"],
+                font_name=style["font_name"], font_color=style["font_color"],
+                border_color=style["border_color"], border_width=style["border_width"],
+                highlight_color=style["highlight_color"], effect=style["effect"],
+                base_opacity=style["base_opacity"], uppercase=style["uppercase"]):
+            print("   ℹ️ No words in range — clip ships without captions.")
+            return None
+
+        _subs.burn_subtitles(
+            clip_path, ass_path, out_path,
+            alignment=style["alignment"], fontsize=style["font_size"],
+            font_name=style["font_name"], font_color=style["font_color"],
+            border_color=style["border_color"], border_width=style["border_width"])
+        print(f"   💬 Captions burned: {os.path.basename(out_path)}")
+        return out_path
+    except Exception as e:
+        print(f"   ⚠️ Auto-captions failed ({type(e).__name__}: {e}) — "
+              f"delivering the clip without them.")
+        return None
+
+
 def render_clip(input_video, final_output_video, output_format="auto"):
     """Route a cut clip through the right renderer for the chosen output format.
     vertical/auto -> 9:16 reframe, square -> 1:1 reframe, horizontal -> keep."""
@@ -1356,6 +1409,9 @@ if __name__ == '__main__':
                     if success and os.environ.get("WATERMARK") == "1":
                         apply_watermark(clip_final_path)
                     if success:
+                        # Captions last, so they sit on top of the watermark and
+                        # the canonical file stays clean for re-styling.
+                        auto_caption_clip(clip_final_path, transcript, start, end)
                         print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
                     return success
                 finally:

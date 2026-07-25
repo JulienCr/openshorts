@@ -204,6 +204,38 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
     return True
 
 
+# Vertical margin for burned captions, in PlayResY=288 units (so ~15% of the
+# frame height). The old hardcoded 25 (8.7%) put captions underneath TikTok's
+# and Reels' own bottom UI — the caption/username block and the music ticker —
+# where they were partly covered on the platform even though the exported file
+# looked fine.
+SAFE_MARGIN_V = 43
+
+
+# The caption look applied automatically to every generated clip. Chosen by
+# rendering four candidates on a real clip and comparing them (25-jul-2026):
+# white Anton uppercase with a yellow active word, heavy black outline, gentle
+# pop. Yellow because it is the one colour that almost never occurs in footage,
+# so the active word reads instantly on any background; the base text stays
+# fully opaque (dimming it tested worse over bright scenes). This is a starting
+# point, not a cage — the subtitle modal still overrides every field.
+AUTO_CAPTION_STYLE = {
+    "style": "karaoke",
+    "alignment": "bottom",
+    "font_name": "Anton",
+    "font_size": 44,
+    "font_color": "#FFFFFF",
+    "highlight_color": "#FFE500",
+    "border_color": "#000000",
+    "border_width": 4,
+    "effect": "pop",
+    "base_opacity": 1.0,
+    "uppercase": True,
+    "max_chars": 16,
+    "max_duration": 1.4,
+}
+
+
 def _ass_time(seconds):
     """Format seconds as ASS timestamp H:MM:SS.cc (centiseconds)."""
     seconds = max(0, seconds)
@@ -256,7 +288,8 @@ def generate_ass(transcript, clip_start, clip_end, output_path,
                  fontsize=16, font_name="Verdana", font_color="#FFFFFF",
                  border_color="#000000", border_width=2,
                  highlight_color="#FFD700", bg_color="#000000", bg_opacity=0.0,
-                 effect="none", base_opacity=1.0, uppercase=False):
+                 effect="none", base_opacity=1.0, uppercase=False,
+                 margin_v=SAFE_MARGIN_V):
     """
     Generates a karaoke-style ASS file: each block is shown like the SRT path,
     but the currently spoken word is rendered in highlight_color (modern
@@ -311,8 +344,10 @@ def generate_ass(transcript, clip_start, clip_end, output_path,
         active_prefix = (f"{{\\c&HFFFFFF&\\3c{highlight_inline}"
                          f"\\bord{box_bord}\\blur0}}")
     elif effect == "pop":
+        # Gentle pop. The old 75->112 range started the word so small that any
+        # frame caught mid-animation read as a sizing bug rather than a beat.
         active_prefix = (f"{{\\c{highlight_inline}"
-                         f"\\fscx75\\fscy75\\t(0,120,\\fscx112\\fscy112)}}")
+                         f"\\fscx90\\fscy90\\t(0,110,\\fscx108\\fscy108)}}")
     else:
         active_prefix = f"{{\\c{highlight_inline}}}"
 
@@ -330,7 +365,7 @@ def generate_ass(transcript, clip_start, clip_end, output_path,
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{safe_font},{final_fontsize},{primary_colour},{primary_colour},"
         f"{outline_colour},{back_colour},1,0,0,0,100,100,0,0,{border_style},"
-        f"{outline_width},0,{ass_alignment},10,10,25,1\n"
+        f"{outline_width},0,{ass_alignment},10,10,{int(_clamp_number(margin_v, 0, 200, SAFE_MARGIN_V))},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -474,7 +509,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         f"BorderStyle={border_style},"
         f"Outline={outline_width},"
         f"Shadow=0,"
-        f"MarginV=25,"
+        f"MarginV={SAFE_MARGIN_V},"
         f"Bold=1"
     )
 

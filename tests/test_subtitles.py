@@ -173,7 +173,10 @@ class TestGenerateAss:
         words = [_w(" pop", 0.0, 0.5)]
         assert generate_ass(self._transcript(words), 0, 10, str(out), effect="pop") is True
         content = out.read_text(encoding="utf-8-sig")
-        assert "\\t(0,120,\\fscx112\\fscy112)" in content
+        # Gentle range: the old 75->112 pop was so wide that a frame caught
+        # mid-animation read as a sizing bug rather than a beat.
+        assert "\\fscx90\\fscy90" in content
+        assert "\\t(0,110,\\fscx108\\fscy108)" in content
 
     def test_uppercase_transform(self, tmp_path):
         from subtitles import generate_ass
@@ -239,3 +242,50 @@ class TestBurnFilterFonts:
         assert "fontsdir=" in cmd
         # ASS carries its own styles; force_style must NOT override them
         assert "force_style" not in cmd
+
+
+class TestAutoCaptionDefaults:
+    """The caption look every clip now ships with (chosen 25-jul-2026)."""
+
+    def test_style_is_complete(self):
+        from subtitles import AUTO_CAPTION_STYLE, generate_ass
+        required = {"alignment", "font_name", "font_size", "font_color",
+                    "highlight_color", "border_color", "border_width",
+                    "effect", "base_opacity", "uppercase",
+                    "max_chars", "max_duration"}
+        assert required <= set(AUTO_CAPTION_STYLE)
+
+    def test_font_is_one_the_image_actually_ships(self):
+        # libass falls back to DejaVu SILENTLY when the font is missing (#57),
+        # so the default must be a family baked into the image.
+        from subtitles import AUTO_CAPTION_STYLE
+        assert AUTO_CAPTION_STYLE["font_name"] in {
+            "Anton", "Liberation Sans", "Liberation Serif", "DejaVu Sans"}
+
+    def test_highlight_differs_from_body_text(self):
+        # The whole point of the karaoke look: the active word must stand out.
+        from subtitles import AUTO_CAPTION_STYLE as s
+        assert s["highlight_color"].lower() != s["font_color"].lower()
+
+    def test_captions_clear_the_platform_ui(self, tmp_path):
+        from subtitles import SAFE_MARGIN_V, generate_ass
+        # PlayResY is 288, so the margin must be a meaningful share of it —
+        # the old hardcoded 25 (8.7%) sat under TikTok's own bottom chrome.
+        assert SAFE_MARGIN_V / 288 >= 0.12
+        out = tmp_path / "subs.ass"
+        words = [_w(" hola", 0.0, 0.5)]
+        assert generate_ass(self._t(words), 0, 10, str(out)) is True
+        style_line = [l for l in out.read_text(encoding="utf-8-sig").splitlines()
+                      if l.startswith("Style: Default")][0]
+        assert f",10,10,{SAFE_MARGIN_V},1" in style_line
+
+    def test_margin_is_overridable(self, tmp_path):
+        from subtitles import generate_ass
+        out = tmp_path / "subs.ass"
+        assert generate_ass(self._t([_w(" hola", 0.0, 0.5)]), 0, 10, str(out),
+                            margin_v=90) is True
+        assert ",10,10,90,1" in out.read_text(encoding="utf-8-sig")
+
+    @staticmethod
+    def _t(words):
+        return {"segments": [{"words": words}]}
