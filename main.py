@@ -82,6 +82,12 @@ model = YOLO('yolov8n.pt')
 mp_face_detection = mp.solutions.face_detection
 face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
 
+# Consecutive detections a large target move must survive before the camera
+# follows it (see SmoothedCameraman.update_target). Env-overridable so the
+# damping can be dialled back without a deploy; 1 restores the old behaviour.
+JUMP_CONFIRM_FRAMES = max(int(os.environ.get("JUMP_CONFIRM_FRAMES", "3")), 1)
+
+
 class SmoothedCameraman:
     """
     Handles smooth camera movement.
@@ -111,13 +117,52 @@ class SmoothedCameraman:
         # As long as the target is within this zone relative to current center, DO NOT MOVE.
         self.safe_zone_radius = self.crop_width * 0.25
 
+        # A target that teleports further than the safe zone in one detection is
+        # far more often a detector error — a second face, a false positive, a
+        # box snapping to a different body part — than a person who actually
+        # moved that far. Committing to it immediately is what made the camera
+        # swing: measured on real user footage, 22% of target updates jumped
+        # more than the entire safe zone. So a big move has to REPEAT this many
+        # times before the camera follows it; a wrong reading disappears on the
+        # next detection and never moves the frame.
+        #
+        # The cost is latency on a genuinely fast move: at DETECT_STRIDE=4 and
+        # 30fps, three confirmations is ~0.4s. That reads as an operator being
+        # unhurried, which is the look we want, and it is far cheaper than the
+        # whip-panning it replaces.
+        #
+        # Measured over 262s of TRACK footage from two real user videos
+        # (26-jul-2026), confirm=1 -> 3: in-scene reversals 0.41/s -> 0.13/s
+        # (-69%), camera travel 91px/s -> 60px/s (-34%). Per scene, 54 of 84 get
+        # calmer and 23 are unchanged — but 7 get BUSIER, up to 59 -> 108px/s,
+        # because committing later can leave the camera further to travel. Net
+        # strongly positive, not universally so.
+        self.jump_confirm_frames = JUMP_CONFIRM_FRAMES
+        self._pending_target = None
+        self._pending_count = 0
+
     def update_target(self, face_box):
-        """
-        Updates the target center based on detected face/person.
-        """
-        if face_box:
-            x, y, w, h = face_box
-            self.target_center_x = x + w / 2
+        """Update the target centre from a detection, ignoring lone big jumps."""
+        if not face_box:
+            return
+        x, y, w, h = face_box
+        new_center = x + w / 2
+
+        if abs(new_center - self.target_center_x) > self.safe_zone_radius:
+            # Same big move as last time? Count it. Otherwise start counting
+            # afresh — two contradictory outliers must not confirm each other.
+            if (self._pending_target is not None
+                    and abs(new_center - self._pending_target) <= self.safe_zone_radius):
+                self._pending_count += 1
+            else:
+                self._pending_target = new_center
+                self._pending_count = 1
+            if self._pending_count < self.jump_confirm_frames:
+                return  # not convinced yet — hold the frame
+
+        self._pending_target = None
+        self._pending_count = 0
+        self.target_center_x = new_center
     
     def get_crop_box(self, force_snap=False):
         """
