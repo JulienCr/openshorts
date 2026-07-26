@@ -514,11 +514,31 @@ def get_video_resolution(video_path):
     return width, height
 
 
+# Byte budget for the sanitized video title used as the stem of every derived
+# file. Filesystems cap a name in BYTES (255 on ext4), not characters, and the
+# pipeline decorates this stem: "_clip_10.mp4" (12), "subtitled_<ts>_" (21),
+# "temp_hook_<hex8>_" (19), "autosubs_<ts>_" + ".ass" (24). Budgeting 120 bytes
+# leaves room for all of them stacked and still lands well under the limit.
+#
+# The old cap was 100 CHARACTERS, which is 300 bytes of Bengali or Arabic — over
+# the limit before any decoration. It surfaced as OSError 36 killing the hook
+# endpoint in prod on 26-jul-2026.
+MAX_TITLE_BYTES = 120
+
+
+def truncate_bytes(text, max_bytes):
+    """Trim ``text`` to a byte budget without splitting a multi-byte character."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", "ignore")
+
+
 def sanitize_filename(filename):
-    """Remove invalid characters from filename."""
+    """Remove invalid characters from filename and bound it for the filesystem."""
     filename = re.sub(r'[<>:"/\\|?*#]', '', filename)
     filename = filename.replace(' ', '_')
-    return filename[:100]
+    return truncate_bytes(filename, MAX_TITLE_BYTES)
 
 
 def download_youtube_video(url, output_dir="."):
@@ -752,6 +772,13 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
         output_dir = os.path.dirname(clip_path)
         stem = os.path.basename(clip_path)
         generation_id = int(time.time())
+        # The output name MUST stay exactly "subtitled_<ts>_<clip filename>":
+        # the modal's walk-back and _canonical_clip_file both reconstruct the
+        # clean original from it, so trimming the stem here would orphan the
+        # pair. Length is bounded upstream instead, by MAX_TITLE_BYTES at
+        # download time. A legacy clip whose name predates that budget can still
+        # overflow — that raises OSError 36, which the except below turns into
+        # "ship the clip uncaptioned" rather than a broken filename.
         ass_path = os.path.join(output_dir, f"autosubs_{generation_id}_{stem}.ass")
         out_path = os.path.join(output_dir, f"subtitled_{generation_id}_{stem}")
 

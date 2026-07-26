@@ -8,6 +8,18 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from ffmpeg_utils import video_encode_args, QUALITY, METADATA_SCRUB
 
+
+def _truncate_bytes(text, max_bytes):
+    """Trim to a byte budget without splitting a multi-byte character.
+
+    Deliberately duplicated from main.truncate_bytes: this module stays free of
+    main's heavy imports (cv2, mediapipe, torch) so it can be used standalone.
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", "ignore")
+
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
 FONT_DIR = "fonts"
 FONT_PATH = os.path.join(FONT_DIR, "NotoSerif-Bold.ttf")
@@ -338,7 +350,13 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
     target_box_width = int(video_width * 0.9)
     
     # Unique per invocation so parallel jobs can't overwrite each other's overlay.
-    hook_filename = f"temp_hook_{uuid.uuid4().hex[:8]}_{os.path.basename(video_path)}.png"
+    # The uuid alone guarantees that; the source name rides along only as a
+    # debugging hint, so it is trimmed by BYTES (filesystems cap at 255 bytes,
+    # and one Bengali or Arabic character costs three). Embedding it untrimmed
+    # raised OSError 36 and killed the endpoint in prod on 26-jul-2026.
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    hook_filename = (f"temp_hook_{uuid.uuid4().hex[:8]}_"
+                     f"{_truncate_bytes(stem, 80)}.png")
     
     try:
         img_path, box_w, box_h = create_hook_image(text, target_box_width, hook_filename, font_scale=font_scale, style=style)
