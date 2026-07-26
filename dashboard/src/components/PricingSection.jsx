@@ -148,7 +148,7 @@ export default function PricingSection({ onRequireLogin }) {
           <ul className="space-y-2 text-sm text-ink2">
             <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>Clip Generator</b> — fully managed, no API keys</span></li>
             <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>YouTube Studio</b> — titles, thumbnails, descriptions</span></li>
-            <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span>Auto-posting to TikTok, Reels &amp; Shorts</span></li>
+            <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span>Auto-posting to TikTok, Instagram &amp; YouTube Shorts</span></li>
             <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span>All the AI &amp; compute run on our servers</span></li>
           </ul>
           <p className="text-xs text-muted mt-3 pt-3 border-t border-rule">
