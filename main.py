@@ -478,43 +478,15 @@ def create_general_frame(frame, output_width, output_height):
     
     return final_frame
 
-# Share of the frame's SIDE regions that has to look like text/graphics before a
-# single-face scene is treated as a screencast rather than a talking head.
-# Tuned against real prod clips; GRAPHIC_DENSITY_THRESHOLD=1.0 disables the rule.
-GRAPHIC_DENSITY_THRESHOLD = float(
-    os.environ.get("GRAPHIC_DENSITY_THRESHOLD", "0.085"))
-
-
-def _graphic_density(frame, face_candidates):
-    """Rough share of the frame's left/right thirds carrying text or graphics.
-
-    Text and UI have a signature a face doesn't: dense, high-contrast, mostly
-    axis-aligned edges. A Canny pass over the side thirds — the parts a 9:16
-    crop would throw away — separates "talking head on a plain background"
-    (near zero) from "talking head next to a chart" (high) well enough to
-    route the scene, and costs a fraction of a millisecond per sampled frame.
-
-    Face boxes are blanked first so a detailed face or busy clothing can't be
-    mistaken for a graphic.
-    """
-    try:
-        h, w = frame.shape[:2]
-        if w < 60 or h < 60:
-            return 0.0
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        for cand in face_candidates or []:
-            fx, fy, fw, fh = [int(v) for v in cand.get('box', (0, 0, 0, 0))]
-            # Generous margin: hair, shoulders and headsets are not graphics.
-            x0, y0 = max(0, fx - fw // 2), max(0, fy - fh // 2)
-            x1, y1 = min(w, fx + fw + fw // 2), min(h, fy + fh + fh // 2)
-            if x1 > x0 and y1 > y0:
-                gray[y0:y1, x0:x1] = 0
-        third = w // 3
-        sides = np.hstack((gray[:, :third], gray[:, -third:]))
-        edges = cv2.Canny(sides, 100, 200)
-        return float(np.count_nonzero(edges)) / edges.size
-    except Exception:
-        return 0.0  # never let the heuristic break scene analysis
+# NOTE: a "route text-heavy scenes to GENERAL" rule was tried here and removed
+# on 26-jul-2026. The problem it targets is real — a screencast that happens to
+# contain one face gets cropped to the face and its headlines come out cut
+# mid-word — but edge density is the wrong signal for it. Measured: a
+# constructed talking-head-beside-a-chart scored 0.012 while the SAME shot
+# without the panels scored 0.029, because a flat panel of text has far fewer
+# edges than ordinary scene detail. Canny measures visual busyness, not text.
+# A real fix needs an actual text detector (MSER/EAST) validated against clips
+# that contain the failure mode; this corpus has almost none.
 
 
 def analyze_scenes_strategy(video_path, scenes):
@@ -540,7 +512,6 @@ def analyze_scenes_strategy(video_path, scenes):
         ))
 
         face_counts = []
-        graphic_scores = []
         for f_idx in frames_to_check:
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret, frame = cap.read()
@@ -554,7 +525,6 @@ def analyze_scenes_strategy(video_path, scenes):
             # Detect faces
             candidates = detect_face_candidates(frame)
             face_counts.append(len(candidates))
-            graphic_scores.append(_graphic_density(frame, candidates))
 
         # Decision Logic
         if not face_counts:
@@ -567,18 +537,7 @@ def analyze_scenes_strategy(video_path, scenes):
         # 1 face -> TRACK
         # > 1.2 faces -> GENERAL (Group)
 
-        avg_graphic = (sum(graphic_scores) / len(graphic_scores)
-                       if graphic_scores else 0.0)
-
-        # A lone face normally means TRACK — crop to the speaker. But a scene
-        # that is ALSO dense with text or graphics outside the face (a
-        # screencast, a chart, a headline, a comparison table) loses its whole
-        # point when cropped to 9:16: seen in real prod clips where headlines
-        # came out cut mid-word and unreadable. Those go to GENERAL, which
-        # keeps the full width.
         if avg_faces > 1.2 or avg_faces < 0.5:
-            strategies.append('GENERAL')
-        elif avg_graphic > GRAPHIC_DENSITY_THRESHOLD:
             strategies.append('GENERAL')
         else:
             strategies.append('TRACK')
