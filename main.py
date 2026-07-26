@@ -271,12 +271,25 @@ class SpeakerTracker:
                 self.locked_counter += 1
                 return best_candidate['box']
             
-            # New person
+            # New person. The cooldown must hold whether or not the current
+            # speaker happens to be detected in THIS frame.
+            #
+            # It used to fall through and switch when the active speaker was
+            # missing from the candidate list — a blink, a head turn or one
+            # motion-blurred frame was enough. That is precisely when the
+            # cooldown is needed, so it only ever fired when it wasn't: 3 of 7
+            # target switches measured on a 12s clip (25-jul-2026) jumped the
+            # cooldown this way, and every jump drags the camera across frame.
+            #
+            # Returning None holds instead: the caller only calls
+            # update_target() on a truthy box, so the camera keeps its current
+            # target and finishes whatever move it was making. The hold is
+            # bounded by the cooldown itself — once it expires, a speaker who
+            # really did leave the shot is switched away from normally.
             if frame_number - self.last_switch_frame < self.switch_cooldown:
                 old_cand = next((c for c in current_candidates if c['id'] == self.active_speaker_id), None)
-                if old_cand:
-                    return old_cand['box']
-            
+                return old_cand['box'] if old_cand else None
+
             self.active_speaker_id = target_id
             self.last_switch_frame = frame_number
             self.locked_counter = 0
