@@ -91,15 +91,39 @@ def concat_list_content(segment_paths):
     return "".join(f"file '{p}'\n" for p in segment_paths)
 
 
+# How much of the frame height the real content should fill in GENERAL layout.
+#
+# Fitting a 16:9 source to the full output width leaves it 608px tall in a
+# 1920px frame — the content is 32% of the screen and 68% is blurred filler.
+# That reads as a thumbnail floating in soup, and it is what a GENERAL scene
+# looked like in real delivered clips (audited 26-jul-2026).
+#
+# Scaling the content up and letting the sides overflow trades width for
+# presence, and the trade has to stay conservative: GENERAL is chosen for group
+# shots and landscapes, exactly the material where cropping the sides cuts
+# someone out of frame. At 0.42 a 16:9 source keeps ~76% of its width while
+# going from 32% to 42% of the frame height. 0.55 was tried and rejected — it
+# reaches 55% height but throws away 42% of the width.
+#
+# GENERAL_CONTENT_HEIGHT_RATIO=0.32 restores the old full-width behaviour.
+GENERAL_CONTENT_HEIGHT_RATIO = float(
+    os.environ.get("GENERAL_CONTENT_HEIGHT_RATIO", "0.42"))
+
+
 def general_filtergraph(out_w, out_h):
-    """Blurred-background 'general shot' layout, mirroring v1's
-    create_general_frame: bg fills height (center-cropped, blurred), fg fits
-    width, centered vertically."""
+    """Blurred-background 'general shot' layout: bg fills the frame (centre-
+    cropped, blurred), fg is scaled to a readable share of the height and
+    centred, overflowing the sides rather than floating small in the middle."""
+    fg_h = int(out_h * GENERAL_CONTENT_HEIGHT_RATIO)
+    fg_h += fg_h % 2
     return (
         f"[0:v]split=2[bga][fga];"
         f"[bga]scale=-2:{out_h},crop=w=min(iw\\,{out_w}):h={out_h},"
         f"scale={out_w}:{out_h},gblur=sigma=12[bg];"
-        f"[fga]scale={out_w}:-2[fg];"
+        # Scale by HEIGHT, then trim any overflow to the output width. crop
+        # centres by default, and min() makes it a no-op when the scaled source
+        # is already narrower than the frame (portrait/square sources).
+        f"[fga]scale=-2:{fg_h},crop=w=min(iw\\,{out_w}):h=ih[fg];"
         f"[bg][fg]overlay=x=(W-w)/2:y=(H-h)/2,setsar=1[v]"
     )
 

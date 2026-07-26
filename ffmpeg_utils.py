@@ -54,6 +54,29 @@ _NVENC_ARGS = {
 METADATA_SCRUB = ["-map_metadata", "-1", "-map_chapters", "-1",
                   "-map_metadata:s:v", "-1", "-map_metadata:s:a", "-1"]
 
+# Loudness normalisation for the delivered clip.
+#
+# Without this the clip inherits whatever the source was mastered at, so a
+# user's clips land anywhere: measured across real delivered clips on
+# 26-jul-2026, from -13.8 LUFS on a loud upload down to -28 LUFS on a quiet
+# talk. TikTok, Reels and Shorts all normalise playback to roughly -14 LUFS,
+# which means the quiet ones just sound thin next to everything else in the
+# feed — the loud ones aren't rewarded, the quiet ones are punished.
+#
+# I=-14 matches the platforms' target, TP=-1.5 leaves headroom so their own
+# re-encode can't clip, LRA=11 is the usual allowance for speech. Applied at
+# the clip cut, where the audio is being encoded to AAC anyway, so it costs
+# nothing extra. AUDIO_NORMALIZE=0 turns it off.
+LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
+
+
+def audio_encode_args():
+    """AAC encode args for a delivered clip, with loudness normalisation."""
+    args = ["-c:a", "aac"]
+    if os.environ.get("AUDIO_NORMALIZE", "1").strip() != "0":
+        args = ["-af", LOUDNORM_FILTER] + args
+    return args
+
 _probe_lock = threading.Lock()
 _nvenc_ok = None  # None = not probed yet
 _announced = False

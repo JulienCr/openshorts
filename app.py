@@ -378,6 +378,50 @@ def _canonical_clip_file(output_dir, base_name, index):
     return os.path.basename(max(derived, key=os.path.getmtime))
 
 
+def _strip_burned_captions(output_dir, filename):
+    """Walk ``subtitled_<ts>_`` prefixes back to the file without burned captions.
+
+    Returns the name unchanged when there is nothing to strip (or when the
+    underlying file is gone, e.g. a library restore that only kept the current
+    version).
+    """
+    while True:
+        m = re.match(r'^subtitled_\d+_(.+)$', filename)
+        if not m or not os.path.exists(os.path.join(output_dir, m.group(1))):
+            return filename
+        filename = m.group(1)
+
+
+def _reapply_captions(job_id, clip_index, video_path):
+    """Re-burn the default captions onto a freshly derived file.
+
+    Captions must always be the LAST layer. Editing or hooking a clip that
+    already had them burned in produced `edited_subtitled_<...>`, and the next
+    subtitle pass then stacked a second caption layer on top of the first —
+    visibly doubled and unreadable in real user clips (26-jul-2026). So the
+    derivation runs on the clean file and captions go back on afterwards.
+
+    Returns the captioned path, or None if there was nothing to caption.
+    """
+    try:
+        meta_files = glob.glob(os.path.join(OUTPUT_DIR, job_id, "*_metadata.json"))
+        if not meta_files:
+            return None
+        with open(meta_files[0], 'r') as f:
+            data = json.load(f)
+        transcript = data.get('transcript')
+        clips = data.get('shorts', [])
+        if not transcript or clip_index >= len(clips):
+            return None
+        clip = clips[clip_index]
+        import main as _main
+        return _main.auto_caption_clip(video_path, transcript,
+                                       clip['start'], clip['end'])
+    except Exception as e:
+        print(f"⚠️  Could not re-apply captions to {video_path}: {e}")
+        return None
+
+
 def _recover_jobs_from_disk():
     """Rebuild completed jobs from OUTPUT_DIR after a restart (issue #46 / #18).
 
@@ -1600,6 +1644,15 @@ async def edit_clip(
         if not os.path.exists(input_path):
              raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
 
+        # Edit the clip WITHOUT its burned captions, then put them back on top —
+        # otherwise the captions are baked into the edit and the next subtitle
+        # pass stacks a second layer over them (see _reapply_captions).
+        clean_name = _strip_burned_captions(os.path.join(OUTPUT_DIR, req.job_id), filename)
+        had_captions = clean_name != filename
+        if had_captions:
+            filename = clean_name
+            input_path = os.path.join(OUTPUT_DIR, req.job_id, clean_name)
+
         # Define output path for edited video
         edited_filename = f"edited_{filename}"
         output_path = os.path.join(OUTPUT_DIR, req.job_id, edited_filename)
@@ -1672,6 +1725,14 @@ async def edit_clip(
         # Run in thread pool
         loop = asyncio.get_event_loop()
         plan = await loop.run_in_executor(None, run_edit)
+
+        # Captions back on top, so the clip the user sees keeps them and the
+        # clean edited file stays available for a later restyle.
+        if had_captions:
+            recap = await loop.run_in_executor(
+                None, _reapply_captions, req.job_id, req.clip_index, output_path)
+            if recap:
+                edited_filename = os.path.basename(recap)
 
         new_video_url = f"/videos/{req.job_id}/{edited_filename}"
 
@@ -1977,13 +2038,8 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
              base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
              filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
 
-    # Re-subtitling must replace previous subtitles instead of burning over
-    # them: walk subtitled_<ts>_ prefixes back to the pre-subtitle file.
-    while True:
-        m = re.match(r'^subtitled_\d+_(.+)$', filename)
-        if not m or not os.path.exists(os.path.join(output_dir, m.group(1))):
-            break
-        filename = m.group(1)
+    # Re-subtitling must replace previous subtitles instead of burning over them.
+    filename = _strip_burned_captions(output_dir, filename)
 
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):
@@ -2207,7 +2263,16 @@ async def add_hook(req: HookRequest, request: Request):
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):
         raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
-        
+
+    # Same invariant as /api/edit: overlay onto the clip WITHOUT its burned
+    # captions, then put them back on top, so a later restyle never stacks a
+    # second caption layer (see _reapply_captions).
+    clean_name = _strip_burned_captions(output_dir, filename)
+    had_captions = clean_name != filename
+    if had_captions:
+        filename = clean_name
+        input_path = os.path.join(output_dir, clean_name)
+
     # Output video
     output_filename = f"hook_{filename}"
     output_path = os.path.join(output_dir, output_filename)
@@ -2237,6 +2302,13 @@ async def add_hook(req: HookRequest, request: Request):
 
     if reservation_id:
         await _metering.commit_reservation(reservation_id)
+
+    # Captions back on top (see /api/edit for the same invariant).
+    if had_captions:
+        recap = await asyncio.get_event_loop().run_in_executor(
+            None, _reapply_captions, req.job_id, req.clip_index, output_path)
+        if recap:
+            output_filename = os.path.basename(recap)
 
     # Update Persistence (Same logic as subtitles)
     # Update InMemory Jobs

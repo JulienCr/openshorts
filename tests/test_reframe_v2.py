@@ -83,7 +83,45 @@ class TestDeliverySize:
 
 
 def test_general_filtergraph_targets_output_geometry():
-    graph = general_filtergraph(608, 1080)
+    graph = general_filtergraph(1080, 1920)
     assert "gblur" in graph
-    assert "scale=608:-2" in graph
     assert "overlay=x=(W-w)/2:y=(H-h)/2" in graph
+
+
+class TestGeneralLayout:
+    """GENERAL used to leave the content at 32% of the frame, floating in blur."""
+
+    def test_content_is_scaled_by_height_not_width(self):
+        from reframe_v2 import GENERAL_CONTENT_HEIGHT_RATIO
+        graph = general_filtergraph(1080, 1920)
+        expected = int(1920 * GENERAL_CONTENT_HEIGHT_RATIO)
+        expected += expected % 2
+        assert f"scale=-2:{expected}" in graph
+
+    def test_content_height_is_even(self):
+        # Odd dimensions are rejected by the encoder. Read the FOREGROUND
+        # scale — the background line also contains a scale=-2: term.
+        for out_h in (1920, 1080, 1078, 976):
+            graph = general_filtergraph(1080, out_h)
+            fg = graph.split("[fga]scale=-2:")[1]
+            h = int(fg.split(",")[0])
+            assert h % 2 == 0, (out_h, h)
+
+    def test_overflow_is_trimmed_never_padded(self):
+        # min() keeps it a no-op for sources narrower than the frame.
+        graph = general_filtergraph(1080, 1920)
+        assert "crop=w=min(iw\\,1080):h=ih" in graph
+
+    def test_content_fills_more_than_the_old_full_width_fit(self):
+        # A 16:9 source fitted to full width was 9/16 of it — 0.5625 * 1080
+        # = 608px, i.e. 32% of a 1920 frame. The new layout must beat that.
+        from reframe_v2 import GENERAL_CONTENT_HEIGHT_RATIO
+        old_ratio = (1080 * 9 / 16) / 1920
+        assert GENERAL_CONTENT_HEIGHT_RATIO > old_ratio
+
+    def test_keeps_most_of_the_source_width(self):
+        # GENERAL is for groups and landscapes: cropping the sides too hard
+        # cuts people out of frame, which is the whole thing it exists to avoid.
+        from reframe_v2 import GENERAL_CONTENT_HEIGHT_RATIO
+        scaled_w = 1920 * GENERAL_CONTENT_HEIGHT_RATIO * (16 / 9)
+        assert 1080 / scaled_w > 0.70, "keeps less than 70% of the source width"

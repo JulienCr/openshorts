@@ -22,7 +22,8 @@ from google.genai import types as genai_types
 
 import gemini_worker
 from clip_selection import build_transcript_windows, snap_clip_to_words
-from ffmpeg_utils import video_encode_args, QUALITY, QUALITY_FAST, METADATA_SCRUB
+from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
+                          QUALITY_FAST, METADATA_SCRUB)
 from dotenv import load_dotenv
 import json
 
@@ -477,6 +478,45 @@ def create_general_frame(frame, output_width, output_height):
     
     return final_frame
 
+# Share of the frame's SIDE regions that has to look like text/graphics before a
+# single-face scene is treated as a screencast rather than a talking head.
+# Tuned against real prod clips; GRAPHIC_DENSITY_THRESHOLD=1.0 disables the rule.
+GRAPHIC_DENSITY_THRESHOLD = float(
+    os.environ.get("GRAPHIC_DENSITY_THRESHOLD", "0.085"))
+
+
+def _graphic_density(frame, face_candidates):
+    """Rough share of the frame's left/right thirds carrying text or graphics.
+
+    Text and UI have a signature a face doesn't: dense, high-contrast, mostly
+    axis-aligned edges. A Canny pass over the side thirds — the parts a 9:16
+    crop would throw away — separates "talking head on a plain background"
+    (near zero) from "talking head next to a chart" (high) well enough to
+    route the scene, and costs a fraction of a millisecond per sampled frame.
+
+    Face boxes are blanked first so a detailed face or busy clothing can't be
+    mistaken for a graphic.
+    """
+    try:
+        h, w = frame.shape[:2]
+        if w < 60 or h < 60:
+            return 0.0
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        for cand in face_candidates or []:
+            fx, fy, fw, fh = [int(v) for v in cand.get('box', (0, 0, 0, 0))]
+            # Generous margin: hair, shoulders and headsets are not graphics.
+            x0, y0 = max(0, fx - fw // 2), max(0, fy - fh // 2)
+            x1, y1 = min(w, fx + fw + fw // 2), min(h, fy + fh + fh // 2)
+            if x1 > x0 and y1 > y0:
+                gray[y0:y1, x0:x1] = 0
+        third = w // 3
+        sides = np.hstack((gray[:, :third], gray[:, -third:]))
+        edges = cv2.Canny(sides, 100, 200)
+        return float(np.count_nonzero(edges)) / edges.size
+    except Exception:
+        return 0.0  # never let the heuristic break scene analysis
+
+
 def analyze_scenes_strategy(video_path, scenes):
     """
     Analyzes each scene to determine if it should be TRACK (Single person) or GENERAL (Group/Wide).
@@ -500,6 +540,7 @@ def analyze_scenes_strategy(video_path, scenes):
         ))
 
         face_counts = []
+        graphic_scores = []
         for f_idx in frames_to_check:
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret, frame = cap.read()
@@ -513,6 +554,7 @@ def analyze_scenes_strategy(video_path, scenes):
             # Detect faces
             candidates = detect_face_candidates(frame)
             face_counts.append(len(candidates))
+            graphic_scores.append(_graphic_density(frame, candidates))
 
         # Decision Logic
         if not face_counts:
@@ -525,7 +567,18 @@ def analyze_scenes_strategy(video_path, scenes):
         # 1 face -> TRACK
         # > 1.2 faces -> GENERAL (Group)
 
+        avg_graphic = (sum(graphic_scores) / len(graphic_scores)
+                       if graphic_scores else 0.0)
+
+        # A lone face normally means TRACK — crop to the speaker. But a scene
+        # that is ALSO dense with text or graphics outside the face (a
+        # screencast, a chart, a headline, a comparison table) loses its whole
+        # point when cropped to 9:16: seen in real prod clips where headlines
+        # came out cut mid-word and unreadable. Those go to GENERAL, which
+        # keeps the full width.
         if avg_faces > 1.2 or avg_faces < 0.5:
+            strategies.append('GENERAL')
+        elif avg_graphic > GRAPHIC_DENSITY_THRESHOLD:
             strategies.append('GENERAL')
         else:
             strategies.append('TRACK')
@@ -1485,7 +1538,7 @@ if __name__ == '__main__':
                         '-to', str(end),
                         '-i', input_video,
                         *video_encode_args(QUALITY_FAST),
-                        '-c:a', 'aac',
+                        *audio_encode_args(),
                         clip_temp_path
                     ]
                     subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
