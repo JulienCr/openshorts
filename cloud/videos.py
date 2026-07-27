@@ -11,7 +11,7 @@ from sqlalchemy import select, delete
 
 from .config import settings, VIDEO_RETENTION_GRACE_DAYS, FREE_CLIP_RETENTION_DAYS
 from . import database, storage, metering
-from .models import UserVideo, Subscription, Project, User
+from .models import UserVideo, Subscription, Project, User, ClipExpiryWarning
 from .auth import get_current_user_required
 
 router = APIRouter()
@@ -333,18 +333,17 @@ async def purge_free_expired():
             print(f"⚠️  Free retention purge failed for {user_id}: {e}")
 
 
-# Video ids already covered by an expiry-warning email, so the 6-hourly sweep
-# doesn't re-mail the same user four times during the warning window. Process
-# memory only: after a restart the worst case is one duplicate warning.
-_warned_video_ids: set = set()
-
-
 async def warn_free_expiring():
     """Email free users whose clips enter their LAST day before deletion.
 
     The 7-day free retention is the plan's strongest honest upgrade lever, but
     silently deleting clips converts nobody — the user never learns they were
     at risk. One email on day 6 turns the real deadline into a visible one.
+
+    "Already warned" is recorded in clip_expiry_warnings rather than in memory.
+    The warning window is a full day and this sweep runs every six hours, so a
+    process-local set meant any deploy inside that window re-mailed everyone who
+    had already been told.
     """
     from datetime import datetime, timezone
     from .emails import send_clips_expiring_email
@@ -357,10 +356,11 @@ async def warn_free_expiring():
             select(UserVideo).where(UserVideo.created_at < warn_cutoff,
                                     UserVideo.created_at >= doomed_after)
         )).scalars())
+        already = set((await s.execute(select(ClipExpiryWarning.video_id))).scalars())
 
     by_user = {}
     for v in expiring:
-        if v.id in _warned_video_ids:
+        if v.id in already:
             continue
         by_user.setdefault(v.user_id, []).append(v)
 
@@ -371,9 +371,19 @@ async def warn_free_expiring():
             user = await s.get(User, user_id)
         if not user or not user.email:
             continue
+        # Record the warning BEFORE sending. A duplicate email is the failure we
+        # are fixing; a warning row for a mail that then failed to send only
+        # costs that user one notice, which is the cheaper way to be wrong.
+        try:
+            async with database.session() as s:
+                async with s.begin():
+                    for v in vids:
+                        s.add(ClipExpiryWarning(video_id=v.id, user_id=user_id))
+        except Exception as e:
+            print(f"⚠️  Could not record expiry warning for {user_id}: {e}")
+            continue
         try:
             await send_clips_expiring_email(user.email, len(vids))
-            _warned_video_ids.update(v.id for v in vids)
             print(f"⏳ Expiry warning sent: {len(vids)} clip(s), user {user_id}")
         except Exception as e:
             print(f"⚠️  Expiry warning failed for {user_id}: {e}")

@@ -86,7 +86,12 @@ async def send_clips_expiring_email(email: str, clip_count: int):
     visible instead of deleting silently. Doubles as re-engagement for users
     who clipped once and went quiet.
     """
-    dash = f"{settings.frontend_url}/dashboard"
+    # The app has no /dashboard route and never has: it is a single-page app
+    # routed entirely through the hash, and #app is what opens it (see
+    # dashboard/src/main.jsx). /dashboard used to land on the SPA fallback, so
+    # the button quietly showed the marketing page; now that unknown paths
+    # return a real 404 it fails visibly.
+    dash = f"{settings.frontend_url}/#app"
     n = clip_count
     clips = f"{n} clip" + ("s" if n != 1 else "")
     html = f"""

@@ -138,6 +138,32 @@ class UserVideo(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class ClipExpiryWarning(Base):
+    """One row per clip already covered by an expiry-warning email.
+
+    De-duplication for ``videos.warn_free_expiring`` used to be a process-local
+    set, which meant every API restart re-armed the warning for clips that had
+    already been warned about. The warning window is a full day and the sweep
+    runs every six hours, so any deploy inside that window sent the same user a
+    second "your clips will be deleted tomorrow" email. Persisting the state
+    fixes that: a restart no longer forgets who has been told.
+
+    Its own table rather than a column on ``user_videos`` because the schema
+    bootstrap is ``create_all`` (see cloud/database.py), which creates missing
+    tables but never ALTERs an existing one — see [SignupAttribution] above for
+    the same reasoning. The CASCADE means rows disappear on their own when
+    ``purge_free_expired`` deletes the clip they refer to, so this never needs
+    its own cleanup pass.
+    """
+    __tablename__ = "clip_expiry_warnings"
+    video_id = Column(UUID(as_uuid=True),
+                      ForeignKey("user_videos.id", ondelete="CASCADE"),
+                      primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    warned_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Project(Base):
     """One re-openable project per completed job.
 
