@@ -156,7 +156,21 @@ const articleNode = (page) => ({
 })
 
 const buildGraph = (page) => {
-  const graph = [orgNode(), breadcrumbNode(page), articleNode(page)]
+  // Error pages are described as a plain WebPage. Emitting an Article for one
+  // would assert an author and a publication date for content nobody wrote.
+  const main = page.noindex
+    ? {
+        '@type': 'WebPage',
+        '@id': `${SITE.url}${page.path}#webpage`,
+        name: page.h1,
+        description: page.description,
+        url: `${SITE.url}${page.path}`,
+        inLanguage: 'en-US',
+        publisher: { '@id': `${SITE.url}/#organization` },
+      }
+    : articleNode(page)
+
+  const graph = [orgNode(), breadcrumbNode(page), main]
   if (page.faq?.length) graph.push(faqNode(page))
   if (page.extraNodes) graph.push(...page.extraNodes)
   return { '@context': 'https://schema.org', '@graph': graph }
@@ -241,11 +255,18 @@ ${NAV}
 <main><div class="wrap">
 <div class="crumbs">${crumbs}</div>
 <h1>${esc(page.h1)}</h1>
-<div class="byline">
+${
+  // A byline and a publication date are authorship signals, and an error page
+  // is not authored content. Dating the 404 also read as a mistake to anyone
+  // who landed on it.
+  page.noindex
+    ? ''
+    : `<div class="byline">
   By the OpenShorts team<span class="sep">·</span>
   Published <time datetime="${esc(page.published || SITE.published)}">${esc(page.published || SITE.published)}</time><span class="sep">·</span>
   Updated <time datetime="${esc(page.updated || SITE.updated)}">${esc(page.updated || SITE.updated)}</time>
-</div>
+</div>`
+}
 <div class="tldr"><span class="label">TL;DR</span>${page.tldr.map((p) => `<p>${p}</p>`).join('')}</div>
 ${page.body}
 ${relatedBlock(related)}
