@@ -7,7 +7,20 @@
 [![GitHub stars](https://img.shields.io/github/stars/mutonby/openshorts?style=social)](https://github.com/mutonby/openshorts)
 [![Last Commit](https://img.shields.io/github/last-commit/mutonby/openshorts)](https://github.com/mutonby/openshorts/commits/main)
 
-**Free & open source AI video platform** with 3 tools in one: **Clip Generator**, **AI Shorts (UGC videos with AI actors)**, and **YouTube Studio**. Self-hosted with Docker. No watermarks, no limits.
+**Open source AI video platform** with 3 tools in one: **Clip Generator**, **AI Shorts (UGC videos with AI actors)**, and **YouTube Studio**.
+
+**Two ways to run it, same software either way:**
+
+|  | Self-hosted (this repo) | Hosted on [openshorts.app](https://www.openshorts.app/) |
+|---|---|---|
+| **Price** | Free forever, MIT | Free plan, paid from $12/mo |
+| **Speed** | 5 to 8 min per 8-min video on CPU | About 50s on our NVIDIA GPU |
+| **API keys** | Bring your own Gemini, ElevenLabs, fal.ai | Gemini included, nothing to set up |
+| **Watermark / limits** | None, ever | Watermark and 20 min/mo on the free plan, neither on paid |
+| **Setup** | Docker, 8GB+ RAM, model downloads | Sign in and paste a link |
+| **Your data** | Your server | Ours |
+
+Self-hosting is genuinely free and always will be. It costs you a machine, your own API keys and the time to keep it running. The hosted plans exist to cover that hardware and those keys, not to unlock features.
 
 https://github.com/user-attachments/assets/b45fa983-16b4-48b5-ac5b-a267836b9ad9
 
@@ -129,11 +142,11 @@ Videos generated with OpenShorts AI Shorts — no camera, no studio, no actors:
 
 | Feature | OpenShorts | Opus Clip | CapCut | Vizard | Klap | Descript |
 |---------|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Price** | **Free** | $15-29/mo | $8/mo | $15-20/mo | $23-63/mo | $24-65/mo |
+| **Price** | **Free self-hosted**<br>from $12/mo hosted | $15-29/mo | $8/mo | $15-20/mo | $23-63/mo | $24-65/mo |
 | **Self-hosted** | **Yes** | No | No | No | No | No |
 | **Open source** | **Yes** | No | No | No | No | No |
-| **Watermark** | **Never** | Free tier | Some | Free tier | Free tier | Free tier |
-| **Upload limits** | **None** | 10-30GB | Credit-based | 60min-10hr | 10-100 vids/mo | 60min-40hr |
+| **Watermark** | **Never self-hosted**<br>free plan only when hosted | Free tier | Some | Free tier | Free tier | Free tier |
+| **Upload limits** | **None self-hosted**<br>by plan when hosted | 10-30GB | Credit-based | 60min-10hr | 10-100 vids/mo | 60min-40hr |
 | **AI clip detection** | Yes | Yes | Yes | Yes | Yes | Yes |
 | **Smart 9:16 reframing** | Yes | Yes | Yes | Yes | Yes | No |
 | **Auto subtitles** | Yes | Yes | Yes | Yes | Yes | Yes |
@@ -150,7 +163,7 @@ Videos generated with OpenShorts AI Shorts — no camera, no studio, no actors:
 
 ## How Much Does It Cost?
 
-OpenShorts is free. You only pay for the AI APIs you use — and most have generous free tiers:
+Self-hosting OpenShorts is free. You provide the machine and you only pay for the AI APIs you use, and most have generous free tiers:
 
 | Service | Free Tier | Paid Cost | Used For |
 |---------|-----------|-----------|----------|
@@ -161,6 +174,8 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 | **AWS S3** | Optional | ~$0.023/GB | Cloud backup for clips and gallery |
 
 **Bottom line:** You can clip videos for practically free with Gemini, and publish 10 videos/month to all social networks at zero cost with Upload-Post.
+
+**Don't want to run any of that?** [openshorts.app](https://www.openshorts.app/) is the same software on our hardware: our NVIDIA GPU clips an 8-minute video in about 50 seconds instead of the 5 to 8 minutes it takes on a typical CPU, the Gemini key is included, and auto-publishing is already wired up. Free plan is 20 minutes a month with a watermark and no credit card; paid plans start at $12/mo for 100 minutes without watermark.
 
 ---
 
