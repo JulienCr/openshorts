@@ -163,7 +163,7 @@ export default function Landing({ onLaunchApp }) {
   const faqs = [
     {
       question: "Is OpenShorts really free? What's the catch?",
-      answer: "There are two ways to use OpenShorts. (1) Self-hosted is 100% free and open source: you run it with Docker on your own machine, bring your own API keys, and there are no watermarks, no usage limits, and no subscription. Google Gemini API (required) powers the AI analysis — its free tier includes 1,500 requests/day. ElevenLabs (optional) enables AI dubbing in 30+ languages. Upload-Post (optional) publishes to YouTube, TikTok, and Instagram. (2) Hosted at openshorts.app is the no-setup option: we run all the AI and compute for you and you don't need any API keys — it has a free plan (20 minutes of video a month, watermark, no credit card) and paid plans from $12/mo for 100 minutes without watermark. So: free if you self-host, free to try in the cloud, paid if you want more. Both are far cheaper than Opus Clip ($15-228/month) or Kapwing ($24-79/month)."
+      answer: "There is no catch, but there are two different things on offer. (1) Self-hosted is 100% free and open source: you run it with Docker on your own machine, bring your own API keys, and there are no watermarks, no usage limits and no subscription. What it costs you is hardware and time. On a typical CPU an 8-minute video takes 5 to 8 minutes to process, and you need your own Google Gemini key (required, free tier is 1,500 requests/day), plus ElevenLabs for dubbing and fal.ai for AI Shorts if you want those. (2) Hosted at openshorts.app is the same software with the running costs covered: our NVIDIA GPU clips that same 8-minute video in about 50 seconds, the Gemini key is included so there is nothing to create or paste, auto-posting to TikTok, Instagram and YouTube is already wired up, and your clips are stored and re-openable from any browser. It has a free plan (20 minutes a month, watermark, no credit card) and paid plans from $12/mo for 100 minutes without watermark. So: free if you are happy to run it yourself, paid if you would rather it just ran fast. Both are far cheaper than Opus Clip ($15-228/month) or Kapwing ($24-79/month)."
     },
     {
       question: "What is OpenShorts and how does it work?",
@@ -413,7 +413,7 @@ export default function Landing({ onLaunchApp }) {
       <section className="py-20 px-6 border-t border-rule">
         <div className="max-w-4xl mx-auto">
           <SectionHeader eyebrow="02 · Deploy" title="Two ways to use OpenShorts">
-            Let us run everything — or run it yourself for free.
+            The same open source software, running either on our GPU or on your machine.
           </SectionHeader>
           <div className="grid md:grid-cols-2 gap-6">
             <div className="card p-8 flex flex-col border-brass">
@@ -423,7 +423,7 @@ export default function Landing({ onLaunchApp }) {
                 <span className="badge-brass">Recommended · Free Plan</span>
               </div>
               <ul className="space-y-1.5 mb-6 flex-1">
-                {['Zero setup', 'No API keys — Gemini included', 'Social publishing built in', '20 free min/month, no card'].map((f, i) => (
+                {['Our NVIDIA GPU: an 8-min video in about 50s', 'Gemini key included, nothing to set up', 'Social publishing built in', '20 free min/month, no card'].map((f, i) => (
                   <li key={i} className="flex items-center gap-2 text-sm text-muted"><Check size={14} className="text-ok shrink-0" />{f}</li>
                 ))}
               </ul>
@@ -444,7 +444,7 @@ export default function Landing({ onLaunchApp }) {
                 <span className="readout border border-rule rounded-full px-2.5 py-1">Free · Docker</span>
               </div>
               <ul className="space-y-1.5 mb-6 flex-1">
-                {['Your infrastructure', 'Bring your own API keys', 'You maintain it', '100% free forever'].map((f, i) => (
+                {['Your machine: 5 to 8 min on a typical CPU', 'Bring your own Gemini, ElevenLabs and fal.ai keys', 'You install it, you maintain it, you back it up', 'Free forever, and always will be'].map((f, i) => (
                   <li key={i} className="flex items-center gap-2 text-sm text-muted"><Check size={14} className="text-ok shrink-0" />{f}</li>
                 ))}
               </ul>

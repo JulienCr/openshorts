@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Loader2, Zap, Github, Server } from 'lucide-react';
+import { Check, Loader2, Zap, Cpu, KeyRound, Send, HardDrive } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
 import { track } from '../lib/analytics';
@@ -13,6 +13,7 @@ const PLAN_BLURB = {
 };
 const HIGHLIGHT = 'creator';
 const FREE_MINUTES = 20;
+
 
 const fmt = (amount, currency) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: (currency || 'usd').toUpperCase(), maximumFractionDigits: 0 }).format((amount || 0) / 100);
@@ -88,6 +89,8 @@ export default function PricingSection({ onRequireLogin }) {
           <ul className="space-y-2 text-sm text-ink2 mb-6 flex-1">
             <li className="flex items-start gap-2"><Check size={16} className="text-ok shrink-0 mt-0.5" /> <span><b>{FREE_MINUTES} min</b> of video / month</span></li>
             <li className="flex items-start gap-2"><Check size={16} className="text-ok shrink-0 mt-0.5" /> <span>YouTube URL or upload</span></li>
+            <li className="flex items-start gap-2"><Cpu size={16} className="text-ok shrink-0 mt-0.5" /> <span>Same <b>GPU rendering</b>, about 50s per 8-min video</span></li>
+            <li className="flex items-start gap-2"><KeyRound size={16} className="text-ok shrink-0 mt-0.5" /> <span>Gemini key included, no setup</span></li>
             <li className="flex items-start gap-2"><Check size={16} className="text-ok shrink-0 mt-0.5" /> <span>No credit card — Google sign-in</span></li>
             <li className="flex items-start gap-2"><Check size={16} className="text-muted shrink-0 mt-0.5" /> <span className="text-muted">Watermark · clips kept 7 days</span></li>
           </ul>
@@ -122,8 +125,9 @@ export default function PricingSection({ onRequireLogin }) {
               </div>
               <ul className="space-y-2 text-sm text-ink2 mb-6 flex-1">
                 <li className="flex items-start gap-2"><Check size={16} className="text-ok shrink-0 mt-0.5" /> <span><b>{entry.minutes} min</b> of video / month</span></li>
-                <li className="flex items-start gap-2"><Check size={16} className="text-ok shrink-0 mt-0.5" /> <span>No API keys needed</span></li>
-                <li className="flex items-start gap-2"><Check size={16} className="text-ok shrink-0 mt-0.5" /> <span>Gemini + auto-posting included</span></li>
+                <li className="flex items-start gap-2"><Check size={16} className="text-ok shrink-0 mt-0.5" /> <span><b>No watermark</b>, no 7-day clip expiry</span></li>
+                <li className="flex items-start gap-2"><Cpu size={16} className="text-ok shrink-0 mt-0.5" /> <span><b>GPU rendering</b>, about 50s per 8-min video</span></li>
+                <li className="flex items-start gap-2"><KeyRound size={16} className="text-ok shrink-0 mt-0.5" /> <span>Gemini key + auto-posting included</span></li>
                 {plan === 'pro' && <li className="flex items-start gap-2"><Zap size={16} className="text-brass shrink-0 mt-0.5" /> <span>Priority processing queue</span></li>}
               </ul>
               <button
@@ -146,10 +150,11 @@ export default function PricingSection({ onRequireLogin }) {
             <span className="badge-ok"><Check size={12} /> Included in every plan</span>
           </div>
           <ul className="space-y-2 text-sm text-ink2">
-            <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>Clip Generator</b> — fully managed, no API keys</span></li>
-            <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>YouTube Studio</b> — titles, thumbnails, descriptions</span></li>
-            <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span>Auto-posting to TikTok, Instagram &amp; YouTube Shorts</span></li>
-            <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span>All the AI &amp; compute run on our servers</span></li>
+            <li className="flex items-start gap-2"><Cpu size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>Our NVIDIA GPU does the rendering.</b> An 8-minute video is clipped in about 50 seconds, instead of the 5 to 8 minutes it takes on a typical CPU.</span></li>
+            <li className="flex items-start gap-2"><KeyRound size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>The Gemini API key is included.</b> Nothing to sign up for, nothing to paste, no per-request quota of your own to babysit.</span></li>
+            <li className="flex items-start gap-2"><Send size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>Auto-posting is already wired up</b> for TikTok, Instagram Reels and YouTube Shorts.</span></li>
+            <li className="flex items-start gap-2"><HardDrive size={15} className="text-ok shrink-0 mt-0.5" /> <span><b>Clips are stored and served for you</b>, ready to re-open and re-edit from any browser.</span></li>
+            <li className="flex items-start gap-2"><Check size={15} className="text-ok shrink-0 mt-0.5" /> <span>Full <b>YouTube Studio</b>: titles, thumbnails and descriptions.</span></li>
           </ul>
           <p className="text-xs text-muted mt-3 pt-3 border-t border-rule">
             Your monthly minutes cover video processing. Titles &amp; descriptions are free;
@@ -169,35 +174,8 @@ export default function PricingSection({ onRequireLogin }) {
         </div>
       </div>
 
-      {/* Free self-hosted path — the honest "free" option */}
-      <div className="mt-10 card p-6 md:p-8">
-        <div className="flex flex-col md:flex-row md:items-center gap-6 justify-between">
-          <div className="flex flex-col sm:flex-row items-start gap-4 min-w-0">
-            <div className="p-3 rounded-input bg-paper3 text-muted shrink-0"><Server size={18} /></div>
-            <div className="min-w-0">
-              <h3 className="font-display lowercase text-lg text-ink flex flex-wrap items-center gap-2">
-                Free forever — self-hosted
-                <span className="badge-ok">$0</span>
-              </h3>
-              <p className="text-muted text-sm mt-1 max-w-xl leading-relaxed">
-                OpenShorts is open source. Run it on your own machine with Docker and use it <b className="text-ink2">completely free</b> —
-                you just bring your own API keys and your own hardware. The plans above are for the
-                <b className="text-ink2"> hosted version on this site</b>: zero setup, no keys, we run everything for you.
-              </p>
-            </div>
-          </div>
-          <a
-            href="https://github.com/mutonby/openshorts"
-            target="_blank" rel="noopener noreferrer"
-            className="shrink-0 btn-ghost whitespace-nowrap"
-          >
-            <Github size={16} /> Self-host free
-          </a>
-        </div>
-      </div>
-
-      <p className="text-center text-muted text-xs mt-6 lowercase">
-        Use it free on your own computer, start free right here, or upgrade for more minutes and no watermark.
+      <p className="text-center text-muted text-xs mt-8 lowercase">
+        start free right here, upgrade for more minutes and no watermark, or run it yourself on your own hardware.
       </p>
     </div>
   );
