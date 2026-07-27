@@ -216,8 +216,9 @@ export function renderPage(page, related = []) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(page.title)}</title>
 <meta name="description" content="${esc(page.description)}">
-<link rel="canonical" href="${canonical}">
-<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
+${page.noindex ? '' : `<link rel="canonical" href="${canonical}">\n`}<meta name="robots" content="${
+    page.noindex ? 'noindex,follow' : 'index,follow,max-image-preview:large,max-snippet:-1'
+  }">
 <link rel="icon" type="image/png" href="/logo-openshorts.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

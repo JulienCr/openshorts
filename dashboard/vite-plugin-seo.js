@@ -66,6 +66,29 @@ ${pages.map((p) => `- [${p.h1}](${SITE.url}${p.path}): ${p.description}`).join('
 - [Source code on GitHub](${SITE.repo}): MIT licensed, self-hostable with Docker Compose.
 `
 
+const notFoundPage = () => ({
+  path: '/404',
+  noindex: true,
+  title: 'Page not found | OpenShorts',
+  description: 'That page does not exist on openshorts.app.',
+  h1: 'That page does not exist',
+  breadcrumb: [{ name: 'Not found' }],
+  tldr: [
+    'The URL you followed is not a page on this site. It may have been a link to the app, which lives at the site root, or to the public gallery, which is served from api.openshorts.app.',
+    'The links below cover everything openshorts.app actually publishes.',
+  ],
+  body: `
+<h2>Where you probably wanted to go</h2>
+<ul>
+  <li><a href="${SITE.url}/">The app and the landing page</a>, where you can paste a video link and get clips.</li>
+  <li><a href="/how-openshorts-works">How OpenShorts works</a>, the pipeline stage by stage.</li>
+  <li><a href="/alternatives">Comparisons</a> against Opus Clip, Klap, Vizard and Submagic.</li>
+  <li><a href="https://api.openshorts.app/gallery" rel="noopener">The public video gallery</a>, which is served from the API host.</li>
+  <li><a href="${SITE.repo}" rel="noopener">The source on GitHub</a>, MIT licensed and self-hostable.</li>
+</ul>`,
+  faq: [],
+})
+
 export default function seoPlugin() {
   const pages = buildPages()
 
@@ -104,6 +127,15 @@ export default function seoPlugin() {
 
       this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: sitemapXml(pages) })
       this.emitFile({ type: 'asset', fileName: 'llms.txt', source: llmsTxt(pages) })
+
+      // Served by nginx's error_page for unknown paths. Kept out of `pages` so
+      // it never reaches the sitemap or llms.txt, and marked noindex, because a
+      // 404 body that gets indexed is worse than no 404 page at all.
+      this.emitFile({
+        type: 'asset',
+        fileName: '404.html',
+        source: renderPage(notFoundPage(), relatedFor(pages[0], pages)),
+      })
     },
   }
 }
