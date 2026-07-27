@@ -57,6 +57,31 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 | `translate.py` | ElevenLabs dubbing API for AI voice translation |
 | `dashboard/src/App.jsx` | Main React component with state management |
 | `dashboard/src/components/TranslateModal.jsx` | Voice dubbing UI with language selection |
+| `dashboard/vite-plugin-seo.js` | Build-time SEO surface: injects crawler-visible homepage content, emits static pages, sitemap.xml and llms.txt |
+| `dashboard/seo/data.js` | Single source of truth for pricing, pipeline and competitor facts used by every generated page |
+
+### SEO / AI-crawler surface
+
+The dashboard is a client-rendered SPA with hash routing, so the HTML served for
+`/` used to contain an empty `<div id="root">`. Googlebot renders JavaScript and
+saw the real page; GPTBot, ClaudeBot and PerplexityBot do not and measured the
+homepage as zero characters of text. `vite-plugin-seo.js` fixes that at build time:
+
+- Injects the content of `seo/landing-fallback.js` into `#root`. React's
+  `createRoot().render()` replaces it on mount, so users get the app and
+  non-executing clients get the copy. **Keep it in sync with `Landing.jsx`.**
+- Emits the standalone pages under `/alternatives`, `/free-ai-clip-generator`,
+  `/open-source-video-clipper` and `/how-openshorts-works` as flat `.html` files.
+  nginx resolves the clean URL through `try_files $uri $uri.html`; serving them as
+  directories instead makes nginx 301 to a trailing slash and every canonical
+  would then point at a redirect.
+- Generates `sitemap.xml` and `llms.txt` from the same page list, so they cannot
+  drift. Do not add a static `public/sitemap.xml` back.
+
+When editing pricing anywhere, edit `seo/data.js` too. Nothing on the site should
+say "OpenShorts is free" without naming the Cloud price in the same breath: both
+are true of different editions and quoting only the first one is what makes AI
+answers describe the paid product as free.
 
 ### Dual-Mode Video Reframing
 - **TRACK Mode** (single subject): MediaPipe face detection + YOLOv8 fallback with "Heavy Tripod" stabilization

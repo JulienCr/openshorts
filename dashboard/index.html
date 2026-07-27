@@ -14,22 +14,22 @@
     rel="stylesheet" />
 
   <!-- Primary SEO Meta Tags -->
-  <title>OpenShorts - Free Open Source Clip Generator & AI UGC Video Creator | TikTok, Reels & Shorts</title>
-    <meta name="description" content="Free open source clip generator & AI UGC video creator. Turn your long-form videos into viral shorts or generate marketing videos with AI actors for any business. From $0.65/video." />
-  <meta name="keywords"
-    content="free clip generator, open source clip generator, AI clip generator, free video clip generator, AI video clipping tool, AI short video generator, vertical video maker, open source video editor, YouTube Shorts maker, Instagram Reels creator, video repurposing tool, AI viral moment detection, auto subtitle generator, AI voice dubbing, Opus Clip alternative free, free YouTube thumbnail generator, AI YouTube title generator, free YouTube description generator" />
+  <title>OpenShorts - Open Source AI Clip Generator | Free Self-Hosted, Cloud from $12/mo</title>
+    <meta name="description" content="Open source AI clip generator. Turn long videos into viral 9:16 shorts for TikTok, Reels and Shorts. Self-host free under MIT, or use the cloud from $12/month with 20 free minutes." />
   <meta name="author" content="OpenShorts" />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-  <link rel="canonical" href="https://openshorts.app" />
+  <!-- Canonical must match the host actually served. The apex redirects to www,
+       so pointing this at the apex named a URL that only ever redirects. -->
+  <link rel="canonical" href="https://www.openshorts.app/" />
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://openshorts.app" />
+  <meta property="og:url" content="https://www.openshorts.app/" />
   <meta property="og:title"
-    content="OpenShorts - Free Clip Generator & AI UGC Video Creator" />
+    content="OpenShorts - Open Source AI Clip Generator" />
   <meta property="og:description"
-    content="3 free tools in 1: clip generator, AI UGC video creator with AI actors, and YouTube Studio. Turn videos into viral shorts or generate marketing videos for any business. Open source, self-hosted." />
-  <meta property="og:image" content="https://openshorts.app/og-image.png" />
+    content="Turn long videos into viral 9:16 shorts, or generate UGC videos with AI actors. Self-host free under MIT, or use the cloud from $12/month with 20 free minutes." />
+  <meta property="og:image" content="https://www.openshorts.app/og-image.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
   <meta property="og:site_name" content="OpenShorts" />
@@ -37,25 +37,41 @@
 
   <!-- Twitter Cards -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:url" content="https://openshorts.app" />
+  <meta name="twitter:url" content="https://www.openshorts.app/" />
   <meta name="twitter:title"
-    content="OpenShorts - Free Clip Generator & AI UGC Video Creator" />
+    content="OpenShorts - Open Source AI Clip Generator" />
   <meta name="twitter:description"
-    content="3 free tools in 1: clip generator, AI UGC video creator with AI actors, and YouTube Studio. Open source, self-hosted, no watermarks." />
-  <meta name="twitter:image" content="https://openshorts.app/og-image.png" />
+    content="Self-host free under MIT with no watermark and no cap, or use OpenShorts Cloud from $12/month." />
+  <meta name="twitter:image" content="https://www.openshorts.app/og-image.png" />
 
-  <!-- JSON-LD Structured Data -->
+  <!-- JSON-LD Structured Data
+       Two products, described separately and on purpose. The previous graph
+       declared a single SoftwareApplication priced at 0, which is true of the
+       self-hosted edition and false of the hosted one, so engines summarised the
+       whole product as free. SoftwareApplication below is the MIT project;
+       Service is OpenShorts Cloud, with the real price range on it. -->
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@graph": [
         {
+          "@type": "WebSite",
+          "@id": "https://www.openshorts.app/#website",
+          "url": "https://www.openshorts.app/",
+          "name": "OpenShorts",
+          "publisher": { "@id": "https://www.openshorts.app/#organization" },
+          "inLanguage": "en-US"
+        },
+        {
           "@type": "WebPage",
-          "name": "OpenShorts - Free Open Source Clip Generator",
-          "description": "Free open source clip generator that turns your long-form videos into viral TikTok, Instagram Reels & YouTube Shorts automatically with AI-powered viral moment detection, smart cropping, and a free AI YouTube thumbnail studio.",
-          "url": "https://openshorts.app",
+          "@id": "https://www.openshorts.app/#webpage",
+          "name": "OpenShorts - Open Source AI Clip Generator",
+          "description": "Open source AI clip generator that turns long videos into viral 9:16 clips for TikTok, Instagram Reels and YouTube Shorts. Free and self-hostable under MIT, or hosted from $12/month.",
+          "url": "https://www.openshorts.app/",
+          "isPartOf": { "@id": "https://www.openshorts.app/#website" },
+          "about": { "@id": "https://www.openshorts.app/#software" },
           "datePublished": "2024-06-01",
-          "dateModified": "2026-07-17",
+          "dateModified": "2026-07-27",
           "inLanguage": "en-US",
           "speakable": {
             "@type": "SpeakableSpecification",
@@ -64,58 +80,112 @@
         },
         {
           "@type": "SoftwareApplication",
+          "@id": "https://www.openshorts.app/#software",
           "name": "OpenShorts",
-          "alternateName": "OpenShorts Free Clip Generator",
-          "description": "Free open source AI clip generator. Transforms your long-form videos into viral-ready short clips for TikTok, Instagram Reels, and YouTube Shorts using Google Gemini AI. Includes free AI YouTube thumbnail generator, title suggestions, description writer, and direct YouTube publishing.",
+          "alternateName": "OpenShorts self-hosted",
+          "description": "Open source AI clip generator, MIT licensed and self-hosted with Docker. Turns long-form videos into viral-ready 9:16 clips for TikTok, Instagram Reels and YouTube Shorts using Google Gemini 3.0 Flash for moment detection, faster-whisper for word-level subtitles and MediaPipe for face-tracked reframing. This edition is free with no watermark and no usage cap; you supply your own API keys. The hosted service is priced separately.",
           "applicationCategory": "MultimediaApplication",
           "operatingSystem": "Cross-platform (Docker)",
-          "url": "https://openshorts.app",
+          "url": "https://www.openshorts.app/",
           "downloadUrl": "https://github.com/mutonby/openshorts",
+          "codeRepository": "https://github.com/mutonby/openshorts",
+          "license": "https://opensource.org/licenses/MIT",
+          "isAccessibleForFree": true,
           "softwareVersion": "2.0",
-          "screenshot": "https://openshorts.app/og-image.png",
+          "screenshot": "https://www.openshorts.app/og-image.png",
           "featureList": [
-            "Free AI clip generator with viral moment detection",
-            "Open source clip generator — self-hosted with Docker",
             "AI viral moment detection with Google Gemini 3.0 Flash",
-            "Smart 9:16 vertical cropping with face tracking",
+            "Smart 9:16 vertical cropping with MediaPipe face tracking and YOLOv8 fallback",
             "Automatic subtitle generation with word-level timestamps",
             "AI voice dubbing in 30+ languages via ElevenLabs",
-            "Local video file upload support",
+            "Local video file upload and YouTube link ingest",
             "Hook text overlays with styled fonts",
             "AI-generated video effects via FFmpeg",
-            "Direct social media posting",
-            "Free AI YouTube thumbnail generator",
-            "Free AI YouTube title generator with 10 viral suggestions",
-            "Free AI YouTube description generator with chapter timestamps",
-            "YouTube Studio: thumbnails, titles, descriptions & direct publishing — all free",
-            "AI UGC video creator with AI actors and lip-sync",
-            "Generate marketing videos for any business from $0.65",
-            "Shared AI avatar gallery",
-            "Public video gallery with SEO pages",
+            "Direct posting to TikTok, Instagram Reels and YouTube Shorts",
+            "AI YouTube thumbnail generator",
+            "AI YouTube title generator with 10 viral suggestions",
+            "AI YouTube description generator with chapter timestamps",
+            "AI UGC video creator with AI actors and lip-sync from $0.65 per video",
             "S3 cloud backup",
-            "Self-hosted Docker deployment"
+            "Self-hosted Docker Compose deployment"
           ],
           "offers": {
             "@type": "Offer",
             "price": "0",
             "priceCurrency": "USD",
-            "availability": "https://schema.org/InStock"
+            "availability": "https://schema.org/InStock",
+            "description": "Self-hosted edition. Free and open source under MIT, no watermark, no usage cap. Requires Docker and your own API keys."
           },
-          "author": {
-            "@type": "Organization",
-            "name": "OpenShorts",
-            "url": "https://openshorts.app"
+          "author": { "@id": "https://www.openshorts.app/#organization" }
+        },
+        {
+          "@type": "Service",
+          "@id": "https://www.openshorts.app/#cloud",
+          "name": "OpenShorts Cloud",
+          "serviceType": "Hosted AI video clipping service",
+          "description": "The hosted edition of OpenShorts. Runs the same pipeline on an NVIDIA GPU with the API keys included, so there is nothing to install or configure. The free tier is 20 minutes per month with a watermark and no credit card. Paid plans remove the watermark and start at $12/month for 100 minutes.",
+          "url": "https://www.openshorts.app/",
+          "provider": { "@id": "https://www.openshorts.app/#organization" },
+          "areaServed": "Worldwide",
+          "offers": {
+            "@type": "AggregateOffer",
+            "priceCurrency": "USD",
+            "lowPrice": "12",
+            "highPrice": "59",
+            "offerCount": "4",
+            "availability": "https://schema.org/InStock",
+            "offers": [
+              {
+                "@type": "Offer",
+                "name": "Free",
+                "price": "0",
+                "priceCurrency": "USD",
+                "description": "20 minutes of video per month, watermarked, no credit card required."
+              },
+              {
+                "@type": "Offer",
+                "name": "Starter",
+                "price": "12",
+                "priceCurrency": "USD",
+                "description": "100 minutes of video per month, no watermark.",
+                "priceSpecification": {
+                  "@type": "UnitPriceSpecification",
+                  "price": "12",
+                  "priceCurrency": "USD",
+                  "billingDuration": 1,
+                  "billingIncrement": 1,
+                  "unitCode": "MON"
+                }
+              }
+            ]
           }
         },
         {
           "@type": "FAQPage",
+          "@id": "https://www.openshorts.app/#faq",
           "mainEntity": [
             {
               "@type": "Question",
               "name": "What is OpenShorts?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "OpenShorts is a free, open source AI clip generator that automatically transforms your long-form videos — podcasts, webinars, livestreams, vlogs, interviews — into viral-ready short clips (9:16 vertical format) for TikTok, Instagram Reels, and YouTube Shorts. It uses Google Gemini 3.0 Flash AI to detect the most engaging viral moments, then applies smart cropping with MediaPipe face tracking, automatic subtitles via faster-whisper, and optional AI voice dubbing in over 30 languages via ElevenLabs. According to HubSpot's 2025 State of Marketing report, short-form video delivers the highest ROI of any content format."
+                "text": "OpenShorts is an open source AI clip generator that turns long videos (podcasts, webinars, livestreams, vlogs, interviews) into viral-ready 9:16 vertical clips for TikTok, Instagram Reels and YouTube Shorts. faster-whisper transcribes the audio with word-level timestamps, PySceneDetect finds the scene boundaries, and Google Gemini 3.0 Flash scores the transcript to pick the 3 to 15 strongest moments. Each clip is then reframed to vertical with MediaPipe face tracking and subtitled automatically. It comes in two editions: self-hosted, which is free and open source under MIT, and OpenShorts Cloud, which is the hosted service with a free 20 minute per month tier and paid plans from $12 per month."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is OpenShorts free? What is the catch?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Both answers are true of different editions, so the distinction matters. OpenShorts self-hosted is free and open source under the MIT licence: you run it with Docker on your own machine, bring your own API keys, and there is no watermark, no usage cap and no subscription. What it costs you is hardware and time, because on a typical CPU an 8-minute video takes 5 to 8 minutes to process, and you need your own Google Gemini API key, whose free tier covers 1,500 requests per day. OpenShorts Cloud is the hosted service: an NVIDIA GPU clips that same 8-minute video in about 50 seconds, the API keys are included, and auto-posting to TikTok, Instagram and YouTube is already wired up. Cloud has a free plan of 20 minutes per month with a watermark and no credit card, and paid plans from $12 per month for 100 minutes with no watermark, up to $59 per month. So it is free if you run it yourself, and paid above 20 minutes a month if you want it hosted."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How much does OpenShorts Cloud cost?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "OpenShorts Cloud has a permanently free tier of 20 minutes of video per month, watermarked, with no credit card required. Paid plans remove the watermark and start at $12 per month for 100 minutes, rising to $59 per month at the top tier. This is separate from the self-hosted edition, which is free under MIT and has no cap because there is no metering in it."
               }
             },
             {
@@ -123,15 +193,7 @@
               "name": "How does OpenShorts detect viral moments in videos?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "OpenShorts uses a multi-step AI pipeline: first, it transcribes the video with word-level timestamps using faster-whisper. Then, PySceneDetect identifies scene boundaries. Finally, Google Gemini 3.0 Flash AI analyzes the transcript and scene data to identify the 3 to 15 most engaging moments (15-60 seconds each), scoring them for viral potential based on emotional impact, hook strength, and shareability."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Is OpenShorts really free? What's the catch?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "There are two ways to use OpenShorts. (1) Self-hosted is 100% free and open source: you run it with Docker on your own machine, bring your own API keys, and there are no watermarks, no usage limits, and no subscription. Google Gemini API (required) powers the AI analysis — its free tier includes 1,500 requests/day. ElevenLabs (optional) enables AI dubbing in 30+ languages. Upload-Post (optional) publishes to YouTube, TikTok, and Instagram. (2) Hosted at openshorts.app is the no-setup option: we run all the AI and compute for you and you don't need any API keys — it's a paid service with a 3-day free trial, then plans from $12/mo for 100 minutes of video. So: free if you self-host, paid if you want us to host it for you."
+                "text": "It uses a multi-step pipeline. faster-whisper transcribes the video with word-level timestamps. PySceneDetect identifies the scene boundaries. Google Gemini 3.0 Flash then receives the timestamped transcript and the scene data together, and returns the 3 to 15 strongest segments of 15 to 60 seconds each, scored on hook strength, emotional payload and whether the segment stands alone without its surrounding context. Passing the transcript and the scene boundaries together is what stops a clip from starting mid-shot."
               }
             },
             {
@@ -139,7 +201,7 @@
               "name": "How does the AI vertical cropping work?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "OpenShorts offers two intelligent cropping modes. TRACK mode uses MediaPipe face detection with YOLOv8 fallback to follow a single subject with stabilized 'Heavy Tripod' camera movement, preventing jitter. GENERAL mode handles group shots and landscapes by creating a blurred background layout that preserves the full width. A SpeakerTracker prevents rapid switching between subjects for smooth, professional results."
+                "text": "There are two cropping modes. TRACK mode uses MediaPipe face detection with a YOLOv8 fallback to follow a single subject, damped by a stabiliser that holds the camera still inside a safe zone instead of chasing every head movement, which is what prevents the visible swinging that reads as amateur. GENERAL mode handles group shots and landscapes by preserving the full width over a blurred backdrop. A speaker tracker stops the crop from flipping between people and holds position through brief occlusions."
               }
             },
             {
@@ -147,7 +209,7 @@
               "name": "Is there a free alternative to Opus Clip?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "Yes. OpenShorts is a free, open source alternative to Opus Clip that you can self-host. Unlike Opus Clip's $15-228/month pricing, OpenShorts is completely free with no watermarks or usage limits. It offers comparable AI viral moment detection powered by Google Gemini, smart vertical cropping with face tracking, automatic subtitles, and AI voice dubbing — all running on your own infrastructure with full data privacy."
+                "text": "Yes. OpenShorts self-hosted is a free and open source alternative to Opus Clip, MIT licensed, with no watermark and no usage cap, running on your own machine via Docker. As of July 2026 Opus Clip costs $15 per month for the Starter plan with 150 minutes, and $29 per month for Pro with 300 minutes, on top of a watermarked free tier of 60 minutes. Opus Clip bills one credit per minute of source video imported rather than per clip exported. OpenShorts offers comparable AI moment detection using Google Gemini, face-tracked vertical cropping and automatic subtitles, and adds AI voice dubbing into 30+ languages, which Opus Clip does not have. Opus Clip ships a larger caption-style library and needs no setup."
               }
             },
             {
@@ -155,34 +217,33 @@
               "name": "Can OpenShorts add subtitles and translate videos?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "Yes. OpenShorts automatically generates subtitles using faster-whisper with word-level timestamps and burns them into the video using FFmpeg. For translation, it integrates with ElevenLabs AI dubbing to translate and dub video audio into over 30 languages, preserving the original speaker's voice characteristics. The dubbed video is automatically re-transcribed and subtitled in the new language."
+                "text": "Yes. Subtitles are generated with faster-whisper at word-level timestamps and burned into the video with FFmpeg. For translation, ElevenLabs AI dubbing translates the audio into more than 30 languages while preserving the original speaker's voice characteristics, and the dubbed audio is then automatically re-transcribed so the burned-in subtitles are in the target language rather than the original."
               }
             },
             {
               "@type": "Question",
-              "name": "Can OpenShorts generate YouTube thumbnails and titles for free?",
+              "name": "Is there an open source clip generator?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "Yes. OpenShorts includes a free AI YouTube thumbnail generator, a free AI YouTube title generator, and a free AI YouTube description generator — all powered by Google Gemini 3.0 Flash. Upload your video and the AI suggests 10 viral title options with an interactive refinement chat. Then it generates multiple thumbnail designs using AI image generation — upload a face photo and background for personalized results. The studio also auto-generates YouTube descriptions with chapter timestamps and lets you publish directly to YouTube. Everything is 100% free with the Gemini free tier."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Is there a free open source clip generator?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Yes — OpenShorts is a 100% free, open source clip generator (also known as open source clipping software or an AI video clipper). Unlike paid clip generators like Opus Clip ($15-228/month) or Kapwing ($24-79/month), OpenShorts lets you generate unlimited clips with no watermarks, no usage limits, and no subscription fees. It also includes a free AI YouTube thumbnail generator, free AI YouTube title generator, and free AI YouTube description generator — features that other clip generators charge extra for. You self-host it with Docker on your own machine for full privacy and control."
+                "text": "OpenShorts is the open source option in this category, MIT licensed with full source at github.com/mutonby/openshorts, self-hosted with Docker Compose. Opus Clip, Klap, Vizard and Submagic are all closed-source cloud products; as of July 2026 their entry prices are $15, $29, $19.99 and around $14 per month respectively. Self-hosting means the source video never leaves your machine and you can change how the pipeline behaves rather than filing a feature request."
               }
             }
           ]
         },
         {
           "@type": "Organization",
+          "@id": "https://www.openshorts.app/#organization",
           "name": "OpenShorts",
-          "url": "https://openshorts.app",
-          "logo": "https://openshorts.app/logo-openshorts.png",
+          "url": "https://www.openshorts.app/",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://www.openshorts.app/logo-openshorts.png"
+          },
+          "description": "OpenShorts builds an open source AI clip generator that turns long-form video into vertical short-form clips, available both as MIT-licensed self-hosted software and as a hosted service.",
           "sameAs": [
-            "https://github.com/mutonby/openshorts"
+            "https://github.com/mutonby/openshorts",
+            "https://www.aitoolnet.com/openshorts",
+            "https://creatorstoolbox.com/tools/openshorts"
           ]
         }
       ]
