@@ -5,6 +5,7 @@ import App from './App.jsx'
 import Landing from './Landing.jsx'
 import Legal from './Legal.jsx'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { capture as captureAttribution } from './lib/attribution'
 import PricingPage from './components/PricingPage'
 import AccountPage from './components/AccountPage'
 import LoginModal from './components/LoginModal'
@@ -78,6 +79,10 @@ function Root() {
   if (view === 'app') return <App />;
   return <Landing onLaunchApp={handleLaunchApp} />;
 }
+
+// Before React mounts: AuthContext rewrites the URL on auth redirects, which
+// would destroy the referrer and any UTM params we still need to read.
+captureAttribution();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

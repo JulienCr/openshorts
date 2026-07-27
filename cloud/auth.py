@@ -19,7 +19,7 @@ from sqlalchemy import select, func, and_
 
 from .config import settings
 from . import config, database, metering, email_policy
-from .models import User, MagicLinkToken, UploadPostProfile
+from .models import User, MagicLinkToken, UploadPostProfile, SignupAttribution
 
 router = APIRouter()
 
@@ -28,6 +28,11 @@ JWT_TTL_DAYS = 30
 MAGIC_TTL_MINUTES = 15
 MAGIC_RATE_LIMIT = 3          # per email
 MAGIC_RATE_WINDOW_MIN = 15
+# Only accept attribution for an account this young. Both sign-in flows post it
+# right after the redirect, so anything older is a returning user whose "source"
+# would be their re-entry, not their sign-up.
+ATTRIBUTION_MAX_AGE_MIN = 60
+ATTRIBUTION_FIELD_MAX = 500   # client-supplied strings are truncated to this
 
 
 def _now():
@@ -194,6 +199,71 @@ async def verify_magic_link(payload: MagicVerifyRequest):
         token = issue_jwt(user_id, user_email)
         cu = await _load_current_user(session, user_id)
     return {"token": token, "user": {"id": str(user_id), "email": user_email, "entitled": cu.entitled}}
+
+
+# --------------------------------------------------------------------------- #
+# Signup attribution
+# --------------------------------------------------------------------------- #
+class AttributionPayload(BaseModel):
+    referrer: Optional[str] = None
+    landing_path: Optional[str] = None
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+
+
+def _clip(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    value = value.strip()
+    return value[:ATTRIBUTION_FIELD_MAX] or None
+
+
+def _referrer_host(referrer: Optional[str]) -> Optional[str]:
+    """Bare host of the referrer, the key we actually group by."""
+    if not referrer:
+        return None
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(referrer).hostname or "").lower()
+    except Exception:
+        return None
+    return host or None
+
+
+@router.post("/api/auth/attribution")
+async def record_attribution(payload: AttributionPayload, request: Request):
+    """Record where a brand-new account came from. First touch wins.
+
+    Fire-and-forget from the client right after sign-in: it never fails the
+    sign-up, it just returns ``recorded: false`` when the row already exists or
+    the account is too old to be a genuine sign-up.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    user = await get_current_user_required(request)
+    async with database.session() as session:
+        async with session.begin():
+            row = await session.get(User, user.id)
+            if row is None or row.created_at is None:
+                return {"ok": True, "recorded": False}
+            if _now() - row.created_at > timedelta(minutes=ATTRIBUTION_MAX_AGE_MIN):
+                return {"ok": True, "recorded": False}
+            referrer = _clip(payload.referrer)
+            # ON CONFLICT DO NOTHING keeps first touch even if the client posts
+            # twice concurrently (two tabs finishing the same redirect).
+            result = await session.execute(
+                pg_insert(SignupAttribution).values(
+                    user_id=user.id,
+                    referrer=referrer,
+                    referrer_host=_referrer_host(referrer),
+                    landing_path=_clip(payload.landing_path),
+                    utm_source=_clip(payload.utm_source),
+                    utm_medium=_clip(payload.utm_medium),
+                    utm_campaign=_clip(payload.utm_campaign),
+                ).on_conflict_do_nothing(index_elements=["user_id"])
+            )
+    return {"ok": True, "recorded": result.rowcount > 0}
 
 
 # --------------------------------------------------------------------------- #

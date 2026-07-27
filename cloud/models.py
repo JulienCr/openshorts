@@ -89,6 +89,34 @@ class UsageLedger(Base):
     )
 
 
+class SignupAttribution(Base):
+    """Where a user came from, captured once at sign-up (first touch wins).
+
+    Its own table rather than columns on ``users`` because the schema bootstrap
+    is ``create_all`` (see cloud/database.py), which creates missing tables but
+    never ALTERs an existing one — a new table lands on deploy with no migration.
+
+    ``referrer_host`` is the grouping key ("github.com", "www.youtube.com",
+    "google"); the full ``referrer`` is kept for the long tail. Rows are only
+    written for users whose account is minutes old, so returning users from
+    before this shipped never get a misleading "signup" source.
+    """
+    __tablename__ = "signup_attribution"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+                     primary_key=True)
+    referrer = Column(Text, nullable=True)
+    referrer_host = Column(Text, nullable=True)
+    landing_path = Column(Text, nullable=True)
+    utm_source = Column(Text, nullable=True)
+    utm_medium = Column(Text, nullable=True)
+    utm_campaign = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (
+        Index("ix_attrib_host", "referrer_host"),
+        Index("ix_attrib_utm_source", "utm_source"),
+    )
+
+
 class UploadPostProfile(Base):
     __tablename__ = "upload_post_profiles"
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),

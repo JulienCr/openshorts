@@ -8,6 +8,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { getApiUrl } from '../config';
 import { apiFetch, apiJson, getToken, setToken, clearToken } from '../lib/api';
 import { track } from '../lib/analytics';
+import { report as reportAttribution } from '../lib/attribution';
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -68,7 +69,12 @@ export function AuthProvider({ children }) {
       const signedInMe = await refreshMe();
       // This handler only runs on the auth redirect, so a resolved user here is
       // a fresh sign-in / sign-up — the top of the conversion funnel.
-      if (signedInMe?.user) track('Signup', { props: { method: kind === 'verify' ? 'magic_link' : 'google' } });
+      if (signedInMe?.user) {
+        track('Signup', { props: { method: kind === 'verify' ? 'magic_link' : 'google' } });
+        // Server-side twin of the Signup event: the one place we learn which
+        // channel produced an account. Awaited but never allowed to throw.
+        await reportAttribution(apiJson);
+      }
       // Everyone lands in the app. Show the welcome plan-choice popup once per
       // browser (on the first auth) for anyone not already on a paid plan —
       // free is the default, paid is one click away. Never a pricing-page dump.
