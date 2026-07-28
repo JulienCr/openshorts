@@ -250,19 +250,46 @@
     }
     </script>
 
-  <!-- Analytics -->
-    <!-- OpenPanel analytics (self-hosted) -->
+  <!-- Analytics — opt-in, disabled by default.
+       A plain `npm run build` (and every local `npm run dev`) leaves the two
+       VITE_OPENPANEL_* variables unset, so nothing is initialised, no third
+       party script is fetched and no request leaves the browser. Self-hosted
+       instances are silent unless you deliberately turn this on.
+
+       To collect analytics for your own deployment: point
+       VITE_OPENPANEL_API_URL / VITE_OPENPANEL_CLIENT_ID at your own OpenPanel
+       instance (see .env.example) and add your hostname to ANALYTICS_HOSTS. -->
     <script>
       window.op = window.op || function () { var n = []; return new Proxy(function () { arguments.length && n.push([].slice.call(arguments)); }, { get: function (t, r) { return "q" === r ? n : function () { n.push([r].concat([].slice.call(arguments))); }; }, has: function (t, r) { return "q" === r; } }); }();
-      window.op("init", {
-        apiUrl: "https://api.openpanel.fotoexamen.com",
-        clientId: "9b7ab939-bdef-4097-87c4-bb4a2dbe034d",
-        trackScreenViews: true,
-        trackOutgoingLinks: true,
-        trackAttributes: true,
-      });
+      (function () {
+        // Vite substitutes these at build time and leaves the literal
+        // "%VITE_...%" placeholder in place when the variable is undefined.
+        var apiUrl = "%VITE_OPENPANEL_API_URL%";
+        var clientId = "%VITE_OPENPANEL_CLIENT_ID%";
+        var unset = function (v) { return !v || v.charAt(0) === "%"; };
+        if (unset(apiUrl) || unset(clientId)) return;
+
+        // Second gate: hosts allowed to report. A dist/ built with credentials
+        // stays inert anywhere else (a fork, a mirror, a preview domain), so a
+        // deployment can never report into somebody else's dashboard.
+        var ANALYTICS_HOSTS = /^(www\.)?openshorts\.app$/;
+        if (!ANALYTICS_HOSTS.test(location.hostname)) return;
+
+        window.op("init", {
+          apiUrl: apiUrl,
+          clientId: clientId,
+          trackScreenViews: true,
+          trackOutgoingLinks: true,
+          trackAttributes: true,
+        });
+
+        var s = document.createElement("script");
+        s.src = "https://openpanel.dev/op1.js";
+        s.defer = true;
+        s.async = true;
+        document.head.appendChild(s);
+      })();
     </script>
-    <script src="https://openpanel.dev/op1.js" defer async></script>
   </head>
 
 <body>

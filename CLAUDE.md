@@ -112,6 +112,7 @@ Async job queue with semaphore-based concurrency control. Configure via `MAX_CON
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET` - For S3 backup
 - `MAX_CONCURRENT_JOBS` - Concurrent processing limit (default: 5)
 - `VITE_API_URL` - Production API URL override
+- `VITE_OPENPANEL_API_URL`, `VITE_OPENPANEL_CLIENT_ID` - Optional product analytics, read at **build** time. Unset (the default, including every self-hosted build) means no analytics is initialised and no third-party script is loaded. `dashboard/index.html` also gates reporting on an `ANALYTICS_HOSTS` allowlist, so a build carrying credentials stays inert on any other host.
 
 **Client-side (localStorage, encrypted):**
 - `GEMINI_API_KEY` - Google Gemini API key (required)

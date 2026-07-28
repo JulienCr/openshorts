@@ -21,6 +21,12 @@ COPY . .
 # (Coolify: add it as a build variable on the frontend service). Empty = same-origin.
 ARG VITE_API_URL=""
 ENV VITE_API_URL=$VITE_API_URL
+# Optional product analytics (OpenPanel). Left empty, index.html initialises
+# nothing and the build phones home to nobody — see the comment there.
+ARG VITE_OPENPANEL_API_URL=""
+ENV VITE_OPENPANEL_API_URL=$VITE_OPENPANEL_API_URL
+ARG VITE_OPENPANEL_CLIENT_ID=""
+ENV VITE_OPENPANEL_CLIENT_ID=$VITE_OPENPANEL_CLIENT_ID
 RUN npm run build
 
 # ---- static serving (nginx) ----
