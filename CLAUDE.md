@@ -113,6 +113,7 @@ Async job queue with semaphore-based concurrency control. Configure via `MAX_CON
 - `MAX_CONCURRENT_JOBS` - Concurrent processing limit (default: 5)
 - `VITE_API_URL` - Production API URL override
 - `VITE_OPENPANEL_API_URL`, `VITE_OPENPANEL_CLIENT_ID` - Optional product analytics, read at **build** time. Unset (the default, including every self-hosted build) means no analytics is initialised and no third-party script is loaded. `dashboard/index.html` also gates reporting on an `ANALYTICS_HOSTS` allowlist, so a build carrying credentials stays inert on any other host.
+- `OPENPANEL_CLIENT_ID`, `OPENPANEL_CLIENT_SECRET` - Optional **server-side** analytics (`cloud/analytics.py`), same opt-in rule: unset means a silent no-op. Reports job outcomes with the user's job index, which the browser cannot do reliably — a render finishes after the tab is often gone, and ad-blockers eat a share of client events. Needs a *write* client; the read client used for querying is a different credential.
 
 **Client-side (localStorage, encrypted):**
 - `GEMINI_API_KEY` - Google Gemini API key (required)

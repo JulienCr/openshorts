@@ -943,6 +943,46 @@ async def _record_job_alert(job_id):
         await _alerts.record_job_outcome(ok, err)
     except Exception as e:
         print(f"⚠️  Alert recording error for {job_id}: {e}")
+    await _track_job_outcome(job, ok, err)
+
+
+async def _track_job_outcome(job, ok, err):
+    """Report the job to OpenPanel, with the user's job index.
+
+    The index is what makes the retention question answerable: on 26-jul-2026,
+    491 of 564 users who ever processed a video did it exactly once. Counting
+    distinct users at index 1 versus index >= 2 measures whether the clip
+    quality work moved that, which nothing in the stack could do before.
+
+    Client-side analytics cannot cover this: a render finishes minutes later,
+    often after the tab is closed, and ad-blockers eat a share of the rest.
+    """
+    try:
+        from cloud import analytics as _an
+        from sqlalchemy import text as _sa_text
+        from cloud import database as _db
+        user_id = job.get('user_id')
+        job_index = None
+        try:
+            async with _db.session() as s:
+                job_index = (await s.execute(_sa_text(
+                    "select count(*) from usage_ledger "
+                    "where user_id = :uid and job_type = 'process'"),
+                    {"uid": user_id})).scalar()
+        except Exception:
+            pass  # an index we cannot read is not worth failing a job over
+        clips = len(((job.get('result') or {}).get('clips')) or [])
+        _an.track(
+            "ClipsDelivered" if ok else "JobFailed",
+            user_id=user_id,
+            job_index=job_index,
+            clips=clips if ok else None,
+            plan=job.get('user_plan'),
+            source="url" if job.get('url') else "upload",
+            reason=(_alerts._classify_failure(err) if not ok and err else None),
+        )
+    except Exception as e:
+        print(f"⚠️  Analytics error: {e}")
 
 
 async def _settle_reservation(job_id):
