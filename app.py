@@ -36,6 +36,16 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Default to 1 if not set, but user can set higher for powerful servers
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
 MAX_FILE_SIZE_MB = 2048  # 2GB limit
+
+# How TikTok receives our uploads. MEDIA_UPLOAD lands the video in the user's
+# TikTok drafts so they finish the post inside TikTok's own editor; DIRECT_POST
+# publishes straight to their feed, which is Upload-Post's default.
+#
+# Drafts are the safer default for an automated pipeline: nothing reaches an
+# audience without the account owner seeing it first, and TikTok's own editor is
+# where covers, sounds and hashtags actually get chosen. The UI must say so —
+# a user who expects a published post and finds a draft will read it as a bug.
+TIKTOK_POST_MODE = os.environ.get("TIKTOK_POST_MODE", "MEDIA_UPLOAD").strip()
 JOB_RETENTION_SECONDS = int(os.environ.get("JOB_RETENTION_SECONDS", "3600"))  # job/file retention (issue #46)
 # Ceiling for the working directory once it lives on a persistent volume: the
 # age-based sweep alone can't stop a burst of long videos from filling the disk.
@@ -2552,6 +2562,7 @@ async def post_to_socials(req: SocialPostRequest, request: Request):
         # Add Platform specifics
         if "tiktok" in req.platforms:
              data_payload["tiktok_title"] = final_description
+             data_payload["post_mode"] = TIKTOK_POST_MODE
              
         if "instagram" in req.platforms:
              data_payload["instagram_title"] = final_description
@@ -3425,6 +3436,7 @@ async def saasshorts_post_to_socials(req: SaaSPostRequest, request: Request):
 
         if "tiktok" in req.platforms:
             data_payload["tiktok_title"] = final_description
+            data_payload["post_mode"] = TIKTOK_POST_MODE
         if "instagram" in req.platforms:
             data_payload["instagram_title"] = final_description
             data_payload["media_type"] = "REELS"

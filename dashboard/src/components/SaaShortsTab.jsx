@@ -1397,6 +1397,16 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
                           })}
                         />
 
+                        {/* Same notice as ResultCard: TikTok lands as a draft,
+                            and finding nothing live reads as a failed post. */}
+                        {publishPlatforms.tiktok && (
+                          <p className="mt-2 text-xs text-muted lowercase">
+                            tiktok arrives as a <b className="text-ink2">draft</b> and you'll get a
+                            notification in the app — finishing it there lets you add trending sounds
+                            and hashtags, which reaches more people than posting from an api.
+                          </p>
+                        )}
+
                         {/* Schedule toggle */}
                         <div className="flex items-center gap-3">
                           <label className="flex items-center gap-2 text-xs lowercase text-muted cursor-pointer">
