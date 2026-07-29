@@ -289,3 +289,44 @@ class TestAutoCaptionDefaults:
     @staticmethod
     def _t(words):
         return {"segments": [{"words": words}]}
+
+
+class TestFilterQuoting:
+    """Paths are interpolated INTO a single-quoted ffmpeg filter argument.
+
+    Regression cover for captions silently failing in prod on 29-jul-2026: a
+    clip named "Inside Earth's Most Mysterious Temple" produced an .ass path
+    carrying that apostrophe, which ends the quoted argument early and kills
+    the burn. Apostrophes are constant in English titles.
+
+    The fix is NOT smarter escaping. The shell idiom "'\\''" was tried and is
+    worse — ffmpeg's filtergraph parser is not a shell, so it dropped the
+    apostrophe and swallowed the following ":fontsdir=" option into the
+    filename. The fix is to keep apostrophes out of filter paths entirely.
+    """
+
+    def test_generated_subtitle_paths_carry_no_apostrophe(self):
+        # Both generators must name their own file, never derive it from a
+        # video title. This is the property that actually prevents the bug.
+        import re
+        src = open("main.py").read()
+        m = re.search(r'ass_path = os\.path\.join\(\s*output_dir,\s*f"([^"]+)"', src)
+        assert m, "auto-caption .ass path not found"
+        assert "{stem}" not in m.group(1), (
+            f"auto-caption .ass name derives from the clip stem: {m.group(1)}")
+
+    def test_auto_caption_ass_name_is_unique_per_clip(self):
+        # Clips render in parallel; a bare timestamp collides and lets one clip
+        # burn another's captions.
+        import re
+        src = open("main.py").read()
+        m = re.search(r'ass_path = os\.path\.join\(\s*output_dir,\s*f"([^"]+)"', src)
+        assert "uuid" in m.group(1), f"not unique per clip: {m.group(1)}"
+
+    def test_colon_is_escaped(self):
+        from subtitles import _escape_ffmpeg_filter_value
+        assert "\\:" in _escape_ffmpeg_filter_value("C:/out/subs.ass")
+
+    def test_plain_path_untouched(self):
+        from subtitles import _escape_ffmpeg_filter_value
+        assert _escape_ffmpeg_filter_value("/out/subs_0_123.ass") == "/out/subs_0_123.ass"

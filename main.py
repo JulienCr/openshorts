@@ -6,6 +6,7 @@ import argparse
 import re
 import sys
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
@@ -836,7 +837,23 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
         # download time. A legacy clip whose name predates that budget can still
         # overflow — that raises OSError 36, which the except below turns into
         # "ship the clip uncaptioned" rather than a broken filename.
-        ass_path = os.path.join(output_dir, f"autosubs_{generation_id}_{stem}.ass")
+        # The .ass path is interpolated INTO an ffmpeg filter string
+        # (-vf ass='...'), where a literal apostrophe closes the quote and
+        # breaks the filter. Titles carry apostrophes constantly in English
+        # ("Earth's", "Don't"), so this name must stay free of the clip stem —
+        # which is exactly why /api/subtitle has always used a neutral
+        # "subs_<i>_<ts>.ass". Deriving it from the stem silently cost captions
+        # on every apostrophe title until 29-jul-2026.
+        #
+        # The OUTPUT name still carries the stem, and must: the modal's
+        # walk-back and _canonical_clip_file reconstruct the clean original
+        # from it. That one is only ever passed as an argv element, never
+        # inside a filter string, so quoting never applies to it.
+        # Unique per clip, not just per second: clips render in parallel
+        # (CLIP_WORKERS), so a bare timestamp would collide and let one clip
+        # burn another's captions.
+        ass_path = os.path.join(
+            output_dir, f"autosubs_{generation_id}_{uuid.uuid4().hex[:8]}.ass")
         out_path = os.path.join(output_dir, f"subtitled_{generation_id}_{stem}")
 
         if not _subs.generate_ass(

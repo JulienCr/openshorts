@@ -88,7 +88,19 @@ def _log(message):
 
 
 def _escape_ffmpeg_filter_value(value):
-    """Escape a path/value for use inside a quoted FFmpeg filter argument."""
+    """Escape a path/value for use inside a quoted FFmpeg filter argument.
+
+    NOTE: an apostrophe in the path cannot be made safe here. ffmpeg's
+    filtergraph parser is not a shell — the shell idiom ``'\\''`` was tried on
+    29-jul-2026 and is worse than doing nothing: it drops the apostrophe AND
+    swallows the following option, so ``ass='…Earth'\\''s.ass':fontsdir='…'``
+    resolved to a filename of "…Earths.ass:fontsdir=…" and failed to open.
+
+    The only reliable answer is to keep apostrophes OUT of any path that is
+    interpolated into a filter. Callers generate their own subtitle filenames,
+    so they control this: use a neutral name (``subs_<i>_<ts>.ass``), never one
+    derived from a video title.
+    """
     return value.replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
 
 
