@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 
 import active_speaker
+import camera_inset
 import punch_in
 import screencast_layout
 import split_layout
@@ -190,7 +191,7 @@ def _analyze_trajectory(input_video, scenes_boundaries, scene_strategies,
             # whole scene), so like GENERAL they need no camera trajectory.
             # ALTERNATE gets one written in after this pass.
             if strategy in ('GENERAL', 'SPLIT', 'SCREENCAST', 'WIDE',
-                            'ALTERNATE'):
+                            'INSET', 'ALTERNATE'):
                 cameraman.current_center_x = orig_w / 2
                 cameraman.target_center_x = orig_w / 2
                 xs.append(None)
@@ -298,22 +299,45 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
     # SCREENCAST wins over SPLIT on the rare scene that qualifies for both: two
     # faces beside a chart still means the chart is what the shot is about, and
     # stacking the two speakers would crop it away entirely.
+    # A screen with a webcam composited into a corner gets its own layout, and
+    # the question "is there an inset" is settled geometrically rather than by
+    # asking Gemini: offered as a fourth choice it answered "screencast" on all
+    # five clips that had one, while camera_inset.detect finds all five with no
+    # false positives. The box is fixed for the whole video, so it is found once.
+    inset = None
+    if content_ranges and screencast_layout.ENABLED:
+        try:
+            inset = camera_inset.detect(input_video)
+        except Exception as e:
+            print(f"   ⚠️ Inset check failed ({e}) — using the screen layouts.")
+        if inset:
+            print(f"   📹 Webcam inset at {inset}")
+
     screencasts = {}
     wide_count = 0
+    inset_count = 0
     if content_ranges:
         for scene_idx, (plan, centre) in screencast_layout.detect_screencast_scenes(
                 input_video, scenes, strategies, content_ranges).items():
+            # An inset beats both screen plans: it is the only one that can show
+            # the screen whole AND the person at a readable size.
+            if inset:
+                plan, centre = 'INSET', None
             strategies[scene_idx] = plan
             start_f = scene_boundaries[scene_idx][0]
             splits.pop(start_f, None)
             if plan == 'SCREENCAST':
                 screencasts[start_f] = centre
+            elif plan == 'INSET':
+                inset_count += 1
             else:
                 wide_count += 1
     if screencasts:
         print(f"   🖥️ SCREENCAST layout on {len(screencasts)} scene(s)")
     if wide_count:
         print(f"   📐 Full-width layout on {wide_count} scene(s)")
+    if inset_count:
+        print(f"   📹 Camera-inset layout on {inset_count} scene(s)")
 
     # The crop geometry comes from the SOURCE dims only — SmoothedCameraman
     # derives crop_width/crop_height from video_width/video_height and never
@@ -359,7 +383,10 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
             ss = start_f / fps
             dur = (end_f - start_f) / fps
 
-            if strategy == 'SCREENCAST':
+            if strategy == 'INSET':
+                graph = camera_inset.inset_filtergraph(
+                    orig_w, orig_h, out_w, out_h, inset)
+            elif strategy == 'SCREENCAST':
                 graph = screencast_layout.screencast_filtergraph(
                     orig_w, orig_h, out_w, out_h, screencasts[start_f])
             elif strategy == 'WIDE':

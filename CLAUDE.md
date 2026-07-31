@@ -135,6 +135,16 @@ se desactiva porque el modelo diga `none`.
   content, so SCREENCAST stacks it over the presenter. Above 0.85 the presenter
   is composited **on top of** the content and stacking would show it twice, so
   those scenes get WIDE: the GENERAL layout with side-cropping disabled.
+- **INSET Mode** (`camera_inset.py`): pantalla a ancho completo arriba, el
+  recuadro de la webcam ampliado abajo. Para el caso de una sola fuente con la
+  cámara compuesta en una esquina (OBS, VOD de stream). Se encadena detrás de
+  la decisión `screencast`, **no** se le pregunta a Gemini: ofrecido como cuarta
+  opción respondió `screencast` en los 5 clips que tienen recuadro, en dos
+  pasadas, y la exactitud global cayó de 92% a 83-85%. El detector geométrico
+  encuentra esos 5 sin falsos positivos. Los tres filtros que hacen falta, cada
+  uno pagado con una iteración: sujeto **pequeño**, **descentrado en
+  horizontal** (una cara de talking head está centrada aunque esté alta), y
+  **quieto entre muestras** (3-11px frente a 316px de una persona real).
 - **ALTERNATE Mode** (`active_speaker.py`, `SPEAKER_SIGNAL=1` + `SPEAKER_CUT=1`):
   hard cuts to whoever is talking, rendered through the TRACK path as a
   trajectory with jumps. `SPEAKER_SIGNAL=1` alone just gates SPLIT on both people

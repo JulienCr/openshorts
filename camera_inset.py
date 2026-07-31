@@ -30,7 +30,15 @@ CORNER_MARGIN = 0.20   # a subject this far from an edge (as a fraction of the
 # thrown out. Measured on four real clips, these two properties separate the
 # cases where "touching a corner" did not.
 MAX_SUBJECT_HEIGHT = 0.35   # fraction of frame height
-MIN_OFFSET = 0.18           # centre-to-centre distance, fraction of frame
+
+# Horizontal offset from centre, as a fraction of frame width. HORIZONTAL
+# specifically: a composited camera is pinned to the left or right side, while a
+# talking head is centred left-to-right even when their face sits high in the
+# shot. Accepting offset on either axis let four talking heads through, all of
+# them with a face near the top edge. Measured on those nine candidates the two
+# groups do not overlap: real insets sat 0.37-0.43 from centre, the talking
+# heads 0.01-0.12.
+MIN_OFFSET = 0.18
 
 # How much bigger than the detected head/upper body the inset is assumed to be.
 # A webcam frames head and shoulders, and detectors return the head or the upper
@@ -78,8 +86,7 @@ def is_cornered(box, frame_w, frame_h, margin=CORNER_MARGIN):
         return False
 
     cx = (x + w / 2.0) / frame_w
-    cy = (y + h / 2.0) / frame_h
-    off_centre = abs(cx - 0.5) >= MIN_OFFSET or abs(cy - 0.5) >= MIN_OFFSET
+    off_centre = abs(cx - 0.5) >= MIN_OFFSET
 
     near_edge = (x <= frame_w * margin or (x + w) >= frame_w * (1 - margin)
                  or y <= frame_h * margin or (y + h) >= frame_h * (1 - margin))

@@ -103,10 +103,16 @@ Pick ONE layout:
   music, and any footage whose meaning survives a centre crop. Corner logos,
   score bugs, subscriber counters, lower-thirds and burned-in subtitles do NOT
   change this: they are decoration, and losing them costs nothing.
-- "screencast": put the screen content on top and the presenter below. ONLY when
-  the video is built around a screen recording, slides, a spreadsheet, a chart
-  or a map that the viewer must read to follow it. If you cannot read words or
-  numbers off the screen that matter to the point being made, it is not this.
+- "screencast": keep the screen. ONLY when the video is built around a screen
+  recording, slides, a spreadsheet, a chart or a map that the viewer must read
+  to follow it. If you cannot read words or numbers off the screen that matter
+  to the point being made, it is not this.
+  (A "camera_inset" option was added here and removed on 31-jul-2026. Whether a
+  webcam is composited into a corner of that screen is not something the model
+  can see: on the five clips that have one it answered "screencast" every time,
+  in both runs, while overall accuracy fell from 92% to 83-85%. camera_inset.py
+  finds the same five geometrically with no false positives, so that question is
+  answered downstream instead of being asked here.)
 - "split": stack two people. ONLY when two people are visible IN THE SAME SHOT
   at the same time in most frames, talking to each other. Frames that alternate
   between one-person close-ups are NOT this, however many people appear.
