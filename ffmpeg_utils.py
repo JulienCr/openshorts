@@ -63,11 +63,25 @@ METADATA_SCRUB = ["-map_metadata", "-1", "-map_chapters", "-1",
 # which means the quiet ones just sound thin next to everything else in the
 # feed — the loud ones aren't rewarded, the quiet ones are punished.
 #
-# I=-14 matches the platforms' target, TP=-1.5 leaves headroom so their own
-# re-encode can't clip, LRA=11 is the usual allowance for speech. Applied at
-# the clip cut, where the audio is being encoded to AAC anyway, so it costs
-# nothing extra. AUDIO_NORMALIZE=0 turns it off.
-LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
+# I=-14 matches the platforms' target, LRA=11 is the usual allowance for speech.
+# Applied at the clip cut, where the audio is being encoded to AAC anyway, so it
+# costs nothing extra. AUDIO_NORMALIZE=0 turns it off.
+#
+# TP=-2.0, not the -1.5 that matches the platforms' own advice, because the
+# ceiling is enforced BEFORE the AAC encode and the encoder then adds
+# inter-sample peaks on top. Measured over 14 corpus clips (31-jul-2026):
+#
+#   TP=-1.5   peak reached +0.2 dBTP, 1 clip clipping,  8 above -1.0
+#   TP=-2.0   peak reached -0.3 dBTP, 0 clipping,       5 above -1.0
+#   TP=-3.0   peak reached -0.9 dBTP, 0 clipping,       1 above -1.0
+#
+# -3.0 also costs level: only 8 of 14 stayed inside -15..-13 LUFS versus 12 at
+# -2.0, and level is what the listener notices. Two other fixes were tried and
+# do NOT work, so don't reach for them again: an `alimiter` after loudnorm
+# (limits sample peaks, not inter-sample, and measured WORSE at +0.7), and
+# two-pass loudnorm with linear=true (+0.4, still clipping). The overshoot is
+# the codec's, so the only lever is headroom.
+LOUDNORM_FILTER = "loudnorm=I=-14:TP=-2.0:LRA=11"
 
 
 def audio_encode_args():
