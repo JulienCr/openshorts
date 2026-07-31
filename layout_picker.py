@@ -20,14 +20,35 @@ the same video scored 1% and 97% coverage on consecutive runs. The variance was
 in asking for a continuous measurement, not in the model: a categorical choice
 between closed options is stable.
 
+It samples FRAMES instead of uploading the video. Gemini bills video at ~300
+tokens per second, so an hour of source is ~1.08M tokens — past a 1M context
+window before it starts — and means pushing a 1-2GB upload to get back one word.
+This pipeline ingests hour-long podcasts, so that scales badly in exactly the
+normal case. Twelve stills cost ~3k tokens whatever the source runs to.
+
+Measured on the same 48 clips (whole video vs sampled frames):
+
+    whole video          94% / 92% / 96%    18,17,18 of 20 found
+    12 frames @ 640px    90% / 90%          15,16 of 20
+    12 frames @ 1024px   92%                17 of 20
+    24 frames @ 1024px   90%                16 of 20
+
+Resolution was the gap, not frame count: at 640px a spreadsheet is unreadable,
+and doubling the frames made it slightly worse rather than better. At 1024px the
+difference from sending the whole video sits inside the run-to-run variance the
+whole-video mode already has, at 2.2s per clip instead of ~15s.
+
 Off by default (``AUTO_LAYOUT=1``). A caller that already switched layouts on
 by hand wins: this only ever ADDS, so an explicit choice is never overridden.
 """
 import json
 import os
-import time
 
 ENABLED = os.environ.get("AUTO_LAYOUT", "0") == "1"
+
+# 12 frames at 1024px wide. Both numbers are measured, not guessed: see above.
+SAMPLE_FRAMES = int(os.environ.get("LAYOUT_SAMPLE_FRAMES", "12"))
+SAMPLE_WIDTH = int(os.environ.get("LAYOUT_SAMPLE_WIDTH", "1024"))
 
 # What each decision turns on. Keys match the layout names in the prompt.
 DECISION_FLAGS = {
@@ -68,6 +89,35 @@ def apply(decision):
     return touched
 
 
+def sample_frames(video_path, n=None, width=None):
+    """JPEG bytes for ``n`` frames spread evenly across the video."""
+    import cv2
+
+    n = n or SAMPLE_FRAMES
+    width = width or SAMPLE_WIDTH
+    cap = cv2.VideoCapture(video_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    out = []
+    try:
+        if total <= 0:
+            return out
+        for i in range(n):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(i * total / n))
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            h, w = frame.shape[:2]
+            scaled = cv2.resize(frame, (width, max(2, int(h * width / w))),
+                                interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".jpg", scaled,
+                                   [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ok:
+                out.append(buf.tobytes())
+    finally:
+        cap.release()
+    return out
+
+
 def pick(video_path, video_duration):
     """The layout Gemini picks for this video, or "none" on any failure.
 
@@ -89,22 +139,17 @@ def pick(video_path, video_duration):
         from google.genai import types as genai_types
         import gemini_worker
 
-        client = genai.Client(api_key=api_key)
-        upload = client.files.upload(file=video_path)
-        deadline = time.time() + 180
-        while True:
-            info = client.files.get(name=upload.name)
-            state = str(getattr(getattr(info, "state", info), "name", "")).upper()
-            if state == "ACTIVE":
-                break
-            if state == "FAILED" or time.time() > deadline:
-                print("   ⚠️ Upload not usable — keeping the default layout.")
-                return "none"
-            time.sleep(2)
+        frames = sample_frames(video_path)
+        if not frames:
+            print("   ⚠️ No readable frames — keeping the default layout.")
+            return "none"
 
+        client = genai.Client(api_key=api_key)
+        parts = [genai_types.Part.from_bytes(data=b, mime_type="image/jpeg")
+                 for b in frames]
         response = client.models.generate_content(
             model=model_name,
-            contents=[upload, gemini_worker.LAYOUT_CHOICE_PROMPT],
+            contents=parts + [gemini_worker.LAYOUT_CHOICE_PROMPT],
             config=genai_types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=gemini_worker.LayoutChoice,

@@ -96,6 +96,16 @@ corpus de 48 contra etiquetas revisadas a mano: 94% / 92% / 96% en tres pasadas,
 con 0-1 falsos positivos sobre los 28 clips que no deben tocarse, y solo 2 clips
 que cambian de respuesta entre pasadas.
 
+**Manda 12 fotogramas a 1024px, no el vídeo.** Gemini factura vídeo a ~300
+tokens por segundo: una hora de fuente son ~1,08M de tokens (no cabe en una
+ventana de 1M) y una subida de 1-2 GB para recibir una palabra. Doce fotogramas
+cuestan ~3k tokens **dure lo que dure la fuente**, que es lo que hace viable
+esto con los podcasts de una hora que entran de verdad. La resolución importa y
+el número de fotogramas no: a 640px detecta 15 de 20 (una hoja de cálculo es
+ilegible), a 1024px sube a 17, y pasar a 24 fotogramas lo empeora. A 1024px la
+diferencia con mandar el vídeo entero cae dentro de la varianza que ya tiene el
+propio modo vídeo, a 2,2 s por clip en vez de ~15 s.
+
 Lo que hace que funcione, y que conviene no deshacer: se le pide una **decisión
 entre opciones cerradas**, no una medida. Los cuatro intentos anteriores (Canny,
 MSER, cobertura temporal, anchura) le pedían un número y ninguno separó una hoja

@@ -93,7 +93,8 @@ class LayoutChoice(BaseModel):
 # instruction and from naming the exact decorations (corner bugs, score
 # counters, subtitles) that four earlier attempts kept mistaking for content.
 LAYOUT_CHOICE_PROMPT = """
-You are choosing how to re-frame this landscape video into a vertical 9:16 clip.
+These frames are sampled at regular intervals from a single landscape video.
+You are choosing how to re-frame that video into a vertical 9:16 clip.
 
 Pick ONE layout:
 
@@ -107,8 +108,8 @@ Pick ONE layout:
   or a map that the viewer must read to follow it. If you cannot read words or
   numbers off the screen that matter to the point being made, it is not this.
 - "split": stack two people. ONLY when two people are visible IN THE SAME SHOT
-  at the same time for most of the video, talking to each other. A video that
-  cuts between one-person close-ups is NOT this, however many people speak.
+  at the same time in most frames, talking to each other. Frames that alternate
+  between one-person close-ups are NOT this, however many people appear.
 
 "none" is by far the most common correct answer. Choose anything else only if
 you would defend it to an editor. If you are unsure, answer "none".

@@ -97,3 +97,21 @@ class TestValidDecisions:
         # The model answers "none" for most videos; it must not be treated as
         # an unrecognised value and logged as a warning on every job.
         assert "none" in layout_picker.VALID
+
+
+class TestSampleFrames:
+    def test_unreadable_video_yields_no_frames(self):
+        # A path that cannot be opened must come back empty, not raise: pick()
+        # turns "no frames" into "none" and the job carries on.
+        assert layout_picker.sample_frames("/nonexistent/video.mp4") == []
+
+    def test_no_frames_degrades_to_none(self, monkeypatch):
+        monkeypatch.setattr(layout_picker, "ENABLED", True)
+        monkeypatch.setenv("GEMINI_API_KEY", "x")
+        monkeypatch.setattr(layout_picker, "sample_frames", lambda *a, **k: [])
+        assert pick("video.mp4", 60) == "none"
+
+    def test_sample_size_is_configurable(self, monkeypatch):
+        # The 12/1024px pair is measured; keep it overridable without a deploy.
+        monkeypatch.setenv("LAYOUT_SAMPLE_FRAMES", "6")
+        assert layout_picker.SAMPLE_FRAMES == 12  # read at import, not per call
