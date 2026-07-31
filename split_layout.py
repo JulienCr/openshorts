@@ -58,9 +58,39 @@ MIN_SCENE_SECONDS = 2.5
 SPLIT_TIGHTNESS = float(os.environ.get("SPLIT_TIGHTNESS", "0.8"))
 
 
+# Two boxes overlapping by more than this are the same face reported twice.
+# BlazeFace applies no suppression of its own, so nothing upstream guarantees
+# one box per head, and every layout here decides by headcount. Kept as a cheap
+# guard rather than a fix for a measured bug: on the corpus no duplicate pair
+# ever exceeded this, so it currently changes no decision.
+MAX_FACE_OVERLAP = 0.30
+
+
+def _iou(a, b):
+    """Intersection over union of two [x, y, w, h] boxes."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def dedupe_faces(candidates, threshold=MAX_FACE_OVERLAP):
+    """Drop duplicate detections of the same face, keeping the biggest."""
+    kept = []
+    for cand in sorted(candidates, key=lambda c: c['box'][2] * c['box'][3],
+                       reverse=True):
+        if all(_iou(cand['box'], k['box']) <= threshold for k in kept):
+            kept.append(cand)
+    return kept
+
+
 def _two_largest(candidates, frame_w):
     """The two biggest faces in a frame, left first, or None."""
-    big = [c for c in candidates if c['box'][2] >= MIN_FACE_WIDTH * frame_w]
+    big = [c for c in dedupe_faces(candidates)
+           if c['box'][2] >= MIN_FACE_WIDTH * frame_w]
     if len(big) < 2:
         return None
     big.sort(key=lambda c: c['score'], reverse=True)
