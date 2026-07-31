@@ -21,10 +21,12 @@ def panel(n, frame_w=1920):
 
 
 class TestTileGrid:
-    def test_three_people_stack(self):
+    def test_three_people_also_use_the_grid(self):
+        # Landscape bands need a crop wider than a person owns; portrait tiles
+        # do not. Three people take three cells, the fourth holds the wide shot.
         cols, rows, tw, th = tile_grid(3, 1080, 1920)
-        assert (cols, rows) == (1, 3)
-        assert tw == 1080 and th == 640
+        assert (cols, rows) == (2, 2)
+        assert tw == 540 and th == 960
 
     def test_four_people_make_a_grid(self):
         cols, rows, tw, th = tile_grid(4, 1080, 1920)
@@ -130,13 +132,13 @@ class TestPanelGeometry:
 
 
 class TestPanelFiltergraph:
-    def test_three_stack_vertically(self):
+    def test_three_people_fill_a_grid_plus_the_wide_shot(self):
         graph = panel_filtergraph(1920, 1080, 1080, 1920,
                                   [(300, 400, 200, 200), (900, 400, 200, 200),
                                    (1500, 400, 200, 200)])
-        assert "split=3" in graph
-        assert "vstack=inputs=3" in graph
-        assert "hstack" not in graph
+        assert "split=4" in graph          # three crops plus the wide shot
+        assert graph.count("hstack=inputs=2") == 2
+        assert "[s3]scale=540:-2" in graph  # the room, letterboxed, not cropped
         assert graph.endswith("[v]")
 
     def test_four_make_a_grid(self):
@@ -147,11 +149,11 @@ class TestPanelFiltergraph:
         assert graph.count("hstack=inputs=2") == 2
         assert "vstack=inputs=2" in graph
 
-    def test_every_tile_is_the_same_size(self):
+    def test_every_person_tile_is_the_same_size(self):
         graph = panel_filtergraph(1920, 1080, 1080, 1920,
                                   [(300, 400, 200, 200), (900, 400, 200, 200),
                                    (1500, 400, 200, 200)])
-        assert graph.count("scale=1080:640") == 3
+        assert graph.count("scale=540:960") == 3
 
     def test_tiles_keep_source_order(self):
         graph = panel_filtergraph(1920, 1080, 1080, 1920,
@@ -166,3 +168,38 @@ class TestGating:
     def test_disabled_module_touches_nothing(self, monkeypatch):
         monkeypatch.setattr(panel_layout, "ENABLED", False)
         assert panel_layout.detect_panel_scenes("x.mp4", [], []) == {}
+
+
+class TestNeighbourClamp:
+    def test_crop_never_swallows_the_neighbour(self):
+        # A 1080x640 tile is landscape, so an unclamped crop is 1551px wide on a
+        # 1080-tall source. With three people on a 1920 frame that reaches both
+        # neighbours, and the rendered bands showed two faces each.
+        _c, _r, tw, th = tile_grid(3, 1080, 1920)
+        w, _h, _x, _y = panel_geometry(1920, 1080, tw, th, (960, 400, 200, 200),
+                                       neighbour_gap=530)
+        assert w <= 530
+
+    def test_no_gap_given_keeps_the_widest_crop(self):
+        _c, _r, tw, th = tile_grid(3, 1080, 1920)
+        w, _h, _x, _y = panel_geometry(1920, 1080, tw, th, (960, 400, 200, 200))
+        assert w >= 500
+
+    def test_clamped_crop_keeps_the_tile_aspect(self):
+        _c, _r, tw, th = tile_grid(3, 1080, 1920)
+        w, h, _x, _y = panel_geometry(1920, 1080, tw, th, (960, 400, 200, 200),
+                                      neighbour_gap=530)
+        assert abs((w / h) - (tw / th)) < 0.05
+
+    def test_gaps_measure_the_closest_neighbour(self):
+        from panel_layout import neighbour_gaps
+        gaps = neighbour_gaps([(100, 0, 0, 0), (400, 0, 0, 0), (1500, 0, 0, 0)])
+        assert gaps == [300, 300, 1100]
+
+    def test_filtergraph_clamps_every_tile(self):
+        graph = panel_filtergraph(1920, 1080, 1080, 1920,
+                                  [(300, 400, 200, 200), (900, 400, 200, 200),
+                                   (1500, 400, 200, 200)])
+        widths = [int(seg.split("w=")[1].split(":")[0])
+                  for seg in graph.split("crop=")[1:]]
+        assert all(w <= 600 for w in widths)

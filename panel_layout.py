@@ -49,11 +49,21 @@ PANEL_TIGHTNESS = float(os.environ.get("PANEL_TIGHTNESS", "0.85"))
 
 
 def tile_grid(count, out_w, out_h):
-    """(columns, rows, tile_w, tile_h) for this many people."""
-    if count == 3:
-        cols, rows = 1, 3
-    else:
-        cols, rows = 2, 2
+    """(columns, rows, tile_w, tile_h). Always a 2x2 grid, for 3 people or 4.
+
+    Three horizontal bands was the obvious shape and it does not work. A
+    1080x640 band is LANDSCAPE, so filling it from a 1080-tall source needs a
+    1551px-wide crop; on a 1920 frame holding three people that reaches both
+    neighbours, and the rendered bands each showed two faces. Clamping the crop
+    to the space a person owns then made it 328x194, upscaled 3.3x into a
+    blurry close-up of a nose.
+
+    A 2x2 grid has PORTRAIT tiles (540x960), which ask for a tall narrow crop
+    — the shape a person actually occupies. Three people use three cells and
+    the fourth holds the wide shot, which doubles as context for who is in the
+    room.
+    """
+    cols, rows = 2, 2
     tile_w = out_w // cols
     tile_h = out_h // rows
     return cols, rows, tile_w - (tile_w % 2), tile_h - (tile_h % 2)
@@ -125,8 +135,19 @@ def analyze_scene(frames, frame_w):
     return [tuple(float(v) for v in person) for person in np.median(arr, axis=0)]
 
 
-def panel_geometry(orig_w, orig_h, tile_w, tile_h, centre, tightness=None):
-    """Crop (w, h, x, y) framing one person for one tile."""
+def panel_geometry(orig_w, orig_h, tile_w, tile_h, centre, tightness=None,
+                   neighbour_gap=None):
+    """Crop (w, h, x, y) framing one person for one tile.
+
+    ``neighbour_gap`` is the distance to the closest other participant. It is
+    the binding constraint and not an optional refinement: a three-band layout
+    has 1080x640 tiles, which are LANDSCAPE, so filling one from a 1080-tall
+    source asks for a 1551px-wide crop. On a 1920px frame holding three people
+    that swallows the neighbours, and the rendered bands showed two faces each.
+    Clamping the crop to the space a person actually owns fixes the framing at
+    the cost of upscaling, which is the right trade: a band showing the wrong
+    person is broken, a soft one is merely worse.
+    """
     tightness = PANEL_TIGHTNESS if tightness is None else tightness
     aspect = tile_w / float(tile_h)
 
@@ -135,6 +156,14 @@ def panel_geometry(orig_w, orig_h, tile_w, tile_h, centre, tightness=None):
     if crop_w > orig_w:
         crop_w = orig_w
         crop_h = int(round(crop_w / aspect))
+
+    if neighbour_gap:
+        # 0.9 leaves a sliver of margin: cropping exactly to the midpoint puts
+        # the neighbour's shoulder on the edge of the tile.
+        allowed = max(int(neighbour_gap * 0.9), 2)
+        if crop_w > allowed:
+            crop_w = allowed
+            crop_h = int(round(crop_w / aspect))
     crop_w -= crop_w % 2
     crop_h -= crop_h % 2
 
@@ -144,23 +173,40 @@ def panel_geometry(orig_w, orig_h, tile_w, tile_h, centre, tightness=None):
     return crop_w, crop_h, x - (x % 2), y - (y % 2)
 
 
+def neighbour_gaps(centres):
+    """Horizontal distance from each person to their closest neighbour."""
+    xs = [c[0] for c in centres]
+    gaps = []
+    for i, x in enumerate(xs):
+        others = [abs(x - o) for j, o in enumerate(xs) if j != i]
+        gaps.append(min(others) if others else None)
+    return gaps
+
+
 def panel_filtergraph(orig_w, orig_h, out_w, out_h, centres):
     """Tile 3 or 4 people into the vertical frame, left-to-right, top-to-bottom."""
     count = len(centres)
     cols, rows, tile_w, tile_h = tile_grid(count, out_w, out_h)
 
-    parts = [f"[0:v]split={count}" + "".join(f"[s{i}]" for i in range(count)) + ";"]
+    gaps = neighbour_gaps(centres)
+    streams = count if count == 4 else count + 1   # trio needs the wide shot
+
+    parts = [f"[0:v]split={streams}"
+             + "".join(f"[s{i}]" for i in range(streams)) + ";"]
     for i, centre in enumerate(centres):
-        cw, ch, cx, cy = panel_geometry(orig_w, orig_h, tile_w, tile_h, centre)
+        cw, ch, cx, cy = panel_geometry(orig_w, orig_h, tile_w, tile_h, centre,
+                                        neighbour_gap=gaps[i])
         parts.append(f"[s{i}]crop=w={cw}:h={ch}:x={cx}:y={cy},"
                      f"scale={tile_w}:{tile_h}[t{i}];")
 
     if count == 3:
-        parts.append("[t0][t1][t2]vstack=inputs=3,")
-    else:
-        parts.append("[t0][t1]hstack=inputs=2[top];"
-                     "[t2][t3]hstack=inputs=2[bot];"
-                     "[top][bot]vstack=inputs=2,")
+        # Fourth cell: the room, letterboxed inside the tile so nothing is cut.
+        parts.append(f"[s3]scale={tile_w}:-2,"
+                     f"pad={tile_w}:{tile_h}:0:({tile_h}-ih)/2:black[t3];")
+
+    parts.append("[t0][t1]hstack=inputs=2[top];"
+                 "[t2][t3]hstack=inputs=2[bot];"
+                 "[top][bot]vstack=inputs=2,")
     parts.append(f"pad={out_w}:{out_h}:0:0,setsar=1[v]")
     return "".join(parts)
 
