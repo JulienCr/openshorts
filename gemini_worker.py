@@ -81,6 +81,96 @@ to worst by how likely they are to stop a viewer scrolling.
 """
 
 
+class LayoutChoice(BaseModel):
+    layout: str
+    confidence: float
+    why: str
+
+
+# Scored 94/92/96% over the 48-clip corpus against hand-checked labels, with
+# 0-1 false positives out of the 28 clips that must not be touched. Do not
+# reword casually: the wins come from the explicit "none is usually right"
+# instruction and from naming the exact decorations (corner bugs, score
+# counters, subtitles) that four earlier attempts kept mistaking for content.
+LAYOUT_CHOICE_PROMPT = """
+You are choosing how to re-frame this landscape video into a vertical 9:16 clip.
+
+Pick ONE layout:
+
+- "none": crop to the speaker and fill the frame. This is the RIGHT answer for
+  ordinary talking heads, interviews shot in close-up, b-roll, sport, action,
+  music, and any footage whose meaning survives a centre crop. Corner logos,
+  score bugs, subscriber counters, lower-thirds and burned-in subtitles do NOT
+  change this: they are decoration, and losing them costs nothing.
+- "screencast": put the screen content on top and the presenter below. ONLY when
+  the video is built around a screen recording, slides, a spreadsheet, a chart
+  or a map that the viewer must read to follow it. If you cannot read words or
+  numbers off the screen that matter to the point being made, it is not this.
+- "split": stack two people. ONLY when two people are visible IN THE SAME SHOT
+  at the same time for most of the video, talking to each other. A video that
+  cuts between one-person close-ups is NOT this, however many people speak.
+
+"none" is by far the most common correct answer. Choose anything else only if
+you would defend it to an editor. If you are unsure, answer "none".
+
+confidence is 0..1. why is at most 12 words.
+"""
+
+
+class WideContentRangeModel(BaseModel):
+    start: float
+    end: float
+    what: str
+    width_fraction: float
+
+
+class WideContentResponse(BaseModel):
+    ranges: List[WideContentRangeModel]
+
+
+WIDE_CONTENT_PROMPT_TEMPLATE = """
+You are preparing a landscape video to be re-framed to a vertical 9:16 crop.
+The crop keeps a tall centre strip and THROWS AWAY the left and right sides.
+
+List every time range where on-screen content would be cut by that, and for each
+one report HOW MUCH OF THE FRAME WIDTH the content spans.
+
+width_fraction is the single most important field. Measure the content's own
+horizontal extent, from its left edge to its right edge, as a fraction of the
+full frame width:
+- a spreadsheet, slide, screen recording or map filling the picture: 0.9 - 1.0
+- a chart or diagram beside a speaker: 0.4 - 0.7
+- a lower-third or headline strip across the bottom: 0.6 - 0.9
+- a logo, channel bug, score counter or subscriber count in a corner: 0.1 - 0.2
+- subtitles centred at the bottom: 0.3 - 0.5
+
+Report what you actually see. Do NOT inflate the number to make a range seem
+worth reporting, and do NOT leave out corner graphics — report them with their
+true small width_fraction. A range reported honestly at 0.15 is useful; the same
+range reported at 0.9 makes the video worse.
+
+COUNT a range when the frame shows:
+- a screen recording, slide, spreadsheet, chart, graph or map
+- headlines, labels, statistics or comparison tables burned into the picture
+- a side-by-side or split-screen layout
+- any diagram or product shot where the edges carry the meaning
+
+DO NOT count an ordinary talking head, even against a busy background, and do
+not count b-roll, landscapes, crowds or action footage with no graphics.
+
+TIME CONTRACT — STRICT:
+- ABSOLUTE SECONDS from the start, numbers only, up to 3 decimals.
+- 0 <= start < end <= {video_duration}.
+- Merge ranges that are less than 1 second apart.
+- Return an EMPTY list if the video never shows such content. An empty list is
+  the correct, expected answer for most talking-head and b-roll videos — do not
+  invent ranges to seem useful.
+
+For "what", name the content in three words or fewer (e.g. "stock chart",
+"spreadsheet", "corner ticker").
+"""
+
+
 def _configure_stdio() -> None:
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)

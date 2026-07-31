@@ -83,9 +83,60 @@ say "OpenShorts is free" without naming the Cloud price in the same breath: both
 are true of different editions and quoting only the first one is what makes AI
 answers describe the paid product as free.
 
-### Dual-Mode Video Reframing
+### Cómo se elige el layout
+
+`POST /api/process` acepta `layouts`: una lista (JSON) o cadena separada por
+comas con `auto`, `split`, `screencast`, `speaker_cut`, `punch_in`. Cada nombre
+enciende su variable de entorno para **ese** trabajo (`app.py:layout_env`); sin
+`layouts` el pipeline se comporta exactamente como antes.
+
+`auto` activa `layout_picker.py`: **una** llamada a Gemini por vídeo de origen
+(no por clip) que elige entre `none` / `screencast` / `split`. Medido sobre el
+corpus de 48 contra etiquetas revisadas a mano: 94% / 92% / 96% en tres pasadas,
+con 0-1 falsos positivos sobre los 28 clips que no deben tocarse, y solo 2 clips
+que cambian de respuesta entre pasadas.
+
+Lo que hace que funcione, y que conviene no deshacer: se le pide una **decisión
+entre opciones cerradas**, no una medida. Los cuatro intentos anteriores (Canny,
+MSER, cobertura temporal, anchura) le pedían un número y ninguno separó una hoja
+de cálculo de un marcador de esquina. La varianza que este repo atribuía a
+Gemini era de las medidas continuas, no del modelo.
+
+`layout_picker.apply()` sólo **añade**: una elección explícita del usuario nunca
+se desactiva porque el modelo diga `none`.
+
+### Video Reframing Modes
 - **TRACK Mode** (single subject): MediaPipe face detection + YOLOv8 fallback with "Heavy Tripod" stabilization
 - **GENERAL Mode** (groups/landscapes): Blurred background layout preserving full width
+- **SPLIT Mode** (two-shot conversation, `split_layout.py`): both speakers stacked
+  in half-frames. Off by default (`SPLIT_LAYOUT=1`); v2 engine only, so a
+  fallback to the v1 loop silently renders GENERAL instead. It upgrades scenes
+  the classifier already sent to GENERAL, never TRACK ones, and needs both faces
+  visible **in the same frame** for at least half the sampled frames — that is
+  what separates a real two-shot from a plano/contraplano, where stacking would
+  show the same person twice. `SPLIT_TIGHTNESS` (default 0.8) trades a little
+  upscale for keeping the other speaker out of each half.
+- **SCREENCAST / WIDE Modes** (`screencast_layout.py`, `SCREENCAST_LAYOUT=1`):
+  for scenes whose meaning lives outside the centre. Gemini reports each range's
+  **width_fraction**, and that is the gate — coverage was tried before and did
+  not separate a spreadsheet from a corner ticker, while width does (a bug spans
+  ~15% and survives any crop, a spreadsheet spans ~100% and cannot). Content
+  narrower than 0.5 moves nothing. Between 0.5 and 0.85 there is room beside the
+  content, so SCREENCAST stacks it over the presenter. Above 0.85 the presenter
+  is composited **on top of** the content and stacking would show it twice, so
+  those scenes get WIDE: the GENERAL layout with side-cropping disabled.
+- **ALTERNATE Mode** (`active_speaker.py`, `SPEAKER_SIGNAL=1` + `SPEAKER_CUT=1`):
+  hard cuts to whoever is talking, rendered through the TRACK path as a
+  trajectory with jumps. `SPEAKER_SIGNAL=1` alone just gates SPLIT on both people
+  actually speaking. Mouth activity **must** be normalised per speaker before
+  comparing (`normalise_activity`): raw frame-difference magnitude scales with
+  local contrast and lighting, and on a real two-shot it handed one speaker
+  90-100% of the scene.
+- **Punch-in** (`punch_in.py`, `PUNCH_IN=1`): not a layout. A ~12% push on the
+  clip's beats, riding the TRACK path by widening its per-frame crop command
+  from x-only to w/h/x/y. Beats currently come from the audio envelope;
+  `emphasis_times` is a plain list of seconds so the transcript's hook words can
+  replace it without touching the module.
 
 ### Key Classes
 - `SmoothedCameraman` - Stabilized camera movement with safe zone logic (prevents jitter)

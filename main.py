@@ -22,6 +22,7 @@ from google import genai
 from google.genai import types as genai_types
 
 import gemini_worker
+import layout_picker
 from clip_selection import build_transcript_windows, snap_clip_to_words
 from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
@@ -1447,6 +1448,20 @@ if __name__ == '__main__':
     if not os.path.exists(input_video):
         print(f"❌ Input file not found: {input_video}")
         exit(1)
+
+    # Layout choice is per SOURCE video, not per clip: one upload and one call
+    # instead of one per clip, and the answer is a property of the material
+    # ("this is a screencast"), which does not change between its own clips.
+    # It runs before any render so the modules are switched on in time.
+    if layout_picker.ENABLED:
+        try:
+            _cap = cv2.VideoCapture(input_video)
+            _fps = _cap.get(cv2.CAP_PROP_FPS) or 30.0
+            _duration = int(_cap.get(cv2.CAP_PROP_FRAME_COUNT)) / _fps
+            _cap.release()
+            layout_picker.pick_and_apply(input_video, _duration)
+        except Exception as e:
+            print(f"⚠️ Layout choice skipped ({e}) — using the default layout.")
 
     # 2. Decision: Analyze clips or process whole?
     if args.skip_analysis:

@@ -1,0 +1,99 @@
+import sys
+import types
+
+import layout_picker
+from layout_picker import _module_flags, apply, pick
+
+
+def fake_modules(monkeypatch, **initial):
+    """Install stand-in layout modules so apply() can be tested without them."""
+    made = {}
+    for name in ("split_layout", "screencast_layout", "active_speaker"):
+        module = types.ModuleType(name)
+        module.ENABLED = initial.get(name, False)
+        monkeypatch.setitem(sys.modules, name, module)
+        made[name] = module
+    return made
+
+
+class TestDecisionMapping:
+    def test_none_enables_nothing(self):
+        assert _module_flags("none") == []
+
+    def test_screencast_enables_its_module(self):
+        assert _module_flags("screencast") == ["screencast_layout"]
+
+    def test_split_also_needs_the_speaker_signal(self):
+        # Stacking without knowing who talks is the failure mode the corpus
+        # run showed: half a frame given to someone who never speaks.
+        assert "active_speaker" in _module_flags("split")
+
+    def test_unknown_and_empty_decisions_are_inert(self):
+        for value in ("gameplay", "", None, "SPLIT-SCREEN"):
+            assert _module_flags(value) == []
+
+    def test_decision_is_case_and_space_insensitive(self):
+        assert _module_flags("  SCREENCAST ") == ["screencast_layout"]
+
+
+class TestApply:
+    def test_apply_switches_the_right_module_on(self, monkeypatch):
+        mods = fake_modules(monkeypatch)
+        touched = apply("screencast")
+        assert touched == ["screencast_layout"]
+        assert mods["screencast_layout"].ENABLED is True
+        assert mods["split_layout"].ENABLED is False
+
+    def test_apply_none_touches_nothing(self, monkeypatch):
+        mods = fake_modules(monkeypatch)
+        assert apply("none") == []
+        assert not any(m.ENABLED for m in mods.values())
+
+    def test_apply_never_disables_an_explicit_choice(self, monkeypatch):
+        # An operator who set SPLIT_LAYOUT=1 gets stacking even if the model
+        # says "none". The picker only ever adds.
+        mods = fake_modules(monkeypatch, split_layout=True)
+        apply("none")
+        assert mods["split_layout"].ENABLED is True
+
+    def test_already_enabled_modules_are_not_reported_as_touched(self, monkeypatch):
+        fake_modules(monkeypatch, screencast_layout=True)
+        assert apply("screencast") == []
+
+    def test_split_enables_both_modules(self, monkeypatch):
+        mods = fake_modules(monkeypatch)
+        assert set(apply("split")) == {"split_layout", "active_speaker"}
+        assert mods["split_layout"].ENABLED is True
+        assert mods["active_speaker"].ENABLED is True
+
+
+class TestPick:
+    def test_disabled_picker_never_calls_out(self, monkeypatch):
+        monkeypatch.setattr(layout_picker, "ENABLED", False)
+        monkeypatch.setenv("GEMINI_API_KEY", "x")
+        assert pick("video.mp4", 60) == "none"
+
+    def test_missing_api_key_degrades_to_none(self, monkeypatch):
+        monkeypatch.setattr(layout_picker, "ENABLED", True)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        assert pick("video.mp4", 60) == "none"
+
+    def test_a_failed_call_degrades_to_none(self, monkeypatch):
+        # Import failure inside pick() stands in for any API error; the job
+        # must keep rendering with today's routing rather than die.
+        monkeypatch.setattr(layout_picker, "ENABLED", True)
+        monkeypatch.setenv("GEMINI_API_KEY", "x")
+        monkeypatch.setitem(sys.modules, "google.genai", None)
+        assert pick("video.mp4", 60) == "none"
+
+
+class TestValidDecisions:
+    def test_every_valid_decision_maps_to_known_modules(self):
+        known = {"split_layout", "screencast_layout", "active_speaker"}
+        for decision in layout_picker.VALID:
+            assert set(_module_flags(decision)) <= known
+
+    def test_none_is_a_valid_decision(self):
+        # The model answers "none" for most videos; it must not be treated as
+        # an unrecognised value and logged as a warning on every job.
+        assert "none" in layout_picker.VALID

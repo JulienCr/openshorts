@@ -1271,6 +1271,55 @@ async def _probe_youtube_quality(url: str) -> dict:
     return await loop.run_in_executor(None, _run)
 
 
+# Layouts the caller can let the renderer choose from, mapped to the env var
+# each one is gated on. The renderer only ever picks between layouts that are
+# switched on here.
+#
+# This is opt-in per job, not a detector running on every video, because the
+# detection is not good enough to be trusted unprompted: measured over the
+# 48-clip corpus, routing every video through the on-screen-content check fixed
+# 13 clips and spoiled 13 others (talking heads and corner tickers demoted to a
+# layout they do not need). Asking the person who knows what they uploaded costs
+# them one click and removes that whole class of error. It is also what OpusClip
+# does — its "applicable auto layout" panel lets the user pick which layouts the
+# AI may apply.
+LAYOUT_ENV = {
+    "split": "SPLIT_LAYOUT",          # two speakers stacked
+    "screencast": "SCREENCAST_LAYOUT",  # slides/screen share over the speaker
+    "speaker_cut": "SPEAKER_CUT",     # hard cuts to whoever is talking
+    "punch_in": "PUNCH_IN",           # small push on the clip's beats
+}
+
+# Stacking and cutting both need to know who is speaking.
+LAYOUT_IMPLIES = {
+    "split": ["SPEAKER_SIGNAL"],
+    "speaker_cut": ["SPEAKER_SIGNAL"],
+}
+
+
+def layout_env(requested):
+    """Env overrides for the layouts this job allows. Unknown names are ignored
+    rather than rejected: a newer dashboard must not break an older API.
+
+    The special value "auto" hands the choice to Gemini (one call per video).
+    It composes with explicit picks: layout_picker only ever adds, so asking for
+    "auto,punch_in" means "decide the layout yourself, and punch in regardless".
+    """
+    env = {}
+    for name in requested or []:
+        key = str(name).strip().lower()
+        if key == "auto":
+            env["AUTO_LAYOUT"] = "1"
+            continue
+        var = LAYOUT_ENV.get(key)
+        if not var:
+            continue
+        env[var] = "1"
+        for extra in LAYOUT_IMPLIES.get(key, []):
+            env[extra] = "1"
+    return env
+
+
 @app.post("/api/process")
 async def process_endpoint(
     request: Request,
@@ -1278,6 +1327,7 @@ async def process_endpoint(
     url: Optional[str] = Form(None),
     acknowledged: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
+    layouts: Optional[str] = Form(None),
     force_low_quality: Optional[str] = Form(None)
 ):
     api_key = await resolve_gemini(request)
@@ -1295,10 +1345,17 @@ async def process_endpoint(
         ack_flag = bool(body.get("acknowledged"))
         force_low = bool(body.get("force_low_quality"))
         output_format = body.get("output_format")
+        layouts = body.get("layouts")
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
         output_format = "auto"
+
+    # Accepts a JSON list or a comma-separated form field.
+    if isinstance(layouts, str):
+        layouts = [p for p in layouts.split(",") if p.strip()]
+    elif not isinstance(layouts, list):
+        layouts = []
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
@@ -1348,6 +1405,14 @@ async def process_endpoint(
     cmd = ["python", "-u", "main.py"] # -u for unbuffered
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = api_key # Override with key from request
+
+    # Optional layouts are per job. The renderer reads these at import time in
+    # the subprocess, so they must be set before Popen — same path WATERMARK
+    # already takes.
+    chosen = layout_env(layouts)
+    env.update(chosen)
+    if chosen:
+        print(f"[layouts] job={job_id} enabled={sorted(chosen)}")
 
     input_path = None
     if url:

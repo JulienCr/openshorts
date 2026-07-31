@@ -21,6 +21,10 @@ import os
 import subprocess
 import tempfile
 
+import active_speaker
+import punch_in
+import screencast_layout
+import split_layout
 from ffmpeg_utils import video_encode_args, QUALITY_FAST, METADATA_SCRUB
 
 ANALYSIS_MAX_WIDTH = 640
@@ -110,11 +114,23 @@ GENERAL_CONTENT_HEIGHT_RATIO = float(
     os.environ.get("GENERAL_CONTENT_HEIGHT_RATIO", "0.42"))
 
 
-def general_filtergraph(out_w, out_h):
+def full_width_content_height(orig_w, orig_h, out_w):
+    """Height the source fills when its FULL width is kept (even)."""
+    fg_h = int(round(out_w * orig_h / float(orig_w)))
+    return fg_h + (fg_h % 2)
+
+
+def general_filtergraph(out_w, out_h, content_h=None):
     """Blurred-background 'general shot' layout: bg fills the frame (centre-
     cropped, blurred), fg is scaled to a readable share of the height and
-    centred, overflowing the sides rather than floating small in the middle."""
-    fg_h = int(out_h * GENERAL_CONTENT_HEIGHT_RATIO)
+    centred, overflowing the sides rather than floating small in the middle.
+
+    ``content_h`` overrides the height ratio. Passing the full-width height
+    turns the side-cropping off entirely, which is what a scene full of charts
+    or spreadsheets needs: the default 0.42 ratio buys presence by throwing away
+    ~24% of the width, and on that material the discarded columns are the point.
+    """
+    fg_h = content_h if content_h else int(out_h * GENERAL_CONTENT_HEIGHT_RATIO)
     fg_h += fg_h % 2
     return (
         f"[0:v]split=2[bga][fga];"
@@ -170,7 +186,11 @@ def _analyze_trajectory(input_video, scenes_boundaries, scene_strategies,
             strategy = (scene_strategies[current_scene_index]
                         if current_scene_index < len(scene_strategies) else 'TRACK')
 
-            if strategy == 'GENERAL':
+            # SPLIT, SCREENCAST and WIDE crops are static (fixed boxes for the
+            # whole scene), so like GENERAL they need no camera trajectory.
+            # ALTERNATE gets one written in after this pass.
+            if strategy in ('GENERAL', 'SPLIT', 'SCREENCAST', 'WIDE',
+                            'ALTERNATE'):
                 cameraman.current_center_x = orig_w / 2
                 cameraman.target_center_x = orig_w / 2
                 xs.append(None)
@@ -209,9 +229,15 @@ def _run(cmd):
                    stderr=subprocess.PIPE, timeout=1800)
 
 
-def render(input_video, final_output_video, aspect_ratio):
-    """Full v2 reframe of one clip. Raises on failure (caller falls back)."""
+def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
+    """Full v2 reframe of one clip. Raises on failure (caller falls back).
+
+    ``content_ranges`` comes from screencast_layout.detect_content_ranges() on
+    the SOURCE video, already translated into this clip's timeline. None or []
+    means the layout never triggers, which is the default.
+    """
     import main as m
+    content_ranges = content_ranges or []
 
     print("   🚀 Reframe engine v2 (ffmpeg-native render)")
     scenes, fps = m.detect_scenes(input_video)
@@ -231,6 +257,64 @@ def render(input_video, final_output_video, aspect_ratio):
     scene_boundaries = [(s.get_frames(), e.get_frames()) for s, e in scenes]
     strategies = m.analyze_scenes_strategy(input_video, scenes)
 
+    # SPLIT is an upgrade applied on top of the TRACK/GENERAL verdict, keyed by
+    # the scene's START FRAME rather than its index: scene_frame_ranges() drops
+    # empty ranges, so indices there don't line up with `scenes`. A surviving
+    # range always keeps its original start_f (the clamp only bites on scenes
+    # that begin past the last decoded frame, and those get dropped).
+    splits = {}
+    split_scene_of = {}
+    for scene_idx, centres in split_layout.detect_split_scenes(
+            input_video, scenes, strategies).items():
+        strategies[scene_idx] = 'SPLIT'
+        start_f = scene_boundaries[scene_idx][0]
+        splits[start_f] = centres
+        split_scene_of[start_f] = scene_idx
+
+    # Geometry alone will stack a scene where one person never speaks. Ask who
+    # is actually talking before spending half the frame on the other one.
+    alternates = {}
+    if splits and active_speaker.ENABLED:
+        for start_f in list(splits):
+            scene_idx = split_scene_of[start_f]
+            end_f = scene_boundaries[scene_idx][1]
+            verdicts = active_speaker.verdicts_for_scene(
+                input_video, start_f, end_f, fps, splits[start_f])
+            if not active_speaker.is_conversation(verdicts):
+                a, b = active_speaker.shares(verdicts)
+                print(f"   🔇 Scene {scene_idx}: one speaker holds the floor "
+                      f"({max(a, b):.0%}) — not stacking")
+                del splits[start_f]
+                strategies[scene_idx] = 'GENERAL'
+            elif active_speaker.CUT_MODE:
+                strategies[scene_idx] = 'ALTERNATE'
+                alternates[start_f] = (
+                    active_speaker.hold(verdicts), splits.pop(start_f))
+    if splits:
+        print(f"   🪞 SPLIT layout on {len(splits)} scene(s)")
+    if alternates:
+        print(f"   🎬 Speaker-cut layout on {len(alternates)} scene(s)")
+
+    # SCREENCAST wins over SPLIT on the rare scene that qualifies for both: two
+    # faces beside a chart still means the chart is what the shot is about, and
+    # stacking the two speakers would crop it away entirely.
+    screencasts = {}
+    wide_count = 0
+    if content_ranges:
+        for scene_idx, (plan, centre) in screencast_layout.detect_screencast_scenes(
+                input_video, scenes, strategies, content_ranges).items():
+            strategies[scene_idx] = plan
+            start_f = scene_boundaries[scene_idx][0]
+            splits.pop(start_f, None)
+            if plan == 'SCREENCAST':
+                screencasts[start_f] = centre
+            else:
+                wide_count += 1
+    if screencasts:
+        print(f"   🖥️ SCREENCAST layout on {len(screencasts)} scene(s)")
+    if wide_count:
+        print(f"   📐 Full-width layout on {wide_count} scene(s)")
+
     # The crop geometry comes from the SOURCE dims only — SmoothedCameraman
     # derives crop_width/crop_height from video_width/video_height and never
     # reads the output pair. So out_w/out_h being the (possibly upscaled)
@@ -243,11 +327,30 @@ def render(input_video, final_output_video, aspect_ratio):
     if not xs:
         raise RuntimeError("analysis produced no frames")
 
+    # Beats are found once per clip; each scene takes the ones inside it.
+    beats = []
+    if punch_in.ENABLED:
+        beats = punch_in.emphasis_times(input_video, len(xs) / fps)
+        if beats:
+            print(f"   🔍 Punch-in on {len(beats)} beat(s)")
+
+    crop_w, crop_h = cameraman.crop_width, cameraman.crop_height
+
+    # ALTERNATE renders through the TRACK path: hard cuts between two speakers
+    # are still just a list of crop x values, so no new filtergraph is needed.
+    # The trajectory is written here because the analysis pass deliberately
+    # skips these scenes rather than tracking a face through them.
+    for start_f, (held, centres) in alternates.items():
+        end_f = scene_boundaries[split_scene_of[start_f]][1]
+        end_f = min(end_f, len(xs))
+        if end_f <= start_f:
+            continue
+        xs[start_f:end_f] = active_speaker.speaker_xs(
+            held, centres, crop_w, orig_w, end_f - start_f, fps)
+
     ranges = scene_frame_ranges(scene_boundaries, strategies, len(xs))
     if not ranges:
         raise RuntimeError("no usable scene ranges")
-
-    crop_w, crop_h = cameraman.crop_width, cameraman.crop_height
     workdir = tempfile.mkdtemp(prefix="reframe_v2_")
     segments = []
     try:
@@ -256,16 +359,38 @@ def render(input_video, final_output_video, aspect_ratio):
             ss = start_f / fps
             dur = (end_f - start_f) / fps
 
-            if strategy == 'GENERAL':
+            if strategy == 'SCREENCAST':
+                graph = screencast_layout.screencast_filtergraph(
+                    orig_w, orig_h, out_w, out_h, screencasts[start_f])
+            elif strategy == 'WIDE':
+                graph = general_filtergraph(
+                    out_w, out_h,
+                    full_width_content_height(orig_w, orig_h, out_w))
+            elif strategy == 'SPLIT':
+                left, right = splits[start_f]
+                graph = split_layout.split_filtergraph(
+                    orig_w, orig_h, out_w, out_h, left, right)
+            elif strategy == 'GENERAL':
                 graph = general_filtergraph(out_w, out_h)
             else:
                 seg_xs = [x if x is not None else 0 for x in xs[start_f:end_f]]
                 cmd_path = os.path.join(workdir, f"cmd_{idx:03d}.txt")
+                if beats:
+                    zooms = punch_in.zoom_curve(len(seg_xs), fps, beats,
+                                                start_offset=ss)
+                    boxes = punch_in.crop_boxes(seg_xs, zooms, crop_w, crop_h,
+                                                orig_w, orig_h)
+                    lines = punch_in.sendcmd_lines(boxes, fps)
+                    first = boxes[0]
+                    init = f"w={first[0]}:h={first[1]}:x={first[2]}:y={first[3]}"
+                else:
+                    lines = dedupe_sendcmd_lines(seg_xs, fps)
+                    init = f"w={crop_w}:h={crop_h}:x={seg_xs[0]}:y=0"
                 with open(cmd_path, "w") as f:
-                    f.write("\n".join(dedupe_sendcmd_lines(seg_xs, fps)) + "\n")
+                    f.write("\n".join(lines) + "\n")
                 graph = (
                     f"[0:v]sendcmd=f='{cmd_path}',"
-                    f"crop@c=w={crop_w}:h={crop_h}:x={seg_xs[0]}:y=0,"
+                    f"crop@c={init},"
                     f"scale={out_w}:{out_h},setsar=1[v]"
                 )
 
