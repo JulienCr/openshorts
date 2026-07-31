@@ -248,6 +248,12 @@ CLIP RULES:
 - Start slightly before the hook and end slightly after the payoff when possible.
 - Do not cut in the middle of a word or phrase.
 - No generic intros/outros unless they are the hook.
+- STANDS ALONE: the clip must make sense to someone who has seen nothing else.
+  If it opens on a pronoun, a "that", a "so anyway", or an answer whose question
+  was asked earlier, move the start back to where the idea begins or skip it.
+  A brilliant moment that needs the previous five minutes is not a clip.
+  Fix this by moving the START earlier, never by cutting the ending short: a
+  clip that loses its payoff to gain context has traded down.
 - Prefer one great clip per candidate window. Maximum 2 clips per window only if clearly justified.
 - DIVERSITY: never return two clips that make the same point, tell the same
   story, or land the same joke — even across different windows. Pick the
