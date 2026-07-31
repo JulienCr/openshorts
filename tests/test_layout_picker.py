@@ -115,3 +115,34 @@ class TestSampleFrames:
         # The 12/1024px pair is measured; keep it overridable without a deploy.
         monkeypatch.setenv("LAYOUT_SAMPLE_FRAMES", "6")
         assert layout_picker.SAMPLE_FRAMES == 12  # read at import, not per call
+
+
+class TestShadowMode:
+    def test_shadow_decides_but_applies_nothing(self, monkeypatch):
+        # The whole point: the render must be identical to a run with the
+        # picker switched off.
+        mods = fake_modules(monkeypatch)
+        monkeypatch.setattr(layout_picker, "ENABLED", True)
+        monkeypatch.setattr(layout_picker, "SHADOW", True)
+        monkeypatch.setattr(layout_picker, "pick", lambda *a, **k: "screencast")
+        assert layout_picker.pick_and_apply("v.mp4", 60) == "screencast"
+        assert not any(m.ENABLED for m in mods.values())
+
+    def test_normal_mode_still_applies(self, monkeypatch):
+        mods = fake_modules(monkeypatch)
+        monkeypatch.setattr(layout_picker, "ENABLED", True)
+        monkeypatch.setattr(layout_picker, "SHADOW", False)
+        monkeypatch.setattr(layout_picker, "pick", lambda *a, **k: "screencast")
+        layout_picker.pick_and_apply("v.mp4", 60)
+        assert mods["screencast_layout"].ENABLED is True
+
+    def test_shadow_logs_one_greppable_line(self, monkeypatch, capsys):
+        fake_modules(monkeypatch)
+        monkeypatch.setattr(layout_picker, "ENABLED", True)
+        monkeypatch.setattr(layout_picker, "SHADOW", True)
+        monkeypatch.setattr(layout_picker, "pick", lambda *a, **k: "split")
+        layout_picker.pick_and_apply("v.mp4", 90)
+        out = capsys.readouterr().out
+        assert "[layout-shadow]" in out
+        assert "decision=split" in out
+        assert "would_enable=split_layout,active_speaker" in out

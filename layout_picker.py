@@ -44,7 +44,17 @@ by hand wins: this only ever ADDS, so an explicit choice is never overridden.
 import json
 import os
 
-ENABLED = os.environ.get("AUTO_LAYOUT", "0") == "1"
+# AUTO_LAYOUT=1 decides and applies. AUTO_LAYOUT=shadow decides, logs, and
+# applies NOTHING: the render is byte-for-byte what it would have been.
+#
+# Shadow exists because everything measured about this picker was measured on 48
+# YouTube clips chosen by hand, and the material users actually upload is a
+# different distribution nobody has looked at. A week of shadow answers "what
+# does it say about OUR videos" for 0.002 USD and ~2s per video, with no way to
+# damage a clip somebody paid for.
+_MODE = os.environ.get("AUTO_LAYOUT", "0").strip().lower()
+SHADOW = _MODE == "shadow"
+ENABLED = _MODE == "1" or SHADOW
 
 # 12 frames at 1024px wide. Both numbers are measured, not guessed: see above.
 SAMPLE_FRAMES = int(os.environ.get("LAYOUT_SAMPLE_FRAMES", "12"))
@@ -172,8 +182,19 @@ def pick(video_path, video_duration):
 
 
 def pick_and_apply(video_path, video_duration):
-    """Convenience for the pipeline: decide, switch on, report what changed."""
+    """Decide, switch on (unless shadowing), report what changed."""
     decision = pick(video_path, video_duration)
+
+    if SHADOW:
+        # One greppable line per job. Deliberately not routed through the
+        # analytics module: that one is opt-in and host-scoped, and a shadow
+        # run has to work on any deployment, including self-hosted.
+        would = _module_flags(decision)
+        print(f"[layout-shadow] decision={decision} "
+              f"would_enable={','.join(would) if would else 'none'} "
+              f"duration={video_duration:.0f}s")
+        return decision
+
     touched = apply(decision)
     if touched:
         print(f"   ✅ Enabled: {', '.join(touched)}")
