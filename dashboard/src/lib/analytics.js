@@ -6,9 +6,19 @@
 // can never break the app or leak into the open-source experience.
 //
 // Events (name — meaning):
-//   - Signup           — account created / signed in
-//   - CheckoutStarted  — redirected to Stripe Checkout
-//   - Subscribed       — plan activated after checkout
+//   - Signup             — account created / signed in
+//   - QuotaWallSeen      — the 402 wall modal opened
+//   - UpsellModalSeen    — the voluntary upgrade modal opened
+//   - QuotaWallCheckout  — a plan/top-up clicked inside the wall modal
+//   - UpsellModalCheckout— a plan/top-up clicked inside the upsell modal
+//   - CheckoutStarted    — checkout clicked, on ANY surface (see `source` prop:
+//                          'wall' | 'upsell' | 'pricing')
+//   - CheckoutRedirected — Stripe returned a URL and we are sending them there
+//   - CheckoutFailed     — /api/billing/checkout errored, `reason` says why
+//   - Subscribed         — plan activated after checkout
+// The Started → Redirected → Subscribed chain is what separates "never reached
+// Stripe" from "reached Stripe and abandoned"; before 2-ago-2026 the modals
+// emitted only their own *Checkout event and the difference was invisible.
 // Prices ride along as ordinary props (e.g. value_usd) for breakdowns.
 export function track(event, options) {
   try {

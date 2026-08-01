@@ -14,9 +14,18 @@ import Modal from './ui/Modal';
 // - Compromise effect: all three tiers shown, creator highlighted in the
 //   middle — starter floors the price, pro anchors it, creator reads as the
 //   sensible pick (and matches the pricing page's "most popular").
-// - Loss framing: what free actually costs them (watermark, clips deleted
-//   after 7 days) — both real product facts.
+// - Outcome framing: every line says what the user GETS (clips ready to post,
+//   a library that stays), with the free-plan fact stated second. The earlier
+//   copy led with what free costs them, which reads as "pay to undo the
+//   restrictions we added" — the losing side of an argument against our own
+//   MIT repo, whose headline is literally "no watermarks, no limits".
 // - Risk reversal: "cancel anytime" on the CTA.
+//
+// Deliberately NOT sold here: GPU rendering and the included Gemini key. Both
+// are real and both are why the cloud beats self-hosting, but the free plan
+// already gets them (the pricing page says "Same GPU rendering" on the free
+// tier) — so they belong on the landing/pricing surface facing repo visitors,
+// not in a modal shown to someone who is already using them.
 const PLAN_BLURBS = {
   starter: 'for getting started',
   creator: 'for daily posting',
@@ -48,17 +57,43 @@ export default function TopUpModal({ onClose, required, remaining, context = 'wa
       .catch(() => {});
   }, []);
 
+  // Instrumented in three steps on purpose. Between 25-jul and 1-ago the modals
+  // logged 35 checkout clicks and Stripe recorded ONE new subscription, and
+  // nothing in between was measured — this modal fired only its own
+  // *ModalCheckout event, so "clicked but never reached Stripe" and "reached
+  // Stripe and abandoned" were indistinguishable. CheckoutStarted (click, same
+  // meaning as PricingSection's) → CheckoutRedirected (we hold a Stripe URL) →
+  // CheckoutFailed (we don't) separates them.
+  const source = isUpsell ? 'upsell' : 'wall';
+
   const buy = async (entry, kind) => {
     setBusyPrice(entry.price_id);
-    track(isUpsell ? 'UpsellModalCheckout' : 'QuotaWallCheckout',
-          { props: { kind, plan: entry.plan || null, minutes: entry.minutes } });
+    const props = { kind, plan: entry.plan || null, minutes: entry.minutes, source };
+    track(isUpsell ? 'UpsellModalCheckout' : 'QuotaWallCheckout', { props });
+    track('CheckoutStarted', { props });
+    // Same stash PricingSection sets, so a plan bought from the modal also
+    // carries its price into the Subscribed goal (AccountPage reads it back).
+    // Top-ups deliberately don't set it — they never count as a subscription.
+    if (kind === 'subscription') {
+      try {
+        localStorage.setItem('os_pending_checkout', JSON.stringify({
+          plan: entry.plan, interval: entry.interval, amount: entry.amount,
+          currency: entry.currency,
+        }));
+      } catch (_) { /* ignore storage errors */ }
+    }
     try {
       const { url } = await apiJson('/api/billing/checkout', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ price_id: entry.price_id }),
       });
+      track('CheckoutRedirected', { props });
       window.location.href = url;
-    } catch (e) { setBusyPrice(null); alert(e?.detail || 'Could not start checkout.'); }
+    } catch (e) {
+      track('CheckoutFailed', { props: { ...props, reason: String(e?.detail || e?.message || 'unknown').slice(0, 120) } });
+      setBusyPrice(null);
+      alert(e?.detail || 'Could not start checkout.');
+    }
   };
 
   const fmt = (a, c) => new Intl.NumberFormat('en-US', {
@@ -73,13 +108,13 @@ export default function TopUpModal({ onClose, required, remaining, context = 'wa
       {/* Goal-gradient framing: they're one step from the thing they came for. */}
       <p className="text-muted text-sm mb-5">
         {isUpsell
-          ? <>Your free clips carry a watermark and are deleted after <b className="text-ink font-medium">7 days</b>.
-              Upgrade to keep them clean, permanent, and with a bigger monthly quota.</>
+          ? <>Every clip comes out <b className="text-ink font-medium">ready to post</b> and stays in your
+              library for good. On the free plan they carry a watermark and are deleted after 7 days.</>
           : blockedByLength
             ? <>This video needs <b className="text-ink font-medium">{required} min</b> and you have{' '}
                 <b className="text-ink font-medium">{Math.max(0, Math.round((remaining || 0) * 10) / 10)} min</b> left
-                this month. Upgrade and it starts processing right away.</>
-            : <>You've used your free minutes for this month. Upgrade and keep clipping right away.</>}
+                this month. Pick a plan and it starts rendering right away.</>
+            : <>You've used your free minutes for this month. Pick a plan and keep clipping right away.</>}
       </p>
 
       <div className="grid sm:grid-cols-3 gap-3">
@@ -106,11 +141,11 @@ export default function TopUpModal({ onClose, required, remaining, context = 'wa
                 </li>
                 <li className="flex items-start gap-2">
                   <Check size={15} className="text-ok shrink-0 mt-0.5" />
-                  <span><b>No watermark</b> on your clips</span>
+                  <span>Clips <b>ready to post</b>, with no watermark</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Check size={15} className="text-ok shrink-0 mt-0.5" />
-                  <span>Clips stored <b>forever</b> — free clips delete after 7 days</span>
+                  <span>Your library <b>stays</b> (free clips delete after 7 days)</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Zap size={15} className="text-brass shrink-0 mt-0.5" />

@@ -36,7 +36,10 @@ export default function PricingSection({ onRequireLogin }) {
   const checkout = async (entry) => {
     if (!isSignedIn) { onRequireLogin?.(entry.price_id); return; }
     setBusyPrice(entry.price_id);
-    track('CheckoutStarted', { props: { plan: entry.plan, interval: entry.interval } });
+    // `source` segments this surface from the two modals (see TopUpModal), which
+    // now emit the same three events.
+    const props = { plan: entry.plan, interval: entry.interval, source: 'pricing' };
+    track('CheckoutStarted', { props });
     // Stash the price so we can attach real revenue to the Subscribed goal when
     // the user returns from Stripe (see AccountPage's checkout=success handler).
     try {
@@ -50,8 +53,10 @@ export default function PricingSection({ onRequireLogin }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ price_id: entry.price_id }),
       });
+      track('CheckoutRedirected', { props });
       window.location.href = url;
     } catch (e) {
+      track('CheckoutFailed', { props: { ...props, reason: String(e?.detail || e?.message || 'unknown').slice(0, 120) } });
       setBusyPrice(null);
       alert(e?.detail || 'Could not start checkout. Please try again.');
     }
