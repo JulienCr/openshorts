@@ -64,6 +64,10 @@ const FAQS = [
     answer: "OpenShorts itself is free, but the AI Shorts feature uses external APIs (fal.ai for video generation, ElevenLabs for voiceover) that charge per use. Low Cost mode costs approximately $0.65 per video (Flux image $0.05 + ElevenLabs voice $0.10 + Hailuo img2video $0.19 + VEED Lipsync $0.20 + b-roll $0.10). Premium mode costs approximately $2.00 per video using Kling Avatar v2 for higher quality. Both modes are significantly cheaper than hiring UGC creators ($50-500 per video) or using platforms like HeyGen ($24-180/month)."
   },
   {
+    question: "Does API and MCP access cost extra?",
+    answer: "No. Every plan, including the free one, can create API keys in the account page and use the REST API and the MCP server at mcp.openshorts.app/mcp. Calls draw from the same monthly minutes as the dashboard, so automating with Claude, ChatGPT or n8n does not change the price of anything. The value of the hosted endpoint is that it is always on: an agent or a scheduled pipeline can clip and publish while your own machine is off, which is the one thing the self-hosted edition cannot do for you. Full guide at openshorts.app/mcp."
+  },
+  {
     question: "What are the system requirements to run OpenShorts?",
     answer: "OpenShorts runs on any system with Docker installed. The recommended setup is 8GB+ RAM and a modern multi-core CPU. GPU acceleration (NVIDIA CUDA) is optional but speeds up video processing significantly. The Docker Compose setup handles all dependencies automatically — Python 3.11, FFmpeg, YOLOv8, MediaPipe, faster-whisper, and the React dashboard. It works on Linux, macOS, and Windows (via WSL2/Docker Desktop)."
   }
