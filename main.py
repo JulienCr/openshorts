@@ -23,7 +23,7 @@ from google.genai import types as genai_types
 
 import gemini_worker
 import layout_picker
-from clip_selection import build_transcript_windows, snap_clip_to_words
+from clip_selection import build_transcript_windows, clip_count_targets, snap_clip_to_words
 from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
 from dotenv import load_dotenv
@@ -1274,8 +1274,10 @@ def get_viral_clips(transcript_result, video_duration):
 
         # --- Pass 2: detailed clip extraction on the shortlist ---
         payload = [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in shortlist]
+        min_clips, max_clips = clip_count_targets(len(shortlist))
         prompt = gemini_worker.DETAIL_PROMPT_TEMPLATE.format(
             video_duration=video_duration, language=language,
+            min_clips=min_clips, max_clips=max_clips,
             windows_json=json.dumps(payload, ensure_ascii=False))
         detail, cost = _run_gemini_stage(client, model_name, prompt, gemini_worker.DetailResponse)
         if cost:

@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types as genai_types
 from pydantic import BaseModel
 
-from clip_selection import lookup_model_prices
+from clip_selection import clip_count_targets, lookup_model_prices
 
 load_dotenv()
 
@@ -254,10 +254,17 @@ CLIP RULES:
   A brilliant moment that needs the previous five minutes is not a clip.
   Fix this by moving the START earlier, never by cutting the ending short: a
   clip that loses its payoff to gain context has traded down.
-- Prefer one great clip per candidate window. Maximum 2 clips per window only if clearly justified.
+- HOW MANY: return {min_clips} to {max_clips} clips. Work through EVERY candidate
+  window — they were already scored as the best moments in the video, so a window
+  that yields nothing should be the exception, not the norm. Two or three clips
+  from one window are fine when they are genuinely different moments. The rules
+  above let you skip a weak clip; they are not a licence to return one clip and
+  stop. Only fall short of {min_clips} when the material truly does not hold
+  them, and never pad with a clip you would not publish yourself.
 - DIVERSITY: never return two clips that make the same point, tell the same
   story, or land the same joke — even across different windows. Pick the
-  stronger one and drop the other.
+  stronger one and drop the other. Two clips on the same broad topic are fine
+  as long as each lands its own moment.
 
 HOOK PLAYBOOK — pick the strongest fitting pattern for `viral_hook_text` (max 10 words):
 - Open question: "Why does everyone get this wrong?"
@@ -498,11 +505,17 @@ def main() -> int:
     language = str(payload.get("language") or "unknown")
 
     template = SCORE_PROMPT_TEMPLATE if args.mode == "score" else DETAIL_PROMPT_TEMPLATE
-    prompt = template.format(
-        video_duration=payload["video_duration"],
-        language=language,
-        windows_json=json.dumps(payload["windows"], ensure_ascii=False),
-    )
+    fmt = {
+        "video_duration": payload["video_duration"],
+        "language": language,
+        "windows_json": json.dumps(payload["windows"], ensure_ascii=False),
+    }
+    if args.mode != "score":
+        # Score mode receives every window, not a shortlist, so a count target
+        # derived from it would be meaningless — and the score template has no
+        # placeholder for one anyway.
+        fmt["min_clips"], fmt["max_clips"] = clip_count_targets(len(payload.get("windows") or []))
+    prompt = template.format(**fmt)
 
     _log(f"🤖 Gemini worker request: mode={args.mode} strategy={args.strategy} model={model_name} items={len(payload.get('windows', []))}")
     response = client.models.generate_content(

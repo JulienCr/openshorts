@@ -26,6 +26,47 @@ def lookup_model_prices(model_name):
     return MODEL_PRICES[best_key] if best_key else None
 
 
+def clip_count_targets(n_windows):
+    """How many clips to ask the detail pass for, given the shortlist size.
+
+    Measured on prod 3-ago-2026: 408 of 429 jobs (95%) delivered 3 clips or
+    fewer, the mode being ONE, while the prompt was free to return one per
+    shortlisted window. Users who received 1-3 clips came back a second day
+    0.4% of the time; those who received 4-9 came back 16.1% — so the clip
+    count, not the clip quality, is what the retention curve hangs on.
+
+    The old prompt biased hard the other way ("prefer one great clip per
+    candidate window") and handed the model two unbounded licences to drop
+    clips (the 2-second rule and STANDS ALONE both end in "or skip it"), with
+    no floor to stop it collapsing to a single clip. This puts a floor and a
+    realistic ceiling on it instead.
+
+    ``CLIP_TARGET_MIN`` / ``CLIP_TARGET_MAX`` override both for A/B runs
+    without a deploy (the reframe-testing harness drives them).
+    """
+    import os
+
+    n = max(1, int(n_windows or 1))
+    # Floor grows with the material: 3 windows -> 3, 5 -> 4, 10+ -> 6.
+    low = max(2, min(6, n // 2 + 2))
+    # Ceiling allows a rich window to yield more than one without inviting padding.
+    high = min(12, max(4, n * 2))
+    low = min(low, high)
+
+    def _override(name, current):
+        raw = os.environ.get(name)
+        if not raw:
+            return current
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return current
+
+    low = _override("CLIP_TARGET_MIN", low)
+    high = _override("CLIP_TARGET_MAX", high)
+    return low, max(low, high)
+
+
 def compact_words(words, precision=2):
     """Round word timestamps for prompts — full float precision wastes tokens."""
     return [
