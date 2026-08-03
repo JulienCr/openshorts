@@ -492,7 +492,8 @@ _RESUME_FILE = ".resume.json"
 MAX_RESUME_ATTEMPTS = 2
 
 
-def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark):
+def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
+                           webhook_url=None, webhook_secret=None, base_url=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         with open(path, "w") as f:
@@ -501,6 +502,14 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
                 "user_id": None if user_id is None else str(user_id),
                 "reservation_id": reservation_id,
                 "watermark": bool(watermark), "attempts": 0,
+                # The caller's webhook must survive a redeploy: a pipeline that
+                # relies on the callback would otherwise hang forever on a job
+                # that resumed fine. The secret is the caller's own HMAC value,
+                # stored next to their video on the same disk — not a server
+                # credential (those are rebuilt from os.environ on resume).
+                "webhook_url": webhook_url,
+                "webhook_secret": webhook_secret,
+                "base_url": base_url,
             }, f)
     except Exception as e:
         print(f"⚠️ Could not write resume manifest for {job_id}: {e}")
@@ -591,6 +600,9 @@ def _resume_interrupted_jobs() -> set:
             'user_id': None if user_id is None else user_id,
             'reservation_id': reservation_id,
             'watermark': bool(m.get("watermark")),
+            'webhook_url': m.get("webhook_url"),
+            'webhook_secret': m.get("webhook_secret"),
+            'base_url': m.get("base_url"),
         }
         if reservation_id:
             keep_reservations.add(str(reservation_id))
@@ -797,6 +809,8 @@ async def run_job_wrapper(job_id):
         await _settle_reservation(job_id)
         # Archive the completed clips to the user's durable R2 library (history).
         await _archive_managed_job(job_id)
+        # Fire the caller's webhook (after archive, so durable links exist).
+        await _notify_job_webhook(job_id)
         # Operational alerting for managed jobs (proxy out of credits / failures).
         await _record_job_alert(job_id)
         # Accumulate proxy bandwidth for the monthly cost alert.
@@ -995,6 +1009,103 @@ async def _track_job_outcome(job, ok, err):
         print(f"⚠️  Analytics error: {e}")
 
 
+# --- Job completion webhooks --------------------------------------------------
+# Agents and pipelines (n8n, cron, MCP clients) need push, not poll: a caller
+# passes webhook_url on /api/process and gets one POST when the job reaches a
+# terminal state. The URL goes through assert_public_url both at submit and at
+# delivery time — the second check is what defeats DNS rebinding between them.
+WEBHOOK_TIMEOUT = 10.0
+WEBHOOK_RETRY_DELAYS = (0, 10, 60)  # seconds before each attempt
+
+
+def _sign_webhook(body: bytes, secret: str) -> str:
+    import hmac as _hmac
+    import hashlib as _hashlib
+    return "sha256=" + _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
+
+
+async def _webhook_clip_entries(job_id, job):
+    """The payload's clip list: absolute URLs, plus durable R2 links when the
+    job was archived (a webhook consumer usually fetches later, after the
+    1-hour local retention would have expired the /videos path)."""
+    base = (job.get('base_url') or os.environ.get("PUBLIC_API_URL", "")).rstrip("/")
+    clips = (job.get('result') or {}).get('clips') or []
+    entries = []
+    for i, clip in enumerate(clips):
+        rel = clip.get('video_url') or ""
+        entries.append({
+            "index": i,
+            "title": clip.get('title') or clip.get('video_title_for_youtube_short'),
+            "video_url": f"{base}{rel}" if rel.startswith("/") and base else rel,
+        })
+    if BILLING_ENABLED and job.get('user_id'):
+        try:
+            from sqlalchemy import select as _select
+            from cloud.database import session as cloud_session
+            from cloud.models import UserVideo
+            from cloud import storage as _storage
+            async with cloud_session() as s:
+                vids = list((await s.execute(
+                    _select(UserVideo).where(UserVideo.job_id == job_id)
+                )).scalars())
+            for v in vids:
+                if v.clip_index is not None and v.clip_index < len(entries):
+                    entries[v.clip_index]["download_url"] = _storage.presigned_get(
+                        v.r2_key, expires=24 * 3600)
+        except Exception as e:
+            print(f"⚠️ Webhook R2 links failed for {job_id}: {e}")
+    return entries
+
+
+async def _deliver_webhook(url, body: bytes, secret):
+    headers = {"Content-Type": "application/json", "User-Agent": "OpenShorts-Webhook/1.0"}
+    if secret:
+        headers["X-OpenShorts-Signature"] = _sign_webhook(body, secret)
+    from security_utils import assert_public_url, UnsafeURLError
+    loop = asyncio.get_event_loop()
+    for attempt, delay in enumerate(WEBHOOK_RETRY_DELAYS, 1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            # Re-resolve on every attempt: the submit-time check is stale by now.
+            await loop.run_in_executor(None, assert_public_url, url)
+            async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT,
+                                         follow_redirects=False) as client:
+                resp = await client.post(url, content=body, headers=headers)
+            if resp.status_code < 300:
+                print(f"🪝 Webhook delivered to {url} (attempt {attempt})")
+                return
+            print(f"⚠️ Webhook attempt {attempt} to {url}: HTTP {resp.status_code}")
+        except UnsafeURLError as e:
+            print(f"🛑 Webhook URL no longer safe, dropping: {e}")
+            return
+        except Exception as e:
+            print(f"⚠️ Webhook attempt {attempt} to {url} failed: {e}")
+    print(f"❌ Webhook to {url} gave up after {len(WEBHOOK_RETRY_DELAYS)} attempts.")
+
+
+async def _notify_job_webhook(job_id):
+    """Fire the caller's webhook for a terminal job. Runs inside run_job_wrapper's
+    finally AFTER the R2 archive, so durable links exist; the actual delivery
+    (with its retry sleeps) is detached so the worker slot frees immediately."""
+    job = jobs.get(job_id) or {}
+    url = job.get('webhook_url')
+    if not url or job.get('webhook_sent'):
+        return
+    job['webhook_sent'] = True
+    completed = job.get('status') == 'completed'
+    payload = {
+        "event": "job.completed" if completed else "job.failed",
+        "job_id": job_id,
+        "status": job.get('status'),
+        "clips": (await _webhook_clip_entries(job_id, job)) if completed else [],
+    }
+    if not completed:
+        payload["error"] = _job_error_text(job.get('logs', []))[-500:]
+    body = json.dumps(payload).encode()
+    asyncio.create_task(_deliver_webhook(url, body, job.get('webhook_secret')))
+
+
 async def _settle_reservation(job_id):
     if not BILLING_ENABLED:
         return
@@ -1030,6 +1141,11 @@ app = FastAPI(lifespan=lifespan)
 # Cloud mode: attach middleware + routers at import time (before the app serves).
 if BILLING_ENABLED:
     cloud.setup_sync(app)
+
+# MCP server (/mcp): the pipeline as agent-callable tools. Works in both modes —
+# cloud requires an osk_ API key, self-host keeps BYOK (see mcp_server.py).
+import mcp_server as _mcp_server
+app.include_router(_mcp_server.router)
 
 # Enable CORS for frontend. Cloud mode locks this down to the configured origins;
 # self-host keeps the permissive wildcard it has always used.
@@ -1328,7 +1444,9 @@ async def process_endpoint(
     acknowledged: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
     layouts: Optional[str] = Form(None),
-    force_low_quality: Optional[str] = Form(None)
+    force_low_quality: Optional[str] = Form(None),
+    webhook_url: Optional[str] = Form(None),
+    webhook_secret: Optional[str] = Form(None)
 ):
     api_key = await resolve_gemini(request)
     if not api_key:
@@ -1346,6 +1464,8 @@ async def process_endpoint(
         force_low = bool(body.get("force_low_quality"))
         output_format = body.get("output_format")
         layouts = body.get("layouts")
+        webhook_url = body.get("webhook_url")
+        webhook_secret = body.get("webhook_secret")
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
@@ -1359,6 +1479,16 @@ async def process_endpoint(
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
+
+    # Completion callback: reject unsafe targets NOW (clear 400) — delivery
+    # re-validates anyway, but failing at submit is the debuggable behavior.
+    if webhook_url:
+        from security_utils import assert_public_url, UnsafeURLError
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None, assert_public_url, webhook_url)
+        except UnsafeURLError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid webhook_url: {e}")
 
     if not ack_flag:
         raise HTTPException(status_code=400, detail="You must confirm you own the content or have rights to process it.")
@@ -1452,6 +1582,11 @@ async def process_endpoint(
         # subprocess after each clip renders).
         env["WATERMARK"] = "1"
 
+    # Absolute-URL base for the webhook payload: explicit env wins (the API may
+    # sit behind a proxy whose forwarded headers we can't trust), else what the
+    # caller connected to.
+    api_base = os.environ.get("PUBLIC_API_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
+
     # Enqueue Job
     jobs[job_id] = {
         'status': 'queued',
@@ -1463,6 +1598,9 @@ async def process_endpoint(
         'user_id': user_id,
         'reservation_id': reservation_id,
         'watermark': env.get("WATERMARK") == "1",
+        'webhook_url': webhook_url,
+        'webhook_secret': webhook_secret,
+        'base_url': api_base,
     }
 
     # Persist the owner so recovered jobs keep their multi-tenant guard after a
@@ -1478,7 +1616,9 @@ async def process_endpoint(
     # Resume manifest: enough to re-run this job if the container dies mid-flight
     # (a redeploy). No secrets — the env is rebuilt from os.environ on resume.
     _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
-                           watermark=jobs[job_id]['watermark'])
+                           watermark=jobs[job_id]['watermark'],
+                           webhook_url=webhook_url, webhook_secret=webhook_secret,
+                           base_url=api_base)
 
     _enqueue_job(job_id, priority)
 

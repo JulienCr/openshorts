@@ -244,6 +244,51 @@ Navigate to **`http://localhost:5175`**
 
 ---
 
+## Automate It: MCP Server, REST API and Webhooks
+
+You don't need the dashboard. The whole pipeline is callable by AI agents and scripts.
+
+### MCP server (`/mcp`)
+
+OpenShorts ships a built-in [MCP](https://modelcontextprotocol.io) server, so Claude, ChatGPT, Cursor or any MCP client can clip and publish videos for you:
+
+```bash
+# Hosted (create an API key in your account page at openshorts.app):
+claude mcp add --transport http openshorts https://mcp.openshorts.app/mcp \
+  --header "Authorization: Bearer osk_..."
+
+# Self-hosted (no key needed, BYOK rules apply):
+claude mcp add --transport http openshorts http://localhost:8000/mcp
+```
+
+Tools: `process_video`, `get_job_status`, `list_clips`, `get_quota`, `add_subtitles`, `publish_clip`. A prompt like *"clip this podcast and schedule the best 3 to TikTok"* is now a one-liner in your agent of choice.
+
+### REST API + API keys
+
+Hosted accounts can mint `osk_...` API keys (account page). A key authenticates as you everywhere — same plan, same minutes, same job ownership:
+
+```bash
+curl -X POST https://api.openshorts.app/api/process \
+  -H "Authorization: Bearer osk_..." -H "Content-Type: application/json" \
+  -d '{"url": "https://youtube.com/watch?v=...", "acknowledged": true,
+       "webhook_url": "https://your-server.com/hooks/openshorts"}'
+```
+
+Interactive docs at `/docs` (OpenAPI) on any instance.
+
+### Completion webhooks
+
+Pass `webhook_url` (and optionally `webhook_secret`) to `POST /api/process` and you get exactly one `POST` when the job reaches a terminal state — no polling loops in your n8n / Zapier / cron pipelines:
+
+```json
+{"event": "job.completed", "job_id": "…",
+ "clips": [{"index": 0, "title": "…", "video_url": "…", "download_url": "…"}]}
+```
+
+With a secret, the body is signed: `X-OpenShorts-Signature: sha256=<hmac-sha256(body)>`.
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |

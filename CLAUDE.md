@@ -173,6 +173,28 @@ se desactiva porque el modelo diga `none`.
 | POST | `/api/translate` | AI voice dubbing via ElevenLabs |
 | GET | `/api/translate/languages` | List supported dubbing languages |
 | POST | `/api/social/post` | Post to social media (async upload) |
+| POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools |
+| POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
+
+### Agent access (MCP, API keys, webhooks)
+
+- **API keys** (`cloud/api_keys.py`): `osk_...` tokens, sha256-stored, created in
+  the dashboard account page. `cloud/auth.get_current_user_optional` accepts
+  them (`Bearer osk_...` or `X-API-Key`) and resolves the owner, so metering,
+  entitlement, plan priority and job ownership apply to agents with zero
+  endpoint changes. Key management itself refuses API-key auth: a leaked key
+  cannot mint replacements.
+- **MCP server** (`mcp_server.py`, mounted always): stateless Streamable-HTTP
+  JSON-RPC at `/mcp` — no SDK dependency, ~3 methods + 6 tools. Each tool calls
+  back into this same app in-process (`httpx.ASGITransport`) forwarding the
+  caller's auth headers, so it can never drift from the REST behavior. Cloud
+  mode 401s without a resolvable user; self-host stays BYOK-open.
+- **Webhooks**: `POST /api/process` takes `webhook_url` + optional
+  `webhook_secret` (HMAC-SHA256, `X-OpenShorts-Signature`). Validated with
+  `security_utils.assert_public_url` at submit AND at delivery (DNS rebinding).
+  Fired once per job from `run_job_wrapper` after the R2 archive so the payload
+  can carry durable download links; survives redeploys via the resume manifest.
+  `PUBLIC_API_URL` env sets the absolute-URL base when behind a proxy.
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.

@@ -26,7 +26,7 @@ def setup_sync(app):
     from starlette.middleware.sessions import SessionMiddleware
     app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret)
 
-    from . import auth, oauth, billing, social_profiles, videos
+    from . import auth, oauth, billing, social_profiles, videos, api_keys
     oauth.register()
     billing._init_stripe()
     app.include_router(auth.router)
@@ -34,6 +34,7 @@ def setup_sync(app):
     app.include_router(billing.router)
     app.include_router(social_profiles.router)
     app.include_router(videos.router)
+    app.include_router(api_keys.router)
 
 
 async def setup_async(app, keep_reservation_ids=None):

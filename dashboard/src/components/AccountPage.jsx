@@ -3,6 +3,7 @@ import { Loader2, CreditCard, LogOut, Plus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
 import { track } from '../lib/analytics';
+import ApiKeysCard from './ApiKeysCard';
 
 const fmt1 = (n) => Math.round((n || 0) * 10) / 10;
 
@@ -197,6 +198,8 @@ export default function AccountPage() {
           </div>
         </div>
       )}
+
+      <ApiKeysCard />
     </div>
   );
 }

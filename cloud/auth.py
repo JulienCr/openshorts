@@ -98,11 +98,29 @@ async def _load_current_user(session, user_id) -> Optional["CurrentUser"]:
 
 
 async def get_current_user_optional(request: Request) -> Optional[CurrentUser]:
-    """Return the authenticated user, or None for anonymous / BYOK requests."""
+    """Return the authenticated user, or None for anonymous / BYOK requests.
+
+    Accepts either a session JWT (``Bearer <jwt>``) or a user API key
+    (``Bearer osk_...`` / ``X-API-Key``). A key authenticates as its owner, so
+    quota, entitlement and job ownership apply to agents exactly as to the
+    dashboard — no parallel auth path to keep in sync.
+    """
+    from . import api_keys
+
     auth = request.headers.get("Authorization", "")
-    if not auth.lower().startswith("bearer "):
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    api_token = token if api_keys.looks_like_key(token) else request.headers.get("X-API-Key", "")
+
+    if api_keys.looks_like_key(api_token):
+        user_id = await api_keys.user_id_for_key(api_token)
+        if user_id is None:
+            return None
+        async with database.session() as session:
+            return await _load_current_user(session, user_id)
+
+    if not token:
         return None
-    payload = _decode_jwt(auth[7:].strip())
+    payload = _decode_jwt(token)
     if not payload:
         return None
     try:
