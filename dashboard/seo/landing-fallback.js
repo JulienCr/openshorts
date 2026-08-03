@@ -47,6 +47,7 @@ const FEATURES = [
   ['Self-hosted and private', 'Run it with Docker on your own machine and the source video never leaves your infrastructure.'],
   ['Free AI YouTube studio', 'AI thumbnail generator, 10 viral title suggestions and auto-written descriptions with chapter timestamps.'],
   ['Direct social publishing', 'Post to TikTok, Instagram Reels and YouTube Shorts from the dashboard.'],
+  ['MCP server and API for AI agents', 'Connect Claude, ChatGPT or n8n to an always-on endpoint (mcp.openshorts.app/mcp) and automate clipping end to end, with a REST API, per-user keys and completion webhooks. Guide at /mcp.'],
   ['AI UGC video generator', 'The AI writes a script and generates a lip-synced avatar video for any product or business, from $0.65 per video.'],
   ['AI actors with lip-sync', 'Pick an AI actor or upload a photo to get a talking-head video with matched lip movement.'],
 ]
@@ -81,6 +82,10 @@ const FAQ = [
   [
     'What is the AI UGC video generator?',
     'It generates marketing videos with AI actors for any product or business. You describe the business or paste a website URL, and the AI writes a script, generates a lip-synced actor with voiceover, adds b-roll, subtitles and a hook overlay. Low Cost mode is about $0.65 per video and Premium is about $2.00. It works for restaurants, e-commerce, coaching, local businesses and apps, not only software.',
+  ],
+  [
+    'Can I automate OpenShorts from Claude, ChatGPT or n8n?',
+    'Yes. OpenShorts has a native MCP server at mcp.openshorts.app/mcp plus a REST API with per-user keys and completion webhooks, so an agent can submit a video URL, wait for processing, list the clips and publish them. The hosted endpoint is always on, with the API key created in your account page; the self-hosted edition serves the same /mcp endpoint while your machine is running. Full guide at /mcp.',
   ],
   [
     'What are the system requirements to self-host?',

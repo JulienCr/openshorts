@@ -18,6 +18,7 @@
 | **API keys** | Bring your own Gemini, ElevenLabs, fal.ai | Gemini included, nothing to set up |
 | **Watermark / limits** | None, ever | Watermark and 20 min/mo on the free plan, neither on paid |
 | **Setup** | Docker, 8GB+ RAM, model downloads | Sign in and paste a link |
+| **MCP / API for agents** | Same `/mcp` endpoint, but only while your machine is on | Always-on endpoint at [mcp.openshorts.app](https://www.openshorts.app/mcp), API keys in one click |
 | **Your data** | Your server | Ours |
 
 Self-hosting is genuinely free and always will be. It costs you a machine, your own API keys and the time to keep it running. The hosted plans exist to cover that hardware and those keys, not to unlock features.
