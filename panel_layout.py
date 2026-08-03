@@ -218,11 +218,12 @@ def detect_panel_scenes(video_path, scenes, strategies, samples=None):
     same reason SPLIT does it: GENERAL already means "more than one face", and
     single-speaker material is most of the corpus and must not be touched.
     """
-    import cv2
-    import main as m
-
     if not ENABLED:
         return {}
+    # Below the gate on purpose: main pulls torch/mediapipe, and the disabled
+    # path (the default, and what CI exercises) must not pay that import.
+    import cv2
+    import main as m
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():

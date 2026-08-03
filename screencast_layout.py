@@ -245,11 +245,12 @@ def detect_screencast_scenes(video_path, scenes, strategies, ranges, samples=6):
       - WIDE is the blurred layout with side-cropping disabled, for content that
         fills the frame, or that has no presenter to stack.
     """
-    import cv2
-    import main as m
-
     if not ENABLED or not ranges:
         return {}
+    # Below the gate on purpose: main pulls torch/mediapipe, and the disabled
+    # path (the default, and what CI exercises) must not pay that import.
+    import cv2
+    import main as m
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
