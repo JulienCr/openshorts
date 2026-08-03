@@ -530,12 +530,16 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
     safe_fonts_dir = _escape_ffmpeg_filter_value(fonts_dir)
 
+    # The first option is named explicitly (filename=) rather than positional:
+    # ffmpeg 8's filtergraph parser rejects a quoted positional value that is
+    # followed by more :name=value options ("No option name near ..."), while
+    # the named form parses on every version back to 4.x.
     if str(srt_path).lower().endswith('.ass'):
         # ASS files (karaoke style) carry their own styles; force_style would
         # override the per-word color tags.
-        vf = f"ass='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
+        vf = f"ass=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
     else:
-        vf = (f"subtitles='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
+        vf = (f"subtitles=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
               f":charenc=UTF-8:force_style='{style_string}'")
 
     cmd = [
