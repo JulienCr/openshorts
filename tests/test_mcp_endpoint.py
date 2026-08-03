@@ -129,7 +129,12 @@ class TestWebhookSigning:
         expected = "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
         assert app_module._sign_webhook(body, "s3cret") == expected
 
-    def test_process_rejects_private_webhook_targets(self):
+    def test_process_rejects_private_webhook_targets(self, monkeypatch):
+        # The endpoint resolves a Gemini key before validating the webhook; a
+        # dummy env key keeps the test on the SSRF branch both on dev machines
+        # (where .env provides one anyway) and in CI (where nothing does).
+        monkeypatch.setenv("GEMINI_API_KEY", "test-dummy-key")
+
         async def _run():
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
