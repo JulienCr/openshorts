@@ -427,6 +427,123 @@ ${faqBlock([
   ],
 })
 
+const mcpAgentsPage = () => ({
+  path: '/mcp',
+  title: 'Automate Video Clipping with AI Agents: MCP Server, API & Webhooks | OpenShorts',
+  description:
+    'OpenShorts ships a built-in MCP server, so Claude, ChatGPT, Cursor or n8n can clip and publish videos for you. REST API with keys, completion webhooks, self-hostable. Hosted from $12/month.',
+  h1: 'Clip and publish video from an AI agent',
+  breadcrumb: [{ name: 'MCP server and API' }],
+  tldr: [
+    'OpenShorts has a native MCP server at mcp.openshorts.app/mcp. Connect any MCP client, Claude, ChatGPT, Cursor or a custom agent, and a prompt like "clip this podcast and schedule the best three to TikTok" becomes one instruction instead of an afternoon in an editor.',
+    'Six tools cover the whole pipeline: process_video, get_job_status, list_clips, get_quota, add_subtitles and publish_clip. There is also a plain REST API with per-user keys, and completion webhooks so pipelines never poll.',
+    'The hosted service includes 20 free minutes a month and paid plans from $12/month; API calls draw from the same minutes as the dashboard. The self-hosted edition, free and MIT-licensed, serves the same MCP endpoint on your own machine.',
+  ],
+  body: `
+<h2>What can an agent actually do with OpenShorts?</h2>
+<p>Everything the dashboard does. The MCP server is not a wrapper around a
+subset of features: each tool calls the same pipeline the web app uses, with the
+same account, the same minutes and the same job history. An agent can take a
+YouTube URL, turn it into 3 to 15 vertical clips with word-level captions,
+restyle those captions, and publish or schedule the result to TikTok, Instagram
+Reels and YouTube Shorts.</p>
+
+<h2>How do I connect Claude or another MCP client?</h2>
+<ol>
+<li>Sign in at openshorts.app and create an API key in your account page. The key is shown once and starts with <code>osk_</code>.</li>
+<li>Add the server to your client. With Claude Code:</li>
+</ol>
+<pre><code>claude mcp add --transport http openshorts https://mcp.openshorts.app/mcp \\
+  --header "Authorization: Bearer osk_..."</code></pre>
+<p>Any client that speaks Streamable HTTP works the same way: the endpoint is
+<code>https://mcp.openshorts.app/mcp</code> and the key travels as a Bearer
+token. The server describes itself over the protocol, tool schemas included, so
+there is nothing else to configure.</p>
+
+<h2>What tools does the MCP server expose?</h2>
+<table>
+<thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>process_video</code></td><td>Starts clipping a video from a URL. Returns a job id immediately; processing takes minutes.</td></tr>
+<tr><td><code>get_job_status</code></td><td>Progress, recent log lines, and the clips once the job completes.</td></tr>
+<tr><td><code>list_clips</code></td><td>Titles, durations, platform-ready descriptions and download URLs for a finished job.</td></tr>
+<tr><td><code>get_quota</code></td><td>Plan and remaining minutes, so an agent can check before starting a large job.</td></tr>
+<tr><td><code>add_subtitles</code></td><td>Restyles the burned-in captions of one clip, classic or karaoke word highlighting.</td></tr>
+<tr><td><code>publish_clip</code></td><td>Posts or schedules one clip to TikTok, Instagram or YouTube through the connected account.</td></tr>
+</tbody>
+</table>
+
+<h2>Can I use a plain REST API instead of MCP?</h2>
+<p>Yes. The same <code>osk_</code> key authenticates against the REST API, and
+interactive documentation lives at
+<a href="https://api.openshorts.app/docs" rel="noopener">api.openshorts.app/docs</a>
+with the OpenAPI spec at <code>/openapi.json</code>. A processing job is one
+request:</p>
+<pre><code>curl -X POST https://api.openshorts.app/api/process \\
+  -H "Authorization: Bearer osk_..." -H "Content-Type: application/json" \\
+  -d '{"url": "https://youtube.com/watch?v=...", "acknowledged": true,
+       "webhook_url": "https://your-server.com/hooks/openshorts"}'</code></pre>
+
+<h2>How do completion webhooks work?</h2>
+<p>Pass <code>webhook_url</code> when starting a job and OpenShorts sends
+exactly one POST when the job finishes or fails, with clip titles and download
+links in the body. Add a <code>webhook_secret</code> and the body is signed with
+HMAC-SHA256 in the <code>X-OpenShorts-Signature</code> header so your receiver
+can verify the sender. This is what lets an n8n, Zapier or cron pipeline run
+without a polling loop.</p>
+
+<h2>Does this work on the self-hosted edition?</h2>
+<p>Yes. The self-hosted edition serves the same <code>/mcp</code> endpoint on
+your own machine, with no API key required because there is no account system:
+it follows the same bring-your-own-key rules as the rest of the self-hosted app.
+Point your MCP client at <code>http://localhost:8000/mcp</code> and the same six
+tools appear.</p>
+
+<h2>What does it cost?</h2>
+${pricingParagraph}
+<p>API and MCP calls are not billed separately: they draw from the same minute
+balance as the dashboard, so automation does not change the price of anything.</p>
+
+${faqBlock([
+  {
+    q: 'Does OpenShorts have an MCP server?',
+    a: 'Yes, a native one at mcp.openshorts.app/mcp using the Streamable HTTP transport. It exposes six tools covering the full pipeline: process_video, get_job_status, list_clips, get_quota, add_subtitles and publish_clip. Authentication is an API key created in the dashboard, sent as a Bearer token.',
+  },
+  {
+    q: 'Can Claude or ChatGPT create video clips with OpenShorts?',
+    a: 'Yes. Any MCP-capable client, including Claude and ChatGPT, can connect to mcp.openshorts.app/mcp with an API key and drive the whole flow: submit a video URL, wait for processing, list the generated clips and publish them to TikTok, Instagram or YouTube.',
+  },
+  {
+    q: 'Is there an API for OpenShorts?',
+    a: 'Yes, a REST API documented at api.openshorts.app/docs, authenticated with per-user osk_ keys created in the dashboard. It covers processing, status, subtitles, publishing and completion webhooks.',
+  },
+  {
+    q: 'Do API calls cost extra?',
+    a: 'No. API and MCP usage draws from the same minute balance as the dashboard: 20 free minutes a month on the hosted free tier, and paid plans from $12/month. The self-hosted edition is free under MIT and serves the same endpoints with no metering.',
+  },
+])}
+
+${sources([
+  `MCP specification and transports at <a href="https://modelcontextprotocol.io" rel="noopener">modelcontextprotocol.io</a>.`,
+  `OpenShorts server implementation in the project source at <a href="${SITE.repo}" rel="noopener">github.com/mutonby/openshorts</a>.`,
+])}
+`,
+  faq: [
+    {
+      q: 'Does OpenShorts have an MCP server?',
+      a: 'Yes, a native MCP server at mcp.openshorts.app/mcp with six tools covering the full pipeline, authenticated with an API key created in the dashboard.',
+    },
+    {
+      q: 'Can Claude or ChatGPT create video clips with OpenShorts?',
+      a: 'Yes. Any MCP-capable client can connect with an API key and drive the whole flow from video URL to published clip.',
+    },
+    {
+      q: 'Do API calls cost extra?',
+      a: 'No. API and MCP usage draws from the same minute balance as the dashboard: 20 free minutes a month on the hosted free tier, paid plans from $12/month, and the self-hosted edition is free under MIT.',
+    },
+  ],
+})
+
 export function buildPages() {
   return [
     hubPage(),
@@ -434,6 +551,7 @@ export function buildPages() {
     freeClipGenerator(),
     openSourceClipper(),
     howItWorks(),
+    mcpAgentsPage(),
   ]
 }
 
@@ -449,6 +567,7 @@ export function relatedFor(page, all) {
     '/free-ai-clip-generator': 'What free means when there is no metering code.',
     '/open-source-video-clipper': 'Self-hosting with Docker, and the MIT licence carve-out.',
     '/how-openshorts-works': 'The full pipeline, stage by stage.',
+    '/mcp': 'Drive the whole pipeline from Claude, ChatGPT or n8n.',
   }
   // Walk the ring starting after this page so each page links to a different
   // three. Slicing the same head every time would leave the last pages in the
