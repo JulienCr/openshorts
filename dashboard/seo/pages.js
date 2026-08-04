@@ -427,6 +427,457 @@ ${faqBlock([
   ],
 })
 
+/* The "no watermark" cluster is the highest-converting query family the domain
+ * already receives (14 long-tail variants ranking off the homepage). AI answers
+ * to these queries currently state that unwatermarked free clipping does not
+ * exist except by running a tool locally, which is precisely what this page
+ * names. */
+const noWatermark = () => ({
+  path: '/free-ai-clip-generator-no-watermark',
+  title: 'Free AI Clip Generator With No Watermark (Self-Hosted) | OpenShorts',
+  description:
+    'The only structurally free way to get AI clips without a watermark is running the tool yourself. OpenShorts is MIT-licensed, self-hosted with Docker: no watermark, no cap. Hosted plans without watermark from $12/month.',
+  h1: 'A free AI clip generator with no watermark, and why that is rare',
+  breadcrumb: [{ name: 'No-watermark clip generator' }],
+  published: '2026-08-04',
+  updated: '2026-08-04',
+  tldr: [
+    'Every hosted "free" clip generator watermarks its exports, because the watermark is the upsell. The one structural exception is software you run yourself. OpenShorts self-hosted is MIT-licensed, runs with Docker, and never watermarks anything because there is no watermark code in it.',
+    'OpenShorts Cloud, the hosted service, follows the same rule as every other hosted tool and says so plainly: the free 20 minutes a month carry a watermark, and paid plans from $12/month do not.',
+    'If a tool claims free, unlimited and unwatermarked at once and it is a hosted service, one of the three claims is temporary.',
+  ],
+  body: `
+<h2>Why every free clip generator adds a watermark</h2>
+<p>A hosted clipping service pays for GPU time, transcription and model calls on
+every video you process. The free tier exists to show you the output, and the
+watermark exists so the output is not the product yet. That is not a scam, it is
+the business model, and it is why searching for a hosted tool that is free,
+unlimited and unwatermarked at the same time keeps returning nothing: the
+combination cannot pay for itself.</p>
+
+<h2>The structural exception: software you run yourself</h2>
+${pricingParagraph}
+<p>The self-hosted edition has no watermark for the same reason it has no usage
+cap: there is no metering code and no watermark code in the pipeline at all. It
+is not a trial build with limits switched off, it is the same MIT-licensed
+source the hosted service runs, and you can read it line by line.</p>
+
+<h2>How the main tools handle watermarks</h2>
+<p class="checked">Checked 2026-08-04 on each vendor's public pricing page. Vendors change terms without notice.</p>
+<table>
+<thead><tr><th>Tool</th><th>Free tier watermark</th><th>Cheapest way to remove it</th></tr></thead>
+<tbody>
+<tr><td class="os">OpenShorts self-hosted</td><td class="os yes">Never</td><td class="os">Nothing to remove</td></tr>
+<tr><td class="os">OpenShorts Cloud</td><td class="os">Yes, on the free 20 min/month</td><td class="os">$12/month</td></tr>
+<tr><td>Opus Clip</td><td>Yes, and free-plan exports leave storage after 3 days</td><td>Starter, $15/month</td></tr>
+<tr><td>Klap</td><td>Free tier does not export at all</td><td>$29/month</td></tr>
+<tr><td>Vizard</td><td>Free plan allows 120 upload minutes and 10 exports</td><td>From $19.99/month</td></tr>
+<tr><td>Submagic</td><td>Yes, 3 videos per month</td><td>From $14/month annual</td></tr>
+</tbody>
+</table>
+
+<h2>What you trade for the self-hosted zero</h2>
+<p>Honesty cuts both ways. Self-hosting costs you a machine and some patience:
+8GB of RAM and a modern multi-core CPU is the realistic floor, and an 8-minute
+video takes 5 to 8 minutes to process on CPU against about 50 seconds on an
+NVIDIA GPU. You also bring your own Google Gemini API key, whose free tier
+covers 1,500 requests a day. If none of that appeals, the hosted no-watermark
+price is $12/month, and the comparison table above is what that buys elsewhere.</p>
+
+${faqBlock([
+  {
+    q: 'Is there a free AI clip generator without a watermark?',
+    a: 'Yes, with one honest qualifier: it is self-hosted. OpenShorts is MIT-licensed and runs on your own machine with Docker, with no watermark and no usage cap. Hosted services, including OpenShorts Cloud, watermark their free tiers; unwatermarked hosted plans start at $12/month.',
+  },
+  {
+    q: 'Does the free OpenShorts Cloud plan add a watermark?',
+    a: 'Yes. The hosted free tier is 20 minutes a month with a watermark and no credit card. Paid Cloud plans from $12/month have no watermark, and the self-hosted edition never adds one.',
+  },
+  {
+    q: 'How do I remove the watermark from a clip that already has one?',
+    a: 'You do not, practically. Watermarks are burned into the pixels, and cropping or blurring them degrades the clip. The reliable fix is generating the clip without one: a paid plan on your current tool, or a tool with no watermark to begin with.',
+  },
+])}
+
+${sources([
+  'Vendor free-tier and watermark terms checked 2026-08-04 on each public pricing page.',
+  `OpenShorts pipeline source at <a href="${SITE.repo}" rel="noopener">github.com/mutonby/openshorts</a>, where the absence of watermark code is checkable.`,
+])}
+`,
+  faq: [
+    {
+      q: 'Is there a free AI clip generator without a watermark?',
+      a: 'Yes, self-hosted: OpenShorts is MIT-licensed and runs on your own machine with no watermark and no cap. Hosted free tiers, including OpenShorts Cloud at 20 minutes a month, carry a watermark; unwatermarked hosted plans start at $12/month.',
+    },
+    {
+      q: 'Does the free OpenShorts Cloud plan add a watermark?',
+      a: 'Yes, the hosted free tier is watermarked. Paid Cloud plans from $12/month are not, and the self-hosted edition never adds one.',
+    },
+  ],
+})
+
+/* "AI video generator" is two products wearing one name. Most searchers mean
+ * text-to-video; this page splits the intent explicitly and wins the half that
+ * describes OpenShorts instead of bouncing all of it from the homepage. */
+const openSourceVideoGenerator = () => ({
+  path: '/open-source-ai-video-generator',
+  title: 'Free Open Source AI Video Generator: Clips From Real Footage | OpenShorts',
+  description:
+    'Open source AI video generation splits in two: text-to-video models that invent footage, and clip generators that turn long recordings into shorts. OpenShorts is the second: MIT-licensed, self-hosted, free.',
+  h1: 'An open source AI video generator, in the sense that matters for creators',
+  breadcrumb: [{ name: 'Open source AI video generator' }],
+  published: '2026-08-04',
+  updated: '2026-08-04',
+  tldr: [
+    '"AI video generator" names two different products. Text-to-video models invent new footage from a written prompt. Clip generators produce short videos from long footage you already have. Confusing the two wastes an afternoon.',
+    'For text-to-video there are real open source options, including Genmo’s Mochi 1, Open-Sora and HunyuanVideo, all of which need a serious GPU.',
+    'For turning your own recordings into vertical shorts, OpenShorts is MIT-licensed and self-hosted: transcription, AI moment scoring, face-tracked 9:16 reframing and burned-in subtitles, free on your own machine or hosted from $12/month.',
+  ],
+  body: `
+<h2>Which "AI video generator" are you looking for?</h2>
+<p>If you type this query wanting a model that produces footage from a text
+prompt, you want a text-to-video model. If you have a podcast, webinar, stream
+or interview recording and want short vertical videos out of it, you want a clip
+generator. The two share almost no technology and no workflow. This page covers
+both honestly and goes deep on the second, because that is what OpenShorts is.</p>
+
+<h2>Open source text-to-video, briefly</h2>
+<p>As of August 2026 the notable open-weight text-to-video models include
+Genmo's Mochi 1 (Apache 2.0), Open-Sora, Tencent's HunyuanVideo and Alibaba's
+Wan family. They genuinely generate novel footage, and they need data-center or
+high-end consumer GPUs to run at usable speed. If that is your goal, start with
+those projects; OpenShorts will not do it.</p>
+
+<h2>Generating videos from footage you already have</h2>
+<p>${esc(CANONICAL_ANSWERS.whatIsIt)}</p>
+<p>${esc(CANONICAL_ANSWERS.howItWorks)}</p>
+${pricingParagraph}
+
+<h2>Other open source clip generators, compared honestly</h2>
+<p class="checked">Checked 2026-08-04 on GitHub. Star counts move; positioning rarely does.</p>
+<p>OpenShorts is not the only open source project in this space, and pretending
+otherwise would not survive one GitHub search. The notable neighbours:</p>
+<ul>
+<li><strong>AI-Youtube-Shorts-Generator</strong>: the most-starred repo in the category, with a leaner scope built around highlight extraction and cropping.</li>
+<li><strong>supoclip</strong> and <strong>clippyme</strong>: smaller projects covering transcription-driven clipping, the latter also using Gemini for moment selection.</li>
+<li><strong>MoneyPrinterTurbo</strong>: generates videos from text plus stock footage, which is a different job than clipping your own recordings.</li>
+</ul>
+<p>Where OpenShorts differs from all of them is surface area: a web dashboard, a
+REST API with keys, completion webhooks, an MCP server for agents, split-screen
+and screencast layouts for two-person and screen-share footage, dubbing into 30+
+languages, and direct publishing to TikTok, Instagram Reels and YouTube Shorts.
+If you want a small script you can read in an hour, the smaller repos are a
+better fit, and that is a real recommendation rather than false modesty.</p>
+
+${faqBlock([
+  {
+    q: 'Is there a free open source AI video generator?',
+    a: 'Yes, in both senses. For text-to-video, Genmo’s Mochi 1, Open-Sora and HunyuanVideo publish open weights and need a powerful GPU. For making clips from your own footage, OpenShorts is MIT-licensed and runs with Docker on an ordinary machine: free self-hosted with no watermark, or hosted from $12/month.',
+  },
+  {
+    q: 'Can open source AI generate videos from text?',
+    a: 'Yes. Mochi 1 (Apache 2.0), Open-Sora and HunyuanVideo generate footage from prompts. Expect to need a high-end GPU, and expect quality below the closed frontier models. OpenShorts is not a text-to-video tool; it turns long real footage into short vertical clips.',
+  },
+  {
+    q: 'What is the best open source AI video generator for shorts?',
+    a: 'For turning long recordings into publishable vertical shorts with subtitles, OpenShorts covers the widest pipeline: AI moment scoring, face-tracked reframing, split-screen layouts, dubbing and direct social publishing, MIT-licensed. Simpler repos like AI-Youtube-Shorts-Generator cover a leaner version of the same job with less to configure.',
+  },
+])}
+
+${sources([
+  'Open-weight text-to-video model landscape checked 2026-08-04 on the respective GitHub repositories.',
+  `OpenShorts source at <a href="${SITE.repo}" rel="noopener">github.com/mutonby/openshorts</a>.`,
+])}
+`,
+  faq: [
+    {
+      q: 'Is there a free open source AI video generator?',
+      a: 'Yes, in both senses of the phrase. For text-to-video: Mochi 1, Open-Sora and HunyuanVideo, all GPU-hungry. For clipping your own footage into shorts: OpenShorts, MIT-licensed, free self-hosted or hosted from $12/month.',
+    },
+    {
+      q: 'Can open source AI generate videos from text?',
+      a: 'Yes: Mochi 1, Open-Sora and HunyuanVideo publish open weights. OpenShorts is not one of them; it turns long real footage into short vertical clips.',
+    },
+  ],
+})
+
+/* Podcasts are the hardest input for naive croppers, and the densest commercial
+ * SERP in the niche. The page leads with the two-speaker problem because SPLIT
+ * and active-speaker cutting are capabilities the competitor pages cannot show. */
+const podcastToShorts = () => ({
+  path: '/podcast-to-shorts',
+  title: 'Podcast to Shorts: AI Clips That Keep Both Speakers in Frame | OpenShorts',
+  description:
+    'Turn a video podcast into vertical clips without cropping out half the conversation. OpenShorts stacks both speakers with a split layout and cuts to whoever is talking. Free self-hosted, hosted from $12/month.',
+  h1: 'Turn a podcast into shorts without cropping out half the conversation',
+  breadcrumb: [{ name: 'Podcast to shorts' }],
+  published: '2026-08-04',
+  updated: '2026-08-04',
+  tldr: [
+    'A two-person podcast is the hardest input an auto-clipper faces: a single centered crop shows the wrong person half the time, or an empty chair. OpenShorts detects a real two-shot and renders both speakers stacked in half-frames, so a reply never happens off screen.',
+    'The rest of the pipeline is the same as for any long video: word-level transcription, scene detection, Gemini scoring the 3 to 15 strongest moments, subtitles burned in, and direct publishing to TikTok, Instagram Reels and YouTube Shorts.',
+    'Cost is where podcasts punish credit-based tools: they bill the whole episode length before you see a clip. Self-hosted OpenShorts has no meter at all; hosted plans start at $12/month.',
+  ],
+  body: `
+<h2>Why podcasts break naive clipping tools</h2>
+<p>Podcast video is a conversation, and conversations move. A tool that crops a
+fixed center column out of a wide two-shot shows whoever happens to sit in the
+middle, which is often nobody. A tool that follows one face loses the reaction
+shots that make clips work. Reviewers of the mainstream clippers consistently
+report exactly this: framing that needs manual correction on multi-person
+footage. It is not carelessness, it is that a single moving crop cannot show two
+people at once.</p>
+
+<h2>How the two-speaker layout works</h2>
+<p>OpenShorts detects when a scene is a genuine two-shot, meaning both faces are
+visible in the same frame for at least half of the sampled frames. That test
+matters: it is what separates a real side-by-side conversation from
+shot/countershot editing, where a naive split would show the same person twice.
+Confirmed two-shots render as a split layout, both speakers stacked in
+half-frames filling the 9:16 canvas. With speaker cutting enabled the clip
+instead hard-cuts to whoever is talking, with mouth activity normalised per
+speaker so that lighting and contrast differences do not hand the whole scene to
+one side of the table.</p>
+
+<h2>From episode to posted clips, step by step</h2>
+<ol>
+<li>Paste the episode's YouTube link or upload the file. Podcasts of an hour or more are the normal case, not the limit.</li>
+<li>faster-whisper transcribes with word-level timestamps, and PySceneDetect maps the cuts.</li>
+<li>Google Gemini reads the transcript against the scene boundaries and returns the 3 to 15 segments that stand alone best, 15 to 60 seconds each.</li>
+<li>Each segment is reframed for its content: split layout for two-shots, face tracking for single speakers, screencast layout if the episode shares a screen.</li>
+<li>Subtitles are burned in from the word-level transcript, and finished clips post directly to TikTok, Instagram Reels and YouTube Shorts, or come back through the API.</li>
+</ol>
+
+<h2>What a full episode costs to clip</h2>
+<p>Credit-metered tools bill on the length of the video you import, not on the
+clips you keep. As of August 2026, a 60-minute episode costs 60 credits at Opus
+Clip or Vizard whether it yields 5 usable clips or 20, and a weekly show at that
+length runs past the entry plans of both. OpenShorts prices the other way
+around:</p>
+${pricingParagraph}
+
+<h2>What about audio-only podcasts?</h2>
+<p>OpenShorts clips video. If your show is audio-only, the pipeline has nothing
+to reframe, and tools that generate waveform audiograms serve that case better.
+The moment you record video, even a static two-camera setup, everything on this
+page applies.</p>
+
+${faqBlock([
+  {
+    q: 'How do I turn a podcast into clips for free?',
+    a: 'Self-host OpenShorts: clone the MIT-licensed repo, run docker compose up, add a free-tier Google Gemini API key and paste your episode link. No watermark and no cap. If you would rather not run anything, OpenShorts Cloud clips 20 minutes a month free with a watermark, and paid plans start at $12/month.',
+  },
+  {
+    q: 'How does it handle two people talking?',
+    a: 'Scenes where both faces share the frame at least half the time render as a stacked split layout so both speakers stay visible. Optionally it hard-cuts to the active speaker instead, using per-speaker normalised mouth activity to decide who is talking.',
+  },
+  {
+    q: 'Does it work with hour-long episodes?',
+    a: 'Yes, long-form is the design case. Processing time scales with length: on CPU roughly 5 to 8 minutes of processing per 8 minutes of source, on an NVIDIA GPU about a tenth of that. The AI moment scoring reads the transcript rather than the raw video, so episode length does not degrade selection quality.',
+  },
+])}
+
+${sources([
+  'Competitor per-minute credit billing checked 2026-08-04 on vendor pricing and help pages.',
+  `Split-layout and speaker-cut implementation in the project source at <a href="${SITE.repo}" rel="noopener">github.com/mutonby/openshorts</a>.`,
+])}
+`,
+  faq: [
+    {
+      q: 'How do I turn a podcast into clips for free?',
+      a: 'Self-host OpenShorts (MIT, Docker, bring a free-tier Gemini key): no watermark, no cap. Or use OpenShorts Cloud: 20 free minutes a month with a watermark, paid plans from $12/month.',
+    },
+    {
+      q: 'How does it handle two people talking?',
+      a: 'Real two-shots render as a stacked split layout keeping both speakers visible; optionally it hard-cuts to the active speaker instead.',
+    },
+  ],
+})
+
+/* The one checkable fact this page is built on: importing from a link is free
+ * here and paid at the market leader. Everything else is the standard pipeline
+ * told from the URL-first angle. */
+const youtubeConverter = () => ({
+  path: '/youtube-to-shorts-converter',
+  title: 'YouTube to Shorts Converter: Paste a Link, Get 9:16 Clips | OpenShorts',
+  description:
+    'Convert a YouTube video into Shorts by pasting the link. No download-and-reupload step, free on the self-hosted edition and on the hosted free tier. AI picks the moments, crops to 9:16 and burns in subtitles.',
+  h1: 'A YouTube to Shorts converter that starts from the link',
+  breadcrumb: [{ name: 'YouTube to Shorts converter' }],
+  published: '2026-08-04',
+  updated: '2026-08-04',
+  tldr: [
+    'Paste a YouTube URL, get back 3 to 15 vertical clips with subtitles, sized for Shorts, Reels and TikTok. No downloading the source and re-uploading it first.',
+    'The link-first flow is free on both editions: the self-hosted MIT edition has no cap, and the hosted free tier covers 20 minutes a month. As of August 2026, Opus Clip’s free plan is upload-only and importing from a link requires a paid plan.',
+    'Convert videos you have the rights to: your own channel, your clients’ with permission, or licensed footage.',
+  ],
+  body: `
+<h2>How to convert a YouTube video into Shorts</h2>
+<ol>
+<li>Paste the video's URL. OpenShorts fetches it directly; there is no download-then-upload round trip through your machine.</li>
+<li>The video is transcribed with word-level timestamps and scanned for scene boundaries.</li>
+<li>Google Gemini scores the transcript against the scenes and picks the 3 to 15 segments most likely to stand alone, 15 to 60 seconds each.</li>
+<li>Each segment is cropped to 9:16 with face tracking, or a split or screencast layout when the content calls for it, and subtitles are burned in.</li>
+<li>Download the clips, or post them straight to YouTube Shorts, TikTok and Instagram Reels from the dashboard or the API.</li>
+</ol>
+
+<h2>Why starting from the link matters</h2>
+<p class="checked">Competitor terms checked 2026-08-04 on public pricing pages.</p>
+<p>Most long videos worth clipping already live on YouTube, so a converter that
+only accepts uploads adds a detour: fetch the file with a downloader, wait,
+re-upload gigabytes, wait again. It also decides who can use the free tier at
+all. As of August 2026, Opus Clip's free plan accepts uploads only, with link
+import reserved for paid plans. OpenShorts accepts links on every tier,
+including both free ones, because the fetch step costs the pipeline almost
+nothing and the detour costs you the most time of any step.</p>
+
+<h2>What comes out the other end</h2>
+<p>Vertical 9:16 clips of 15 to 60 seconds with word-level subtitles burned in,
+each with an AI-written title and description ready for the platform. The
+reframing follows the content: a single speaker is face-tracked with a
+stabiliser that holds the camera still instead of chasing every head movement, a
+two-person conversation renders as a stacked split layout, and screen shares
+keep the screen legible instead of cropping it to ribbons.</p>
+
+<h2>Whose videos can you convert?</h2>
+<p>Yours, and those you have permission for. Your own uploads, your podcast
+guests' episodes with their blessing, client channels you manage, licensed or
+public-domain footage. Clipping someone else's video without permission is a
+copyright question OpenShorts does not answer for you, and platforms remove
+reuploads that fail it. The tool fetches what you point it at; the rights are
+your call and your responsibility.</p>
+
+<h2>What does it cost?</h2>
+${pricingParagraph}
+
+${faqBlock([
+  {
+    q: 'Can I convert a YouTube video to Shorts for free?',
+    a: 'Yes, two ways. Self-host OpenShorts (MIT licence, Docker, your own free-tier Gemini API key): unlimited, no watermark. Or use the hosted free tier: 20 minutes of source video a month, watermarked, no credit card. Paid hosted plans without watermark start at $12/month.',
+  },
+  {
+    q: 'Do I need to download the video first?',
+    a: 'No. Paste the URL and OpenShorts fetches the source itself on every tier, including free ones. Local file upload is also supported when the source is not online.',
+  },
+  {
+    q: 'Can I clip a video from someone else’s channel?',
+    a: 'Technically yes, legally only with rights or permission. Use it for your own content, channels you manage, or footage you have licensed. Unauthorized reuploads are copyright infringement and platforms strike them.',
+  },
+])}
+`,
+  faq: [
+    {
+      q: 'Can I convert a YouTube video to Shorts for free?',
+      a: 'Yes: self-hosted OpenShorts is free with no cap (MIT, Docker, your own Gemini key), and the hosted free tier covers 20 watermarked minutes a month. Paid hosted plans start at $12/month.',
+    },
+    {
+      q: 'Do I need to download the video first?',
+      a: 'No. OpenShorts fetches the video from the pasted URL on every tier, free tiers included.',
+    },
+  ],
+})
+
+/* Recipe-shaped counterpart to /mcp: that page explains the protocol surface,
+ * this one shows the working loop. Kept separate so each can rank for its own
+ * intent instead of one page diluting both. */
+const automateShorts = () => ({
+  path: '/automate-shorts-api',
+  title: 'Automate Shorts: Clip and Publish Video on a Schedule via API | OpenShorts',
+  description:
+    'One POST starts the job, one signed webhook ends it, and the clips publish themselves. Automate shorts with the OpenShorts REST API, HMAC webhooks, n8n or cron. No per-call meter; self-hosted has no meter at all.',
+  h1: 'Automate shorts end to end: one request in, one webhook out',
+  breadcrumb: [{ name: 'Automate shorts' }],
+  published: '2026-08-04',
+  updated: '2026-08-04',
+  tldr: [
+    'The whole automation loop is two HTTP messages. You POST a video URL with an API key and a webhook address; when processing ends, OpenShorts sends exactly one signed webhook carrying clip titles and durable download links. No polling loop, no timeout guessing.',
+    'API calls draw from the same minute balance as the dashboard, with no separate meter and no per-call pricing. On the self-hosted edition there is no meter at all, which is what makes an always-on pipeline affordable.',
+    'For agent-driven automation (Claude, ChatGPT, custom agents) the same account also exposes an MCP server; that protocol surface is documented on its own page.',
+  ],
+  body: `
+<h2>The loop, end to end</h2>
+<p>Start a job with one request:</p>
+<pre><code>curl -X POST https://api.openshorts.app/api/process \\
+  -H "Authorization: Bearer osk_..." -H "Content-Type: application/json" \\
+  -d '{"url": "https://youtube.com/watch?v=...", "acknowledged": true,
+       "webhook_url": "https://your-server.com/hooks/openshorts",
+       "webhook_secret": "your-shared-secret"}'</code></pre>
+<p>The response returns a job id immediately. Minutes later, when the clips are
+cut, subtitled and archived, OpenShorts POSTs once to your webhook URL with the
+job outcome, clip titles and download links durable enough to fetch later. A
+failed job also fires the webhook, so your pipeline never hangs on silence.</p>
+
+<h2>Verifying the webhook</h2>
+<p>If you passed a <code>webhook_secret</code>, the request carries an
+<code>X-OpenShorts-Signature</code> header of the form
+<code>sha256=&lt;hex&gt;</code>: the HMAC-SHA256 of the raw request body under
+your secret. Recompute it and compare in constant time:</p>
+<pre><code>expected = "sha256=" + hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
+hmac.compare_digest(expected, request.headers["X-OpenShorts-Signature"])</code></pre>
+<p>Reject anything that does not match and you have closed the door on forged
+deliveries.</p>
+
+<h2>Using it from n8n, Zapier or Make</h2>
+<p>No dedicated node is needed: the flow is a generic HTTP Request step that
+POSTs to <code>/api/process</code>, then a Webhook trigger that receives the
+completion payload and fans out to whatever comes next, posting to socials,
+dropping links in Slack, logging to a sheet. There is no official n8n template
+yet; the two-step shape above is the whole integration, which is why generic
+nodes cover it.</p>
+
+<h2>A weekly pipeline in one cron line</h2>
+<p>Because the API is one POST, scheduling is whatever scheduler you already
+have. A cron job that submits the latest episode URL every Monday, a GitHub
+Action on your podcast repo, or an agent that watches a feed. The webhook does
+the second half, so nothing stays running in between.</p>
+
+<h2>What automation costs</h2>
+<p>API and MCP calls draw from the same minute balance as the dashboard. There
+is no per-call price, no separate API tier and no automation surcharge. As of
+August 2026 that is not the market default: the mainstream tools meter their
+APIs per source minute or per operation, on top of subscription tiers, so an
+always-on pipeline runs with a taxi meter attached. Self-hosted OpenShorts has
+no meter of any kind, and the hosted plans are flat:</p>
+${pricingParagraph}
+
+<h2>Agents instead of scripts</h2>
+<p>If the thing driving the pipeline is an AI agent rather than a script, the
+same account exposes a native MCP server with six tools covering process,
+status, clips, quota, subtitles and publishing. The endpoint, the tool table and
+client setup live on the <a href="/mcp">MCP server and API page</a>.</p>
+
+${faqBlock([
+  {
+    q: 'Can I automate YouTube Shorts creation with an open source tool?',
+    a: 'Yes. OpenShorts is MIT-licensed and its self-hosted edition serves the same REST API and MCP server as the hosted service, with no metering. One POST submits a video, a signed webhook returns the finished clips, and the publishing endpoint posts them to YouTube Shorts, TikTok and Instagram Reels.',
+  },
+  {
+    q: 'Is there an n8n integration for OpenShorts?',
+    a: 'There is no official n8n template yet, and none is required: the integration is a generic HTTP Request node posting to /api/process plus a Webhook trigger receiving the completion payload. Any platform with those two primitives, n8n, Zapier, Make or plain cron, can run the whole loop.',
+  },
+  {
+    q: 'Do automated API calls cost more than using the dashboard?',
+    a: 'No. API and MCP usage draws from the same minute balance as the dashboard with no per-call pricing: 20 free minutes a month on the hosted free tier, flat paid plans from $12/month, and no meter at all on the self-hosted edition.',
+  },
+])}
+
+${sources([
+  `Webhook signing implementation in the project source at <a href="${SITE.repo}" rel="noopener">github.com/mutonby/openshorts</a>.`,
+  'Competitor API metering checked 2026-08-04 on public pricing and developer documentation.',
+])}
+`,
+  faq: [
+    {
+      q: 'Can I automate YouTube Shorts creation with an open source tool?',
+      a: 'Yes: OpenShorts self-hosted serves the same REST API, MCP server and signed webhooks as the hosted service, MIT-licensed and unmetered. One POST in, one signed webhook out.',
+    },
+    {
+      q: 'Do automated API calls cost more than using the dashboard?',
+      a: 'No. API and MCP calls draw from the same minute balance with no per-call pricing; the self-hosted edition has no meter at all.',
+    },
+  ],
+})
+
 const mcpAgentsPage = () => ({
   path: '/mcp',
   title: 'Automate Video Clipping with AI Agents: MCP Server, API & Webhooks | OpenShorts',
@@ -437,7 +888,7 @@ const mcpAgentsPage = () => ({
   tldr: [
     'OpenShorts has a native MCP server at mcp.openshorts.app/mcp. Connect any MCP client, Claude, ChatGPT, Cursor or a custom agent, and a prompt like "clip this podcast and schedule the best three to TikTok" becomes one instruction instead of an afternoon in an editor.',
     'Six tools cover the whole pipeline: process_video, get_job_status, list_clips, get_quota, add_subtitles and publish_clip. There is also a plain REST API with per-user keys, and completion webhooks so pipelines never poll.',
-    'The hosted service includes 20 free minutes a month and paid plans from $12/month; API calls draw from the same minutes as the dashboard. The self-hosted edition, free and MIT-licensed, serves the same MCP endpoint on your own machine.',
+    'The difference that survives comparison shopping is the meter. Most clipping tools now have an API, and Opus Clip added an MCP server in July 2026, but they meter agent calls per source minute or per operation. OpenShorts API calls draw from the same flat minute balance as the dashboard, and the self-hosted edition, free and MIT-licensed, serves the same MCP endpoint with no meter at all.',
   ],
   body: `
 <h2>What can an agent actually do with OpenShorts?</h2>
@@ -472,6 +923,31 @@ there is nothing else to configure.</p>
 <tr><td><code>publish_clip</code></td><td>Posts or schedules one clip to TikTok, Instagram or YouTube through the connected account.</td></tr>
 </tbody>
 </table>
+
+<h2>How does this compare to the other clipping tools' agent access?</h2>
+<p class="checked">Checked 2026-08-04 on vendor developer documentation and pricing pages. This market is moving fast; verify before committing a pipeline.</p>
+<p>Agent access stopped being exclusive in 2026: Opus Clip launched its own MCP
+server in July, Reap ships MCP plus a CLI, and Klap, Vizard and Submagic have
+REST APIs. A comparison that pretended otherwise would not deserve your trust.
+What still separates the offerings is how agent calls are billed and where the
+server can run:</p>
+<table>
+<thead><tr><th>Tool</th><th>MCP server</th><th>REST API</th><th>How agent calls are billed</th></tr></thead>
+<tbody>
+<tr><td class="os">OpenShorts</td><td class="os yes">Yes, hosted and self-hosted</td><td class="os yes">Yes, with signed webhooks</td><td class="os">Same flat minute balance as the dashboard; self-hosted has no meter</td></tr>
+<tr><td>Opus Clip</td><td class="yes">Yes, since July 2026</td><td>Yes</td><td>Credits per source minute, expiring in 60 days</td></tr>
+<tr><td>Reap</td><td class="yes">Yes, plus CLI</td><td>Yes</td><td>Subscription from $9.99/month, metered minutes</td></tr>
+<tr><td>Klap</td><td>No</td><td>Yes</td><td>Per operation, roughly $0.32 to $0.48 each</td></tr>
+<tr><td>Vizard</td><td>No</td><td>Yes, with webhooks</td><td>Consumes plan upload minutes</td></tr>
+<tr><td>Submagic</td><td>No</td><td>Yes, Business tier ($69/month)</td><td>Metered per minute on top of the tier</td></tr>
+</tbody>
+</table>
+<p>The consequence for an autonomous pipeline is simple: an agent loop on a
+metered API runs with the bill still attached to every decision it makes. On a
+flat plan the worst an agent can do is spend your minutes; on the self-hosted
+edition there is nothing to spend. For the recipe-shaped version of this,
+webhooks, n8n and cron, see <a href="/automate-shorts-api">automating shorts
+with the API</a>.</p>
 
 <h2>Can I use a plain REST API instead of MCP?</h2>
 <p>Yes. The same <code>osk_</code> key authenticates against the REST API, and
@@ -519,7 +995,11 @@ ${faqBlock([
   },
   {
     q: 'Do API calls cost extra?',
-    a: 'No. API and MCP usage draws from the same minute balance as the dashboard: 20 free minutes a month on the hosted free tier, and paid plans from $12/month. The self-hosted edition is free under MIT and serves the same endpoints with no metering.',
+    a: 'No. API and MCP usage draws from the same minute balance as the dashboard: 20 free minutes a month on the hosted free tier, and paid plans from $12/month. The self-hosted edition is free under MIT and serves the same endpoints with no metering. Most competing APIs are billed per source minute or per operation on top of a subscription.',
+  },
+  {
+    q: 'How is this different from the Opus Clip MCP server?',
+    a: 'The tool surface is similar: both expose around six tools covering processing, captions and publishing. The differences are billing and deployment. Opus Clip meters MCP usage in credits per source minute, and those credits expire in 60 days; OpenShorts draws from a flat minute balance with no per-call pricing. And only OpenShorts can run the same MCP server on your own machine, unmetered, because the code is MIT-licensed.',
   },
 ])}
 
@@ -541,17 +1021,28 @@ ${sources([
       q: 'Do API calls cost extra?',
       a: 'No. API and MCP usage draws from the same minute balance as the dashboard: 20 free minutes a month on the hosted free tier, paid plans from $12/month, and the self-hosted edition is free under MIT.',
     },
+    {
+      q: 'How is this different from the Opus Clip MCP server?',
+      a: 'Similar tool surface, different billing and deployment: Opus Clip meters MCP usage in credits per source minute that expire in 60 days, while OpenShorts draws from a flat minute balance, and only OpenShorts can run the same MCP server self-hosted and unmetered.',
+    },
   ],
 })
 
 export function buildPages() {
+  // Ring order matters: relatedFor links each page to the next three, so
+  // neighbours are chosen to be topically adjacent.
   return [
     hubPage(),
     ...ALTERNATIVES.map(competitorPage),
     freeClipGenerator(),
+    noWatermark(),
     openSourceClipper(),
+    openSourceVideoGenerator(),
     howItWorks(),
+    podcastToShorts(),
+    youtubeConverter(),
     mcpAgentsPage(),
+    automateShorts(),
   ]
 }
 
@@ -565,9 +1056,14 @@ export function relatedFor(page, all) {
     '/alternatives/vizard': 'Timeline editing after the AI pass, and who needs it.',
     '/alternatives/submagic': 'Captions only, so it does not replace a clipper.',
     '/free-ai-clip-generator': 'What free means when there is no metering code.',
+    '/free-ai-clip-generator-no-watermark': 'Why free tools watermark, and the structural exception.',
     '/open-source-video-clipper': 'Self-hosting with Docker, and the MIT licence carve-out.',
+    '/open-source-ai-video-generator': 'Text-to-video or clips from your footage: which you want.',
     '/how-openshorts-works': 'The full pipeline, stage by stage.',
+    '/podcast-to-shorts': 'Two-speaker episodes without cropping anyone out.',
+    '/youtube-to-shorts-converter': 'Paste a link, get 9:16 clips with subtitles.',
     '/mcp': 'Drive the whole pipeline from Claude, ChatGPT or n8n.',
+    '/automate-shorts-api': 'One POST in, one signed webhook out, no polling.',
   }
   // Walk the ring starting after this page so each page links to a different
   // three. Slicing the same head every time would leave the last pages in the

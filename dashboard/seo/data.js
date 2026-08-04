@@ -19,7 +19,7 @@ export const SITE = {
   logo: 'https://www.openshorts.app/logo-openshorts.png',
   ogImage: 'https://www.openshorts.app/og-image.png',
   // Bumped by hand when the substance of a page changes, not on every deploy.
-  updated: '2026-07-27',
+  updated: '2026-08-04',
   published: '2024-06-01',
 }
 

@@ -194,10 +194,15 @@ const footer = (related) => `
     <a href="${SITE.url}/">OpenShorts</a>
     <a href="${SITE.repo}" rel="noopener">Source on GitHub</a>
     <a href="/free-ai-clip-generator">Free AI clip generator</a>
+    <a href="/free-ai-clip-generator-no-watermark">No-watermark clip generator</a>
     <a href="/open-source-video-clipper">Open source video clipper</a>
+    <a href="/open-source-ai-video-generator">Open source AI video generator</a>
+    <a href="/podcast-to-shorts">Podcast to shorts</a>
+    <a href="/youtube-to-shorts-converter">YouTube to Shorts converter</a>
     <a href="/how-openshorts-works">How it works</a>
     <a href="/alternatives">Alternatives compared</a>
     <a href="/mcp">MCP server and API</a>
+    <a href="/automate-shorts-api">Automate shorts</a>
   </div>
   <p>OpenShorts self-hosted is free and open source under MIT. OpenShorts Cloud
   is the hosted service: 20 free minutes a month, paid plans from $12/month.

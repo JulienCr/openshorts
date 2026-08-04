@@ -140,10 +140,15 @@ export const LANDING_FALLBACK = `<div id="seo-content" style="background:oklch(1
     <a style="${S.a}" href="/alternatives/vizard">Vizard alternative</a> &middot;
     <a style="${S.a}" href="/alternatives/submagic">Submagic alternative</a> &middot;
     <a style="${S.a}" href="/free-ai-clip-generator">Free AI clip generator</a> &middot;
+    <a style="${S.a}" href="/free-ai-clip-generator-no-watermark">No-watermark clip generator</a> &middot;
     <a style="${S.a}" href="/open-source-video-clipper">Open source video clipper</a> &middot;
+    <a style="${S.a}" href="/open-source-ai-video-generator">Open source AI video generator</a> &middot;
+    <a style="${S.a}" href="/podcast-to-shorts">Podcast to shorts</a> &middot;
+    <a style="${S.a}" href="/youtube-to-shorts-converter">YouTube to Shorts converter</a> &middot;
     <a style="${S.a}" href="/how-openshorts-works">How it works</a> &middot;
     <a style="${S.a}" href="/alternatives">All alternatives compared</a> &middot;
-    <a style="${S.a}" href="/mcp">MCP server &amp; API</a>
+    <a style="${S.a}" href="/mcp">MCP server &amp; API</a> &middot;
+    <a style="${S.a}" href="/automate-shorts-api">Automate shorts via API</a>
   </p>
 </div></section>
 

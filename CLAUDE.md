@@ -70,8 +70,9 @@ homepage as zero characters of text. `vite-plugin-seo.js` fixes that at build ti
 - Injects the content of `seo/landing-fallback.js` into `#root`. React's
   `createRoot().render()` replaces it on mount, so users get the app and
   non-executing clients get the copy. **Keep it in sync with `Landing.jsx`.**
-- Emits the standalone pages under `/alternatives`, `/free-ai-clip-generator`,
-  `/open-source-video-clipper` and `/how-openshorts-works` as flat `.html` files.
+- Emits the standalone pages (the `/alternatives` cluster, the clip-generator,
+  open-source, use-case and automation pages, and `/mcp`; the full list is
+  `buildPages()` in `seo/pages.js`) as flat `.html` files.
   nginx resolves the clean URL through `try_files $uri $uri.html`; serving them as
   directories instead makes nginx 301 to a trailing slash and every canonical
   would then point at a redirect.
