@@ -141,7 +141,9 @@ export const LANDING_FALLBACK = `<div id="seo-content" style="background:oklch(1
     <a style="${S.a}" href="/alternatives/submagic">Submagic alternative</a> &middot;
     <a style="${S.a}" href="/free-ai-clip-generator">Free AI clip generator</a> &middot;
     <a style="${S.a}" href="/open-source-video-clipper">Open source video clipper</a> &middot;
-    <a style="${S.a}" href="/how-openshorts-works">How it works</a>
+    <a style="${S.a}" href="/how-openshorts-works">How it works</a> &middot;
+    <a style="${S.a}" href="/alternatives">All alternatives compared</a> &middot;
+    <a style="${S.a}" href="/mcp">MCP server &amp; API</a>
   </p>
 </div></section>
 

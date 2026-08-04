@@ -768,6 +768,14 @@ export default function Landing({ onLaunchApp }) {
       <footer className="border-t border-rule py-16 px-6">
         <div className="max-w-6xl mx-auto">
           <p className="font-display text-3xl md:text-5xl lowercase text-ink tracking-tight mb-10">clip it before it scrolls past.</p>
+          <nav aria-label="Guides and comparisons" className="border-t border-rule pt-6 mb-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm lowercase text-muted">
+            <a href="/free-ai-clip-generator" className="hover:text-ink transition-colors">free ai clip generator</a>
+            <a href="/open-source-video-clipper" className="hover:text-ink transition-colors">open source video clipper</a>
+            <a href="/how-openshorts-works" className="hover:text-ink transition-colors">how it works</a>
+            <a href="/alternatives" className="hover:text-ink transition-colors">alternatives</a>
+            <a href="/alternatives/opus-clip" className="hover:text-ink transition-colors">vs opus clip</a>
+            <a href="/mcp" className="hover:text-ink transition-colors">mcp server & api</a>
+          </nav>
           <div className="border-t border-rule pt-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <img src="/logo-openshorts.png" alt="OpenShorts" className="w-6 h-6" />

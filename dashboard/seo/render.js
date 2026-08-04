@@ -181,7 +181,8 @@ const NAV = `
   <a class="brand" href="${SITE.url}/"><img src="/logo-openshorts.png" alt="OpenShorts logo" width="26" height="26">OpenShorts</a>
   <nav class="nav">
     <a href="/free-ai-clip-generator">Clip generator</a>
-    <a href="/alternatives/opus-clip">Alternatives</a>
+    <a href="/alternatives">Alternatives</a>
+    <a href="/mcp">MCP &amp; API</a>
     <a href="${SITE.repo}" rel="noopener">GitHub</a>
   </nav>
   <a class="cta" href="${SITE.url}/">Get free clips</a>
@@ -195,6 +196,8 @@ const footer = (related) => `
     <a href="/free-ai-clip-generator">Free AI clip generator</a>
     <a href="/open-source-video-clipper">Open source video clipper</a>
     <a href="/how-openshorts-works">How it works</a>
+    <a href="/alternatives">Alternatives compared</a>
+    <a href="/mcp">MCP server and API</a>
   </div>
   <p>OpenShorts self-hosted is free and open source under MIT. OpenShorts Cloud
   is the hosted service: 20 free minutes a month, paid plans from $12/month.
