@@ -288,6 +288,36 @@ Pass `webhook_url` (and optionally `webhook_secret`) to `POST /api/process` and 
 
 With a secret, the body is signed: `X-OpenShorts-Signature: sha256=<hmac-sha256(body)>`.
 
+### CLI
+
+The same API from the terminal, zero dependencies (`cli/`):
+
+```bash
+pip install openshorts   # or: uvx openshorts
+
+export OPENSHORTS_API_KEY=osk_...              # hosted
+# export OPENSHORTS_API_URL=http://localhost:8000   # self-hosted, no key
+
+openshorts process "https://youtube.com/watch?v=..." --wait
+openshorts clips <job_id>
+openshorts publish <job_id> 0 --platforms tiktok,youtube
+```
+
+### Agent skill
+
+`skills/openshorts/SKILL.md` teaches any skill-capable agent (Claude Code and
+friends) the whole flow: quota check, submit, signed webhook, publish. Install
+it by copying the folder into your agent's skills directory:
+
+```bash
+cp -r skills/openshorts ~/.claude/skills/
+```
+
+### n8n
+
+An importable workflow (video URL in, published-ready clips out, no polling)
+lives in [`examples/n8n/`](examples/n8n/).
+
 ---
 
 ## Tech Stack
