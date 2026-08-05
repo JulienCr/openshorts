@@ -142,8 +142,8 @@ export default function Landing({ onLaunchApp }) {
     },
     {
       icon: Bot,
-      title: "MCP Server & API for AI Agents",
-      description: "Connect Claude, ChatGPT or n8n to an always-on endpoint and automate clipping end to end: no dashboard, no machine of yours running."
+      title: "MCP Server, API & CLI for AI Agents",
+      description: "Connect Claude, ChatGPT or n8n to an always-on endpoint, or run pip install openshorts and clip from the terminal. Same pipeline, no dashboard needed."
     },
     {
       icon: Sparkles,
@@ -216,7 +216,7 @@ export default function Landing({ onLaunchApp }) {
     },
     {
       question: "Can I automate OpenShorts from Claude, ChatGPT or n8n?",
-      answer: "Yes. OpenShorts has a native MCP server at mcp.openshorts.app/mcp plus a REST API with per-user keys and completion webhooks, so an AI agent can run the whole flow: submit a video URL, wait for processing, list the clips and publish them to TikTok, Instagram or YouTube. This is where the hosted service shines: an agent needs an endpoint that is always on, and the hosted one is, with the API key created in your account page in one click. The self-hosted edition serves the same /mcp endpoint, but only while your own machine is running. Full guide at openshorts.app/mcp."
+      answer: "Yes. OpenShorts has a native MCP server at mcp.openshorts.app/mcp plus a REST API with per-user keys and completion webhooks, so an AI agent can run the whole flow: submit a video URL, wait for processing, list the clips and publish them to TikTok, Instagram or YouTube. This is where the hosted service shines: an agent needs an endpoint that is always on, and the hosted one is, with the API key created in your account page in one click. The self-hosted edition serves the same /mcp endpoint, but only while your own machine is running. There is also a zero-dependency CLI (pip install openshorts) and an importable n8n workflow. Full guide at openshorts.app/mcp."
     },
     {
       question: "What are the system requirements to run OpenShorts?",

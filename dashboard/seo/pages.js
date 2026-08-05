@@ -829,7 +829,11 @@ nodes cover it.</p>
 <p>Because the API is one POST, scheduling is whatever scheduler you already
 have. A cron job that submits the latest episode URL every Monday, a GitHub
 Action on your podcast repo, or an agent that watches a feed. The webhook does
-the second half, so nothing stays running in between.</p>
+the second half, so nothing stays running in between. If you would rather not
+write the curl, the CLI wraps it:</p>
+<pre><code>uvx openshorts process "$EPISODE_URL" \\
+  --webhook https://your-server.com/hooks/openshorts \\
+  --webhook-secret "$SECRET"</code></pre>
 
 <h2>What automation costs</h2>
 <p>API and MCP calls draw from the same minute balance as the dashboard. There
@@ -959,6 +963,19 @@ request:</p>
   -H "Authorization: Bearer osk_..." -H "Content-Type: application/json" \\
   -d '{"url": "https://youtube.com/watch?v=...", "acknowledged": true,
        "webhook_url": "https://your-server.com/hooks/openshorts"}'</code></pre>
+
+<h2>Is there a CLI?</h2>
+<p>Yes, a zero-dependency one on PyPI. It talks to the same REST surface as
+everything else, so the terminal, the dashboard and the agents can never
+disagree about what a job did:</p>
+<pre><code>pip install openshorts   # or: uvx openshorts
+
+export OPENSHORTS_API_KEY=osk_...
+openshorts process "https://youtube.com/watch?v=..." --wait
+openshorts clips &lt;job_id&gt;
+openshorts publish &lt;job_id&gt; 0 --platforms tiktok,youtube</code></pre>
+<p>Point <code>OPENSHORTS_API_URL</code> at <code>http://localhost:8000</code>
+and the same binary drives a self-hosted instance with no key.</p>
 
 <h2>How do completion webhooks work?</h2>
 <p>Pass <code>webhook_url</code> when starting a job and OpenShorts sends
