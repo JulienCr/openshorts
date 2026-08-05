@@ -927,6 +927,10 @@ there is nothing else to configure.</p>
 <tr><td><code>publish_clip</code></td><td>Posts or schedules one clip to TikTok, Instagram or YouTube through the connected account.</td></tr>
 </tbody>
 </table>
+<p>In clients that support the MCP Apps extension (ChatGPT apps, mcp-ui hosts),
+<code>list_clips</code> also renders as an interactive clip picker: preview each
+9:16 clip inline, select the keepers and publish them without leaving the
+conversation. Clients without UI support see the same data as plain results.</p>
 
 <h2>How does this compare to the other clipping tools' agent access?</h2>
 <p class="checked">Checked 2026-08-04 on vendor developer documentation and pricing pages. This market is moving fast; verify before committing a pipeline.</p>

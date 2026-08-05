@@ -28,6 +28,8 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+import mcp_ui
+
 router = APIRouter()
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -115,12 +117,19 @@ TOOLS = [
         "title": "List a job's clips",
         "description": (
             "The clips of a completed job, with titles, platform-ready "
-            "descriptions and download URLs."
+            "descriptions and download URLs. In MCP Apps-capable clients the "
+            "result also renders as an interactive clip picker."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {"job_id": {"type": "string"}},
             "required": ["job_id"],
+        },
+        # Both spellings of the tool->template link: MCP Apps hosts read
+        # _meta.ui.resourceUri, the ChatGPT Apps SDK reads openai/outputTemplate.
+        "_meta": {
+            "ui": {"resourceUri": mcp_ui.CLIP_PICKER_URI},
+            "openai/outputTemplate": mcp_ui.CLIP_PICKER_URI,
         },
     },
     {
@@ -370,7 +379,8 @@ async def handle_message(msg, tool_caller) -> Optional[dict]:
         version = client_version if client_version in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
         return _rpc_result(msg_id, {
             "protocolVersion": version,
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {"tools": {"listChanged": False},
+                             "resources": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
             "instructions": INSTRUCTIONS,
         })
@@ -378,12 +388,37 @@ async def handle_message(msg, tool_caller) -> Optional[dict]:
         return _rpc_result(msg_id, {})
     if method == "tools/list":
         return _rpc_result(msg_id, {"tools": TOOLS})
+    if method == "resources/list":
+        return _rpc_result(msg_id, {"resources": mcp_ui.RESOURCES})
+    if method == "resources/templates/list":
+        return _rpc_result(msg_id, {"resourceTemplates": []})
+    if method == "resources/read":
+        uri = (msg.get("params") or {}).get("uri") or ""
+        # Per-call URIs (ui://openshorts/clip-picker/<job>) resolve to the same
+        # template; the data those carried was baked into the tool result.
+        if uri == mcp_ui.CLIP_PICKER_URI or uri.startswith(mcp_ui.CLIP_PICKER_URI + "/"):
+            return _rpc_result(msg_id, {"contents": [{
+                "uri": uri,
+                "mimeType": mcp_ui.MIME_TYPE,
+                "text": mcp_ui.clip_picker_html(),
+            }]})
+        return _rpc_error(msg_id, -32002, f"Resource not found: {uri}")
     if method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name")
         result, is_error = await tool_caller(name, params.get("arguments") or {})
+        content = [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
+        # A successful list_clips additionally ships the picker with its data
+        # baked in, so hosts that render embedded resources need no bridge.
+        # Non-UI clients ignore extra content entries.
+        if name == "list_clips" and not is_error and result.get("clips"):
+            content.append({"type": "resource", "resource": {
+                "uri": f"{mcp_ui.CLIP_PICKER_URI}/{result.get('job_id', 'result')}",
+                "mimeType": mcp_ui.MIME_TYPE,
+                "text": mcp_ui.clip_picker_html(result),
+            }})
         return _rpc_result(msg_id, {
-            "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+            "content": content,
             "structuredContent": result,
             "isError": is_error,
         })

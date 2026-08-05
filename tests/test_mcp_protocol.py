@@ -44,7 +44,7 @@ class TestNotificationsAndErrors:
         assert _run({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
 
     def test_unknown_method_is_32601(self):
-        resp = _run({"jsonrpc": "2.0", "id": 7, "method": "resources/list"})
+        resp = _run({"jsonrpc": "2.0", "id": 7, "method": "does/not-exist"})
         assert resp["error"]["code"] == -32601
         assert resp["id"] == 7
 
