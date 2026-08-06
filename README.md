@@ -305,12 +305,19 @@ openshorts publish <job_id> 0 --platforms tiktok,youtube
 
 ### Agent skill
 
-`skills/openshorts/SKILL.md` teaches any skill-capable agent (Claude Code and
-friends) the whole flow: quota check, submit, signed webhook, publish. Install
-it by copying the folder into your agent's skills directory:
+`skills/openshorts/SKILL.md` follows the open
+[Agent Skills](https://agentskills.io) standard, so it works in any
+skill-capable agent:
 
 ```bash
+# Claude Code (and most agents): copy the folder into the skills directory
 cp -r skills/openshorts ~/.claude/skills/
+
+# Hermes Agent: install straight from this repo
+hermes skills install mutonby/openshorts/skills/openshorts
+
+# OpenClaw: from ClawHub
+openclaw skills install @mutonby/openshorts
 ```
 
 ### n8n

@@ -1,6 +1,15 @@
 ---
 name: openshorts
+version: 1.0.0
 description: Turn long videos (podcasts, webinars, streams) into vertical 9:16 clips with subtitles and publish them to TikTok, Instagram Reels and YouTube Shorts via the OpenShorts API or MCP server. Use when the user wants to clip a video into shorts, restyle captions on a clip, schedule or post clips to social platforms, or automate a clipping pipeline.
+homepage: https://www.openshorts.app/mcp
+metadata:
+  openclaw:
+    emoji: "🎬"
+    primaryEnv: OPENSHORTS_API_KEY
+  hermes:
+    category: media
+    tags: [video, clips, shorts, social-media, publishing, automation]
 ---
 
 # OpenShorts: clip and publish video
