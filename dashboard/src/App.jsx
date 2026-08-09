@@ -615,6 +615,16 @@ function App() {
           output_format: data.outputFormat || 'auto',
           force_low_quality: forceLowQuality,
         });
+      } else if (data.type === 'local') {
+        // A name inside the server's LOCAL_INGEST_DIR, not a browser File —
+        // nothing is uploaded, so this goes as JSON like the URL path.
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify({
+          local_path: data.payload,
+          acknowledged: !!data.acknowledged,
+          output_format: data.outputFormat || 'auto',
+          force_low_quality: forceLowQuality,
+        });
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
@@ -637,6 +647,13 @@ function App() {
       }
 
       setJobId(resData.job_id);
+
+      // A server-side source has no blob URL to preview, so point the live
+      // preview at the backend once the job id exists — otherwise the panel
+      // spins for the whole run and reads as stuck.
+      if (data.type === 'local') {
+        setProcessingMedia({ type: 'server', payload: `/api/source/${resData.job_id}` });
+      }
 
     } catch (e) {
       if (e instanceof QuotaError) {

@@ -7,6 +7,7 @@ import threading
 import json
 import shutil
 import glob
+import mimetypes
 import time
 import zipfile
 import math
@@ -1375,7 +1376,76 @@ async def get_config():
         "youtubeUrlEnabled": not DISABLE_YOUTUBE_URL,
         "billingEnabled": BILLING_ENABLED,
         "googleAuthEnabled": bool(BILLING_ENABLED and cloud.settings.google_auth_enabled),
+        "localIngestEnabled": local_ingest_enabled(),
     }
+
+
+# Extensions offered for local ingest. Deliberately narrower than what ffmpeg
+# can open: this list only decides what the picker shows, and a directory of
+# recordings should not surface stray .srt/.json siblings.
+LOCAL_INGEST_EXTENSIONS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".mpg", ".mpeg")
+# Bound on the recursive walk. A <select> stops being usable well before this,
+# and it keeps a mistakenly broad LOCAL_INGEST_DIR from stat-ing a whole disk.
+LOCAL_INGEST_MAX_ENTRIES = int(os.environ.get("LOCAL_INGEST_MAX_ENTRIES", "500"))
+
+
+def local_ingest_enabled() -> bool:
+    return bool(LOCAL_INGEST_DIR) and not BILLING_ENABLED
+
+
+@app.get("/api/local-files")
+async def list_local_files():
+    """Video files the browser may pick for local_path ingest.
+
+    Walks subdirectories and returns paths relative to LOCAL_INGEST_DIR, never
+    absolute ones: _resolve_local_ingest joins them back onto the root anyway,
+    so exposing the server's layout would buy the caller nothing. Entries go
+    through the same realpath containment as ingest, so the picker can never
+    offer a file that the subsequent POST would refuse.
+    """
+    if not local_ingest_enabled():
+        raise HTTPException(status_code=403,
+                            detail="Local path ingest is not enabled on this server.")
+
+    root = os.path.realpath(LOCAL_INGEST_DIR)
+    if not os.path.isdir(root):
+        raise HTTPException(status_code=500,
+                            detail="Configured ingest directory does not exist.")
+
+    entries = []
+    truncated = False
+    # followlinks=False keeps a symlinked directory from walking us out of the
+    # tree (or into a loop); symlinked *files* are still caught per-entry below.
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # Hidden trees are noise here, and Drive-backed folders in particular
+        # carry partial-download scratch dirs that would show as broken videos.
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith((".", "$")))
+        for name in filenames:
+            if not name.lower().endswith(LOCAL_INGEST_EXTENSIONS) or name.startswith("."):
+                continue
+            if len(entries) >= LOCAL_INGEST_MAX_ENTRIES:
+                truncated = True
+                break
+            full = os.path.join(dirpath, name)
+            resolved = os.path.realpath(full)
+            if os.path.commonpath([resolved, root]) != root:
+                continue
+            try:
+                if not os.path.isfile(resolved):
+                    continue
+                stat = os.stat(resolved)
+            except OSError:
+                continue
+            entries.append({"name": os.path.relpath(full, root),
+                            "size_mb": round(stat.st_size / 1024 ** 2),
+                            "mtime": stat.st_mtime})
+        if truncated:
+            break
+
+    entries.sort(key=lambda e: e["mtime"], reverse=True)
+    # Surfaced rather than silently dropped: a picker that quietly stops at N
+    # looks like the missing files simply are not there.
+    return {"files": entries, "truncated": truncated}
 
 async def _probe_youtube_quality(url: str) -> dict:
     """Run quality_probe.py in a worker thread; {} on any failure (fail-open)."""
@@ -1649,6 +1719,9 @@ async def process_endpoint(
         'webhook_url': webhook_url,
         'webhook_secret': webhook_secret,
         'base_url': api_base,
+        # Only for local_path jobs: nothing was copied into UPLOAD_DIR, so the
+        # preview endpoint has no upload to glob for and needs the real path.
+        'source_path': input_path if local_path else None,
     }
 
     # Persist the owner so recovered jobs keep their multi-tenant guard after a
@@ -1698,9 +1771,22 @@ async def get_source_video(job_id: str):
         f for f in glob.glob(os.path.join(UPLOAD_DIR, f"{job_id}_*"))
         if not os.path.basename(f).startswith("thumb_")
     ]
-    if not matches:
-        raise HTTPException(status_code=404, detail="Source not found")
-    return FileResponse(matches[0], media_type="video/mp4")
+    if matches:
+        return FileResponse(matches[0], media_type="video/mp4")
+
+    # A local_path job copied nothing into UPLOAD_DIR, so fall back to the
+    # source it reads in place. Containment is re-asserted rather than trusted
+    # from the job record: this endpoint is unauthenticated by design, so it
+    # must not become a way to read a path that ingest itself would refuse.
+    source = (jobs.get(job_id) or {}).get('source_path')
+    if source and local_ingest_enabled():
+        root = os.path.realpath(LOCAL_INGEST_DIR)
+        resolved = os.path.realpath(source)
+        if os.path.commonpath([resolved, root]) == root and os.path.isfile(resolved):
+            media_type = mimetypes.guess_type(resolved)[0] or "video/mp4"
+            return FileResponse(resolved, media_type=media_type)
+
+    raise HTTPException(status_code=404, detail="Source not found")
 
 
 @app.get("/api/jobs/{job_id}/download-all")
