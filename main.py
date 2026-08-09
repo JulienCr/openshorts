@@ -1401,6 +1401,9 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', type=str, help="Output directory or file (if processing whole video).")
     parser.add_argument('--keep-original', action='store_true', help="Keep the downloaded YouTube video.")
     parser.add_argument('--skip-analysis', action='store_true', help="Skip AI analysis and convert the whole video.")
+    parser.add_argument('--resume', action='store_true',
+                        help="Reuse an existing <title>_metadata.json in the output dir and go "
+                             "straight to cutting clips, skipping transcription and AI analysis.")
     parser.add_argument('--format', type=str, default="auto", choices=["auto", "vertical", "horizontal", "square"],
                         help="Output aspect: vertical/auto (9:16), horizontal (keep 16:9), square (1:1).")
 
@@ -1478,20 +1481,42 @@ if __name__ == '__main__':
         duration = frame_count / fps
         cap.release()
 
-        # 3. Transcribe — unless the video has no audio, in which case fall back
-        # to Gemini vision (picks clips from the imagery instead of the speech).
-        from transcribe_backends import NoAudioError
+        # 2b. Resume: a metadata.json left by an interrupted run already holds
+        # the transcript and Gemini's clip list — the only two expensive stages
+        # here. Redoing them would cost minutes and, worse, Gemini can return a
+        # different set of moments, so the clips would no longer match the ones
+        # the user was already shown for that job.
+        clips_data = None
         transcript = None
-        try:
-            transcript = transcribe_video(input_video)
-        except NoAudioError as e:
-            print(f"🔇 {e} — switching to visual analysis.")
+        saved_metadata = os.path.join(output_dir, f"{video_title}_metadata.json")
+        if args.resume and os.path.isfile(saved_metadata):
+            try:
+                with open(saved_metadata) as f:
+                    saved = json.load(f)
+                if saved.get('shorts'):
+                    clips_data = saved
+                    transcript = saved.get('transcript')
+                    print(f"♻️ Resuming from existing analysis: {len(saved['shorts'])} clips, "
+                          f"skipping transcription and Gemini.")
+                else:
+                    print(f"⚠️ {saved_metadata} has no clips — running the full pipeline.")
+            except Exception as e:
+                print(f"⚠️ Could not reuse {saved_metadata} ({e}) — running the full pipeline.")
 
-        # 4. Gemini Analysis (transcript-driven, or vision for silent videos)
-        if transcript is not None:
-            clips_data = get_viral_clips(transcript, duration)
-        else:
-            clips_data = get_visual_clips(input_video, duration)
+        if clips_data is None:
+            # 3. Transcribe — unless the video has no audio, in which case fall back
+            # to Gemini vision (picks clips from the imagery instead of the speech).
+            from transcribe_backends import NoAudioError
+            try:
+                transcript = transcribe_video(input_video)
+            except NoAudioError as e:
+                print(f"🔇 {e} — switching to visual analysis.")
+
+            # 4. Gemini Analysis (transcript-driven, or vision for silent videos)
+            if transcript is not None:
+                clips_data = get_viral_clips(transcript, duration)
+            else:
+                clips_data = get_visual_clips(input_video, duration)
 
         if not clips_data or 'shorts' not in clips_data:
             # Deliberately fail instead of reframing the whole video: that path

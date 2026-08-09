@@ -465,6 +465,16 @@ def _recover_jobs_from_disk():
                 data = json.load(f)
             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
             clips = data.get('shorts', [])
+            # The metadata is written when Gemini finishes, BEFORE any clip is
+            # cut, so its presence does not mean the job finished. Publishing it
+            # as 'completed' anyway gave the user a list of clips whose every
+            # video 404s — and, because the job was then in `jobs`, it also made
+            # _resume_interrupted_jobs skip the one job that needed resuming.
+            if clips and not any(
+                os.path.exists(os.path.join(job_path,
+                                            _canonical_clip_file(job_path, base_name, i)))
+                for i in range(len(clips))):
+                continue
             for i, clip in enumerate(clips):
                 if not clip.get('video_url'):
                     clip['video_url'] = (
@@ -558,8 +568,13 @@ def _resume_interrupted_jobs() -> set:
         manifest_path = os.path.join(job_path, _RESUME_FILE)
         if not os.path.isfile(manifest_path):
             continue
-        # Already finished generating clips → recovered as completed elsewhere.
-        if glob.glob(os.path.join(job_path, "*_metadata.json")):
+        # Already finished → recovered as completed elsewhere. The test is
+        # whether a clip actually exists on disk, NOT whether the metadata does:
+        # metadata is written when Gemini finishes, well before the first clip
+        # is cut, so testing it here dropped the manifest of exactly the jobs
+        # that were interrupted mid-extraction — the case this whole mechanism
+        # exists for.
+        if job_id in jobs:
             _clear_resume_manifest(job_id)
             continue
         try:
@@ -599,10 +614,19 @@ def _resume_interrupted_jobs() -> set:
         except Exception:
             pass
 
+        # Interrupted after the analysis but before the clips: hand main.py
+        # --resume so it reuses that metadata instead of re-transcribing and
+        # re-prompting Gemini. Beyond the minutes saved, Gemini can pick a
+        # different set of moments on a second pass, which would leave the
+        # finished clips not matching the ones already listed for this job.
+        cmd = list(m.get("cmd") or [])
+        if glob.glob(os.path.join(job_path, "*_metadata.json")) and "--resume" not in cmd:
+            cmd.append("--resume")
+
         jobs[job_id] = {
             'status': 'queued',
             'logs': [f"♻️ Resuming your video after a server update (attempt {attempts})."],
-            'cmd': m.get("cmd"),
+            'cmd': cmd,
             'env': env,
             'output_dir': job_path,
             'user_id': None if user_id is None else user_id,
