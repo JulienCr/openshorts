@@ -58,6 +58,13 @@ UPLOADS_MAX_GB = int(os.environ.get("UPLOADS_MAX_GB", "15"))
 QUALITY_GATE_MIN_HEIGHT = int(os.environ.get("QUALITY_GATE_MIN_HEIGHT", "720"))
 QUALITY_PROBE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quality_probe.py")
 DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in ("1", "true", "yes")
+# Self-host only: directory whose video files may be processed in place, named
+# by path instead of uploaded. Multi-GB sources (a 3-hour live recording runs
+# 6-12 GB) cannot realistically go through a multipart upload — that would copy
+# the whole file a second time just to reach MAX_FILE_SIZE_MB and be refused.
+# Unset (the default, and the only sane value for a public deployment) disables
+# the feature outright. See _resolve_local_ingest for the rest of the fencing.
+LOCAL_INGEST_DIR = os.environ.get("LOCAL_INGEST_DIR", "").strip()
 
 # ---- Cloud billing (paid / managed-keys) integration --------------------------
 # All paid-mode code lives in the optional `cloud/` package and is imported ONLY
@@ -1436,11 +1443,45 @@ def layout_env(requested):
     return env
 
 
+def _resolve_local_ingest(raw_path: str) -> str:
+    """Resolve a caller-supplied path to a real file inside LOCAL_INGEST_DIR.
+
+    Ingesting by path means a request names a file on the server's filesystem,
+    so it is fenced three ways: off unless the operator sets LOCAL_INGEST_DIR,
+    refused outright whenever billing is on (a paying tenant must never be able
+    to read the operator's disk), and confined to that one directory.
+
+    The containment check compares realpaths, which is what makes it hold
+    against both ``../`` traversal and a symlink *inside* the directory that
+    points outside it — checking the raw string would pass both.
+    """
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=403,
+                            detail="Local path ingest is disabled on this deployment.")
+    if not LOCAL_INGEST_DIR:
+        raise HTTPException(status_code=403,
+                            detail="Local path ingest is not configured on this server.")
+
+    root = os.path.realpath(LOCAL_INGEST_DIR)
+    # A relative path is read as relative to the ingest dir, so callers can pass
+    # just a filename and never learn the server's layout.
+    candidate = raw_path if os.path.isabs(raw_path) else os.path.join(root, raw_path)
+    resolved = os.path.realpath(candidate)
+
+    if resolved != root and os.path.commonpath([resolved, root]) != root:
+        raise HTTPException(status_code=400,
+                            detail="Path is outside the configured ingest directory.")
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail=f"No such file: {raw_path}")
+    return resolved
+
+
 @app.post("/api/process")
 async def process_endpoint(
     request: Request,
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
+    local_path: Optional[str] = Form(None),
     acknowledged: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
     layouts: Optional[str] = Form(None),
@@ -1460,6 +1501,7 @@ async def process_endpoint(
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("url")
+        local_path = body.get("local_path")
         ack_flag = bool(body.get("acknowledged"))
         force_low = bool(body.get("force_low_quality"))
         output_format = body.get("output_format")
@@ -1477,8 +1519,8 @@ async def process_endpoint(
     elif not isinstance(layouts, list):
         layouts = []
 
-    if not url and not file:
-        raise HTTPException(status_code=400, detail="Must provide URL or File")
+    if not url and not file and not local_path:
+        raise HTTPException(status_code=400, detail="Must provide URL, File or local_path")
 
     # Completion callback: reject unsafe targets NOW (clear 400) — delivery
     # re-validates anyway, but failing at submit is the debuggable behavior.
@@ -1524,7 +1566,7 @@ async def process_endpoint(
         "ip": client_ip,
         "user_agent": user_agent,
         "timestamp": time.time(),
-        "source": "url" if url else "file",
+        "source": "url" if url else ("local_path" if local_path else "file"),
     }
 
     job_id = str(uuid.uuid4())
@@ -1547,6 +1589,12 @@ async def process_endpoint(
     input_path = None
     if url:
         cmd.extend(["-u", url])
+    elif local_path:
+        # Processed where it lies — no copy into UPLOAD_DIR, which also keeps
+        # it out of reach of _enforce_uploads_size_cap: that sweep only lists
+        # UPLOAD_DIR, so it can never delete a source the user still owns.
+        input_path = _resolve_local_ingest(local_path)
+        cmd.extend(["-i", input_path])
     else:
         # Save uploaded file with size limit check.
         # basename() strips any path components from the client-supplied
