@@ -1,0 +1,51 @@
+# NVIDIA GPU override for the local stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# Requires nvidia-container-toolkit on the host. On WSL2 there are no
+# /dev/nvidia* nodes — the driver arrives through /dev/dxg and the libraries
+# live in /usr/lib/wsl/lib — so the toolkit must resolve mode="wsl". Its
+# default mode="auto" gets that right; a toolkit stuck on "legacy" fails with
+# "load library failed: libnvidia-ml.so.1".
+#
+# Only `backend` is given the GPU: `frontend` is Vite, and `renderer` is
+# Remotion, which renders on CPU here.
+services:
+  backend:
+    build:
+      context: .
+      args:
+        # Adds ~2GB: cuBLAS 12 + cuDNN 9 for CTranslate2 (faster-whisper CUDA)
+        # and onnxruntime-gpu for Parakeet. The default image stays CPU-slim.
+        GPU: "1"
+        # Match the container user to whoever owns the working copy — the
+        # `.:/app` bind mount below hands the container a host-owned directory
+        # it has to create uploads/ and output/ in. 1000 is the first regular
+        # user on a stock Linux install; export APP_UID/APP_GID if yours differ
+        # (`id -u` / `id -g`).
+        APP_UID: "${APP_UID:-1000}"
+        APP_GID: "${APP_GID:-1000}"
+    environment:
+      # Every device default in the code is CPU (subtitles.get_whisper_config
+      # returns device="cpu"/compute="int8", ffmpeg_utils defaults to x264).
+      # That is deliberate — the image must run on GPU-less hosts — but it
+      # means the GPU is opt-in per variable: without these, the container
+      # sees the 4090 and still does everything on the CPU.
+      - WHISPER_DEVICE=cuda
+      # int8 is the CPU quantisation; Ada does fp16 natively.
+      - WHISPER_COMPUTE=float16
+      # h264_nvenc once the one-shot probe passes, else x264 with a warning.
+      - FFMPEG_ENCODER=auto
+      # TRANSNETV2_DEVICE is already "auto" and selects cuda on its own.
+      #
+      # "video" is what exposes libnvidia-encode/libnvcuvid for NVENC; the
+      # compute-only default would let ffmpeg's nvenc probe fail.
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
