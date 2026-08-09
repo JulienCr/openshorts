@@ -23,7 +23,8 @@ from google.genai import types as genai_types
 
 import gemini_worker
 import layout_picker
-from clip_selection import build_transcript_windows, clip_count_targets, snap_clip_to_words
+from clip_selection import (build_transcript_windows, clip_count_targets,
+                            shortlist_size, snap_clip_to_words)
 from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
 from dotenv import load_dotenv
@@ -1265,7 +1266,7 @@ def get_viral_clips(transcript_result, video_duration):
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.
         scored.sort(key=lambda w: w.get("score", 0), reverse=True)
-        target = max(3, min(10, int(video_duration // 90) + 2))
+        target = shortlist_size(len(windows))
         by_id = {w["id"]: w for w in windows}
         shortlist = [by_id[w["id"]] for w in scored[:target] if w.get("id") in by_id]
         if not shortlist:
@@ -1404,6 +1405,10 @@ if __name__ == '__main__':
     parser.add_argument('--resume', action='store_true',
                         help="Reuse an existing <title>_metadata.json in the output dir and go "
                              "straight to cutting clips, skipping transcription and AI analysis.")
+    parser.add_argument('--reanalyze', action='store_true',
+                        help="Reuse only the transcript from an existing <title>_metadata.json "
+                             "and run the AI analysis again — for retrying clip selection "
+                             "without paying for transcription a second time.")
     parser.add_argument('--format', type=str, default="auto", choices=["auto", "vertical", "horizontal", "square"],
                         help="Output aspect: vertical/auto (9:16), horizontal (keep 16:9), square (1:1).")
 
@@ -1502,15 +1507,33 @@ if __name__ == '__main__':
                     print(f"⚠️ {saved_metadata} has no clips — running the full pipeline.")
             except Exception as e:
                 print(f"⚠️ Could not reuse {saved_metadata} ({e}) — running the full pipeline.")
+        elif args.reanalyze and os.path.isfile(saved_metadata):
+            # Same file, but keep only the transcript: transcription is the slow
+            # half and its output does not change, while clip selection is the
+            # part worth retrying (different prompt, different shortlist size).
+            try:
+                with open(saved_metadata) as f:
+                    saved = json.load(f)
+                segments = (saved.get('transcript') or {}).get('segments')
+                if segments:
+                    transcript = saved['transcript']
+                    print(f"♻️ Reusing the saved transcript ({len(segments)} segments); "
+                          f"re-running the analysis.")
+                else:
+                    print(f"⚠️ {saved_metadata} holds no transcript — transcribing again.")
+            except Exception as e:
+                print(f"⚠️ Could not read {saved_metadata} ({e}) — transcribing again.")
 
         if clips_data is None:
             # 3. Transcribe — unless the video has no audio, in which case fall back
             # to Gemini vision (picks clips from the imagery instead of the speech).
-            from transcribe_backends import NoAudioError
-            try:
-                transcript = transcribe_video(input_video)
-            except NoAudioError as e:
-                print(f"🔇 {e} — switching to visual analysis.")
+            # Skipped entirely when --reanalyze already supplied the transcript.
+            if transcript is None:
+                from transcribe_backends import NoAudioError
+                try:
+                    transcript = transcribe_video(input_video)
+                except NoAudioError as e:
+                    print(f"🔇 {e} — switching to visual analysis.")
 
             # 4. Gemini Analysis (transcript-driven, or vision for silent videos)
             if transcript is not None:

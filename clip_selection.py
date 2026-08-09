@@ -79,6 +79,39 @@ def compact_words(words, precision=2):
     ]
 
 
+def shortlist_size(n_windows):
+    """How many scored windows reach the (expensive) detail pass.
+
+    The ceiling used to be a flat 10 whatever the length, which quietly made the
+    analysis worse the longer the source: a 15-minute video builds ~13 windows
+    and had 10 of them examined, while a 2-hour live builds ~79 and still had
+    10 — 13% of the material, the rest scored and then thrown away. The floor in
+    clip_count_targets then had the model return its minimum out of that narrow
+    slice, which is how a two-hour show came back with six clips.
+
+    Taking a share of the windows rather than a share of the running time is
+    what makes this track the actual material: windows are built from speech, so
+    a live with a 20-minute "starting soon" card does not get credited for it.
+
+    The ceiling stays bounded because the detail prompt carries each window's
+    text, but the headroom is real — a 2-hour transcript is only ~23k tokens in
+    full, so 24 windows costs a few thousand.
+
+    ``CLIP_SHORTLIST_MAX`` overrides the ceiling for A/B runs without a deploy.
+    """
+    import os
+
+    n = max(1, int(n_windows or 1))
+    ceiling = max(10, min(24, round(n * 0.3)))
+    raw = os.environ.get("CLIP_SHORTLIST_MAX")
+    if raw:
+        try:
+            ceiling = max(1, int(raw))
+        except ValueError:
+            pass
+    return max(3, min(ceiling, n))
+
+
 def build_transcript_windows(transcript_result, video_duration,
                              window_seconds=90, overlap_seconds=30):
     """
