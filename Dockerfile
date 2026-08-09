@@ -88,8 +88,16 @@ RUN mkdir -p /usr/local/share/fonts/openshorts \
     && cp fonts/openshorts-fontmap.conf /etc/fonts/conf.d/60-openshorts.conf \
     && fc-cache -f
 
-# Create a non-root user (Moved up)
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+# Create a non-root user (Moved up). The ids are build args because the dev
+# compose bind-mounts the repo over /app: Docker Desktop fakes permissive
+# ownership on bind mounts, but Docker natively on Linux enforces the real uid,
+# so a container uid that does not match the host owner cannot create
+# uploads/ or output/ and the app dies on import. Defaults keep the historical
+# system-uid behavior for every image that is not bind-mounted (prod, CI).
+ARG APP_UID=999
+ARG APP_GID=999
+RUN groupadd -r -g ${APP_GID} appuser \
+    && useradd -r -u ${APP_UID} -g appuser -d /app -s /sbin/nologin appuser
 
 # Create directories including Ultralytics cache config. /app/.cache/huggingface
 # exists in-image (appuser-owned via the chown below) so a persistent volume
