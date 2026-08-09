@@ -696,7 +696,10 @@ function App() {
       { id: 'ai-agent', ord: '03', icon: Bot, label: 'AI Agent', byok: true },
       { id: 'ugc-gallery', ord: '04', icon: LayoutGrid, label: 'UGC Gallery' },
       { id: 'thumbnails', ord: '05', icon: Image, label: 'YouTube Studio' },
-      ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History' }] : []),
+      // Self-host has a library too — it just lives in OUTPUT_DIR instead of
+      // R2, and needs no account. Only the cloud build has someone to sign in.
+      ...(billingEnabled ? (isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History' }] : [])
+        : [{ id: 'history', ord: '06', icon: History, label: 'History' }]),
       { id: 'settings', ord: '07', icon: Settings, label: 'Settings' },
     ];
 
@@ -1253,7 +1256,7 @@ function App() {
           {activeTab === 'history' && (
             <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
               <div className="max-w-6xl mx-auto p-6 md:p-8">
-                <HistoryTab onReopenProject={restoreProject} />
+                <HistoryTab onReopenProject={restoreProject} managed={billingEnabled} />
               </div>
             </div>
           )}

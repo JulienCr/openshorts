@@ -2,10 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Loader2, Download, Film, FolderOpen } from 'lucide-react';
 import { apiJson } from '../lib/api';
 
-// The signed-in user's saved video library (stored in R2). Private, signed links.
+// The saved video library. In cloud mode it is the signed-in user's, stored in
+// R2 behind private signed links; self-hosted it is whatever sits in the
+// server's output directory, served from the local /videos mount. Both answer
+// the same two endpoints, so this component does not care which it is talking
+// to — only the retention wording below differs.
 // Videos are grouped by project (job); re-openable projects get a "reopen"
 // action that restores the whole job for further editing in the Clip Generator.
-export default function HistoryTab({ onReopenProject }) {
+export default function HistoryTab({ onReopenProject, managed = true }) {
   const [videos, setVideos] = useState(null);
   const [projects, setProjects] = useState({});
   const [reopening, setReopening] = useState(null);
@@ -59,7 +63,9 @@ export default function HistoryTab({ onReopenProject }) {
       <p className="eyebrow mb-1.5">06 · HISTORY</p>
       <h1 className="font-display lowercase text-2xl text-ink mb-2">Your library</h1>
       <p className="text-muted text-sm mb-8 lowercase">
-        All the shorts you've generated, saved while your plan is active. Kept for 7 days after your plan ends. Reopen a project to keep editing its clips.
+        {managed
+          ? "All the shorts you've generated, saved while your plan is active. Kept for 7 days after your plan ends. Reopen a project to keep editing its clips."
+          : "All the shorts you've generated, kept on this server. Reopen a project to keep editing its clips."}
       </p>
 
       {error && <p className="text-danger text-sm">{error}</p>}

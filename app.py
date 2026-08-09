@@ -47,7 +47,8 @@ MAX_FILE_SIZE_MB = 2048  # 2GB limit
 # where covers, sounds and hashtags actually get chosen. The UI must say so —
 # a user who expects a published post and finds a draft will read it as a bug.
 TIKTOK_POST_MODE = os.environ.get("TIKTOK_POST_MODE", "MEDIA_UPLOAD").strip()
-JOB_RETENTION_SECONDS = int(os.environ.get("JOB_RETENTION_SECONDS", "3600"))  # job/file retention (issue #46)
+# JOB_RETENTION_SECONDS is defined further down, once BILLING_ENABLED is known:
+# its default differs between the two editions (issue #46).
 # Ceiling for the working directory once it lives on a persistent volume: the
 # age-based sweep alone can't stop a burst of long videos from filling the disk.
 # 0 disables the cap.
@@ -72,6 +73,14 @@ LOCAL_INGEST_DIR = os.environ.get("LOCAL_INGEST_DIR", "").strip()
 # when BILLING_ENABLED is set. With the flag off, the app behaves exactly as the
 # self-hosted BYOK app does today (no extra dependencies required).
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+
+# Age sweep over OUTPUT_DIR; 0 or less disables it (same rule as OUTPUT_MAX_GB).
+# The cloud shares one disk between tenants and archives every clip to R2, so an
+# hour of local retention is right there. Self-host has neither: OUTPUT_DIR *is*
+# the library that /api/projects reads, so sweeping it by age deleted the user's
+# whole history an hour after each render, with nowhere to restore it from.
+JOB_RETENTION_SECONDS = int(os.environ.get(
+    "JOB_RETENTION_SECONDS", "3600" if BILLING_ENABLED else "0"))
 # Force full pipeline logs to the client even under billing (local debugging).
 DEBUG_LOGS = os.environ.get("DEBUG_LOGS", "").lower() in ("1", "true", "yes")
 
@@ -729,20 +738,26 @@ async def cleanup_jobs():
             await asyncio.sleep(300) # Check every 5 minutes
             now = time.time()
             
-            # Simple directory cleanup based on modification time
-            # Check OUTPUT_DIR
-            for job_id in os.listdir(OUTPUT_DIR):
-                # Not a job: the thumbnails dir backs a StaticFiles mount, so
-                # deleting it would 500 every /thumbnails request until reboot.
-                if job_id == os.path.basename(THUMBNAILS_DIR):
-                    continue
-                job_path = os.path.join(OUTPUT_DIR, job_id)
-                if os.path.isdir(job_path):
-                    if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
-                        print(f"🧹 Purging old job: {job_id}")
-                        shutil.rmtree(job_path, ignore_errors=True)
-                        if job_id in jobs:
-                            del jobs[job_id]
+            # Simple directory cleanup based on modification time.
+            # 0 or less disables the age sweep, matching the rule OUTPUT_MAX_GB
+            # already uses. Without an off switch, a self-host install loses its
+            # entire library an hour after each render — and the library reads
+            # from this very directory, so there is nowhere else to restore it
+            # from. (Previously 0 meant "purge everything immediately", which is
+            # the opposite of what setting it to zero looks like it does.)
+            if JOB_RETENTION_SECONDS > 0:
+                for job_id in os.listdir(OUTPUT_DIR):
+                    # Not a job: the thumbnails dir backs a StaticFiles mount, so
+                    # deleting it would 500 every /thumbnails request until reboot.
+                    if job_id == os.path.basename(THUMBNAILS_DIR):
+                        continue
+                    job_path = os.path.join(OUTPUT_DIR, job_id)
+                    if os.path.isdir(job_path):
+                        if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
+                            print(f"🧹 Purging old job: {job_id}")
+                            shutil.rmtree(job_path, ignore_errors=True)
+                            if job_id in jobs:
+                                del jobs[job_id]
 
             # Hard disk cap. The time-based sweep above bounds the *age* of what
             # we keep, not its size: a burst of long videos can fill the volume
@@ -1811,6 +1826,193 @@ async def get_source_video(job_id: str):
             return FileResponse(resolved, media_type=media_type)
 
     raise HTTPException(status_code=404, detail="Source not found")
+
+
+# ---- Self-host project library ----------------------------------------------
+# The cloud build serves /api/projects, /api/history and the restore/state
+# routes from cloud/videos.py, backed by R2 and a signed-in account. Self-host
+# had none of them, so a finished job was unreachable the moment the tab closed
+# — and the retention sweep deleted it an hour later. Nothing about running
+# locally justifies that: the clips are already on disk, and the metadata that
+# _recover_jobs_from_disk reads is enough to rebuild the whole project.
+#
+# Registered only when billing is off. These routes have no per-user scoping, so
+# on a shared deployment they would hand every visitor everyone else's clips —
+# there, cloud/videos.py stays authoritative.
+_PROJECT_STATE_FILE = ".project_state.json"
+
+
+def _local_project(job_id):
+    """Everything on disk for one job, or None if it has no finished clips.
+
+    A job dir with metadata but no clip file is an interrupted run, not a
+    project — see _recover_jobs_from_disk for the same distinction.
+    """
+    job_path = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(job_path):
+        return None
+    json_files = glob.glob(os.path.join(job_path, "*_metadata.json"))
+    if not json_files:
+        return None
+    try:
+        with open(json_files[0]) as f:
+            data = json.load(f)
+    except Exception:
+        return None
+
+    base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+    shorts = data.get('shorts') or []
+    clips, total = [], 0
+    for i, clip in enumerate(shorts):
+        filename = _canonical_clip_file(job_path, base_name, i)
+        full = os.path.join(job_path, filename)
+        if not os.path.exists(full):
+            continue
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = 0
+        total += size
+        clip['video_url'] = f"/videos/{job_id}/{filename}"
+        clips.append({
+            "index": i,
+            "title": clip.get('video_title_for_youtube_short') or clip.get('title'),
+            "filename": filename,
+            "size_bytes": size,
+        })
+    if not clips:
+        return None
+
+    try:
+        created = os.path.getmtime(json_files[0])
+    except OSError:
+        created = 0.0
+    state = {}
+    try:
+        with open(os.path.join(job_path, _PROJECT_STATE_FILE)) as f:
+            state = json.load(f)
+    except Exception:
+        pass
+
+    return {
+        "job_id": job_id,
+        "title": base_name,
+        "created_ts": created,
+        "created_at": datetime.fromtimestamp(created, timezone.utc).isoformat(),
+        "size_bytes": total,
+        "clips": clips,
+        "shorts": shorts,
+        "cost_analysis": data.get('cost_analysis'),
+        "state": state,
+    }
+
+
+def _scan_local_projects(limit=200):
+    try:
+        entries = os.listdir(OUTPUT_DIR)
+    except FileNotFoundError:
+        return []
+    thumbs = os.path.basename(THUMBNAILS_DIR)
+    found = [p for p in (_local_project(j) for j in entries if j != thumbs) if p]
+    found.sort(key=lambda p: p["created_ts"], reverse=True)
+    return found[:limit]
+
+
+def _require_local_library():
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+if not BILLING_ENABLED:
+    @app.get("/api/projects")
+    async def list_local_projects():
+        """Re-openable projects, read straight from OUTPUT_DIR."""
+        _require_local_library()
+        return {"projects": [{
+            "job_id": p["job_id"],
+            "title": p["title"],
+            "clip_count": len(p["clips"]),
+            "size_bytes": p["size_bytes"],
+            "created_at": p["created_at"],
+            "updated_at": p["created_at"],
+        } for p in _scan_local_projects()]}
+
+    @app.get("/api/history")
+    async def local_history():
+        """Every clip of every project, newest first — the library grid.
+
+        view_url/download_url are the local /videos mount rather than signed R2
+        links; the download one goes through /api/clip/.../download so the
+        browser saves the file instead of navigating to it.
+        """
+        _require_local_library()
+        items = []
+        for p in _scan_local_projects():
+            for c in p["clips"]:
+                items.append({
+                    "id": f"{p['job_id']}:{c['index']}",
+                    "job_id": p["job_id"],
+                    "clip_index": c["index"],
+                    "title": c["title"],
+                    "created_at": p["created_at"],
+                    "size_bytes": c["size_bytes"],
+                    "view_url": f"/videos/{p['job_id']}/{c['filename']}",
+                    "download_url": f"/api/clip/{p['job_id']}/{c['index']}/download",
+                })
+        return {"videos": items}
+
+    @app.post("/api/projects/{job_id}/restore")
+    async def restore_local_project(job_id: str):
+        """Put a project back in memory so every edit endpoint works on it.
+
+        The result payload is built exactly like the one run_job_wrapper
+        produces, so the Clip Generator cannot tell a restored project from a
+        freshly finished one.
+        """
+        _require_local_library()
+        p = _local_project(job_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Project not found")
+        result = {"clips": p["shorts"], "cost_analysis": p["cost_analysis"]}
+        jobs[job_id] = {
+            "status": "completed",
+            "logs": ["♻️ Project restored from your library."],
+            "output_dir": os.path.join(OUTPUT_DIR, job_id),
+            "user_id": None,
+            "result": result,
+        }
+        return {"job_id": job_id, "result": result, "project_state": p["state"] or None}
+
+    @app.put("/api/projects/{job_id}/state")
+    async def save_local_project_state(job_id: str, request: Request):
+        """Persist the browser-only Remotion layer state next to the clips."""
+        _require_local_library()
+        job_path = os.path.join(OUTPUT_DIR, job_id)
+        if not os.path.isdir(job_path):
+            raise HTTPException(status_code=404, detail="Project not found")
+        if int(request.headers.get("content-length") or 0) > 262144:
+            raise HTTPException(status_code=413, detail="State too large")
+        body = await request.json()
+        try:
+            with open(os.path.join(job_path, _PROJECT_STATE_FILE), "w") as f:
+                json.dump({"clips": body.get("clips") or []}, f)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Could not save state: {e}")
+        return {"ok": True}
+
+    @app.get("/api/clip/{job_id}/{clip_index}/download")
+    async def download_local_clip(job_id: str, clip_index: int):
+        """One clip, as an attachment named after its title."""
+        _require_local_library()
+        p = _local_project(job_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Project not found")
+        match = next((c for c in p["clips"] if c["index"] == clip_index), None)
+        if not match:
+            raise HTTPException(status_code=404, detail="Clip not found")
+        safe = (match["title"] or "short").strip().replace("/", "-")[:60] + ".mp4"
+        return FileResponse(os.path.join(OUTPUT_DIR, job_id, match["filename"]),
+                            media_type="video/mp4", filename=safe)
 
 
 @app.get("/api/jobs/{job_id}/download-all")
