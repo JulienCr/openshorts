@@ -34,6 +34,14 @@ services:
       - WHISPER_DEVICE=cuda
       # int8 is the CPU quantisation; Ada does fp16 natively.
       - WHISPER_COMPUTE=float16
+      # The "small" default was picked for CPU speed. The transcript is not
+      # just subtitles — it is the text Gemini reads to find viral moments, so
+      # a missed line is a missed clip. large-v3 is ~3GB of VRAM out of 24.
+      - WHISPER_MODEL=large-v3
+      # Share the host's Hugging Face cache instead of the one inside the repo
+      # bind mount: the models are multi-GB and usually already downloaded by
+      # something else on a machine that has a GPU.
+      - HF_HOME=/hf
       # h264_nvenc once the one-shot probe passes, else x264 with a warning.
       - FFMPEG_ENCODER=auto
       # TRANSNETV2_DEVICE is already "auto" and selects cuda on its own.
@@ -42,6 +50,11 @@ services:
       # compute-only default would let ffmpeg's nvenc probe fail.
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    volumes:
+      # Writable on purpose so a model that is not cached yet still downloads.
+      # Safe to share: the container runs as APP_UID, i.e. the host user who
+      # owns this cache.
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/hf
     deploy:
       resources:
         reservations:
