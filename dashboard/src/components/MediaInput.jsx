@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Link2, Upload, FileVideo, X, Info, Loader2, HardDrive } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Link2, Upload, FileVideo, X, Info, Loader2, HardDrive, RefreshCw } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 const SUPPORTED_PLATFORMS = [
@@ -49,11 +49,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
             .catch(() => {});
     }, []);
 
-    // Listed once the server says the feature is on, rather than when the tab
-    // is opened: it only ever runs on a self-hosted instance that opted in, and
-    // fetching upfront keeps the tab from flashing a spinner on first click.
-    useEffect(() => {
-        if (!localIngestEnabled) return;
+    const loadLocalFiles = useCallback(() => {
         setLoadingLocal(true);
         setLocalError('');
         fetch(getApiUrl('/api/local-files'))
@@ -64,7 +60,15 @@ export default function MediaInput({ onProcess, isProcessing }) {
             })
             .catch(() => setLocalError("Could not read the server's video folder."))
             .finally(() => setLoadingLocal(false));
-    }, [localIngestEnabled]);
+    }, []);
+
+    // Re-read on every entry into the tab, not once on mount: the whole point
+    // of this path is to drop a file on the server and process it, so a list
+    // fetched at page load is stale exactly when it matters. The refresh button
+    // covers dropping a file while the tab is already open.
+    useEffect(() => {
+        if (localIngestEnabled && mode === 'local') loadLocalFiles();
+    }, [localIngestEnabled, mode, loadLocalFiles]);
 
     // A link pasted in the landing hero: preload it here so the user picks up
     // where they left off. Not auto-submitted — the rights attestation below
@@ -181,34 +185,50 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     </div>
                 ) : mode === 'local' ? (
                     <div className="space-y-3">
+                        {/* Select and refresh stay mounted whatever the folder
+                            holds — hiding them on the empty state would strand
+                            the user right after dropping their first file. */}
+                        <div className="flex items-center gap-2">
+                            <select
+                                value={localName}
+                                onChange={(e) => setLocalName(e.target.value)}
+                                className="input-field flex-1"
+                                disabled={loadingLocal || localFiles.length === 0}
+                                required
+                            >
+                                <option value="">
+                                    {localFiles.length ? 'Pick a file already on the server…' : 'Nothing to pick yet'}
+                                </option>
+                                {localFiles.map((f) => (
+                                    <option key={f.name} value={f.name}>
+                                        {f.name} — {f.size_mb >= 1024
+                                            ? `${(f.size_mb / 1024).toFixed(1)} GB`
+                                            : `${f.size_mb} MB`}
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                type="button"
+                                onClick={loadLocalFiles}
+                                disabled={loadingLocal}
+                                title="Re-read the server folder"
+                                aria-label="Re-read the server folder"
+                                className="p-2.5 rounded-input border border-rule2 text-muted hover:text-ink hover:border-brass disabled:opacity-50 transition-colors"
+                            >
+                                <RefreshCw size={16} className={loadingLocal ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
+
                         {loadingLocal ? (
-                            <div className="flex items-center gap-2 py-4 text-sm text-muted">
-                                <Loader2 size={16} className="animate-spin" />
-                                Reading the server folder…
-                            </div>
+                            <p className="readout">Reading the server folder…</p>
                         ) : localError ? (
-                            <p className="py-4 text-sm text-muted">{localError}</p>
+                            <p className="text-sm text-muted">{localError}</p>
                         ) : localFiles.length === 0 ? (
-                            <p className="py-4 text-sm text-muted">
-                                No video files found in the server folder.
+                            <p className="text-sm text-muted">
+                                No video files in the server folder yet — drop one in and hit refresh.
                             </p>
                         ) : (
                             <>
-                                <select
-                                    value={localName}
-                                    onChange={(e) => setLocalName(e.target.value)}
-                                    className="input-field"
-                                    required
-                                >
-                                    <option value="">Pick a file already on the server…</option>
-                                    {localFiles.map((f) => (
-                                        <option key={f.name} value={f.name}>
-                                            {f.name} — {f.size_mb >= 1024
-                                                ? `${(f.size_mb / 1024).toFixed(1)} GB`
-                                                : `${f.size_mb} MB`}
-                                        </option>
-                                    ))}
-                                </select>
                                 <p className="readout">
                                     Read straight from the server's disk — nothing is uploaded, so the size limit does not apply.
                                 </p>
