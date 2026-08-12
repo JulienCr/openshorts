@@ -27,6 +27,7 @@ JWT_ALGO = "HS256"
 JWT_TTL_DAYS = 30
 MAGIC_TTL_MINUTES = 15
 MAGIC_RATE_LIMIT = 3          # per email
+MAGIC_RATE_LIMIT_IP = 10      # per IP, any email — bots rotate addresses, not IPs
 MAGIC_RATE_WINDOW_MIN = 15
 # Only accept attribution for an account this young. Both sign-in flows post it
 # right after the redirect, so anything older is a returning user whose "source"
@@ -154,15 +155,29 @@ class MagicVerifyRequest(BaseModel):
 async def request_magic_link(payload: MagicLinkRequest, request: Request):
     from .emails import send_magic_link_email
 
+    disposable_msg = (
+        "That email provider isn't supported. Please use a permanent "
+        "address (Gmail, Outlook, iCloud…) or sign in with Google.")
+
     # Block temp-mail before doing anything else — the free plan is open to
     # email accounts now, so disposable domains would be a free-minute farm.
     if email_policy.is_disposable(payload.email):
-        raise HTTPException(status_code=400, detail=(
-            "That email provider isn't supported. Please use a permanent "
-            "address (Gmail, Outlook, iCloud…) or sign in with Google."))
+        raise HTTPException(status_code=400, detail=disposable_msg)
 
     # Normalize (strip +tags / Gmail dots) so aliases can't mint extra accounts.
     email = email_policy.normalize_email(payload.email)
+
+    # The static list can't keep up with rotating temp-mail domains, and bots
+    # sign up with domains that don't receive mail at all — both come back as
+    # bounces that flood the support inbox and burn sender reputation.
+    verdict = await email_policy.mx_verdict(email)
+    if verdict == email_policy.MX_DISPOSABLE:
+        raise HTTPException(status_code=400, detail=disposable_msg)
+    if verdict == email_policy.MX_NONE:
+        raise HTTPException(status_code=400, detail=(
+            "That email domain can't receive mail. Please double-check the address."))
+
+    client_ip = request.client.host if request.client else None
     async with database.session() as session:
         async with session.begin():
             window_start = _now() - timedelta(minutes=MAGIC_RATE_WINDOW_MIN)
@@ -175,13 +190,23 @@ async def request_magic_link(payload: MagicLinkRequest, request: Request):
             if recent >= MAGIC_RATE_LIMIT:
                 raise HTTPException(status_code=429, detail="Too many login attempts. Try again in a few minutes.")
 
+            if client_ip:
+                recent_ip = (await session.execute(
+                    select(func.count(MagicLinkToken.id)).where(and_(
+                        MagicLinkToken.request_ip == client_ip,
+                        MagicLinkToken.created_at >= window_start,
+                    ))
+                )).scalar_one()
+                if recent_ip >= MAGIC_RATE_LIMIT_IP:
+                    raise HTTPException(status_code=429, detail="Too many login attempts. Try again in a few minutes.")
+
             raw_token = secrets.token_urlsafe(32)
             token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
             session.add(MagicLinkToken(
                 email=email,
                 token_hash=token_hash,
                 expires_at=_now() + timedelta(minutes=MAGIC_TTL_MINUTES),
-                request_ip=request.client.host if request.client else None,
+                request_ip=client_ip,
             ))
 
     link = f"{settings.frontend_url}/#/auth/verify?ml={raw_token}"
