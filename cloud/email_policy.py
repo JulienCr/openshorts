@@ -25,10 +25,10 @@ _PLUS_ALIASING = _DOT_INSENSITIVE | {
 }
 
 
-def _load_disposable() -> set:
+def _load_list(path: str) -> set:
     domains = set()
     try:
-        with open(_DOMAINS_FILE, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip().lower()
                 if line and not line.startswith("#"):
@@ -38,7 +38,7 @@ def _load_disposable() -> set:
     return domains
 
 
-_DISPOSABLE = _load_disposable()
+_DISPOSABLE = _load_list(_DOMAINS_FILE)
 
 
 def is_disposable(email: str) -> bool:
@@ -75,30 +75,22 @@ def disposable_count() -> int:
 # Disposable providers rotate their front domains faster than any blocklist
 # (onldm.net was one of 10minutemail's), but every front domain points its MX
 # at the provider's real SMTP hosts, which stay put. Matching the MX target
-# catches the whole rotation at once. Suffix match on these domains.
-_DISPOSABLE_MX = {
-    "10minutemail.com",
-    "1secmail.com",
-    "dropmail.me",
-    "generator.email",
-    "guerrillamail.com",
-    "harakirimail.com",
-    "mail.tm",
-    "maildrop.cc",
-    "mailinator.com",
-    "mohmal.com",
-    "temp-mail.org",
-    "yopmail.com",
-}
+# catches the whole rotation at once. Suffix match against the domains in
+# disposable_mx.txt — same ops workflow as the sign-up blocklist above.
+_MX_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "disposable_mx.txt")
+_DISPOSABLE_MX = _load_list(_MX_FILE)
 
 MX_OK = "ok"
 MX_NONE = "no_mx"
 MX_DISPOSABLE = "disposable_mx"
 
 _MX_TIMEOUT = 4.0        # seconds; a slow resolver must not stall sign-in
-_MX_CACHE_TTL = 3600.0
+_MX_CACHE_TTL = 3600.0   # verdicts computed from an actual DNS answer
+_MX_ERROR_TTL = 60.0     # error-derived verdicts: a blip must not stick for 1h
 _MX_CACHE_MAX = 10_000   # bots probing random domains must not grow it unbounded
 _mx_cache = {}           # domain -> (verdict, monotonic expiry)
+_resolver = None
 
 
 def classify_mx_hosts(hosts) -> str:
@@ -113,19 +105,47 @@ def classify_mx_hosts(hosts) -> str:
     return MX_OK
 
 
-async def _resolve(domain: str, rtype: str):
+def _get_resolver():
+    # One shared resolver: reads resolv.conf once, and its LRU cache honors
+    # each record's real TTL, so a junk-domain flood can't force live lookups
+    # for the hot legit domains (gmail, outlook, …).
+    global _resolver
     import dns.asyncresolver
+    import dns.resolver
 
-    resolver = dns.asyncresolver.Resolver()
-    resolver.lifetime = _MX_TIMEOUT
-    return await resolver.resolve(domain, rtype)
+    if _resolver is None:
+        r = dns.asyncresolver.Resolver()
+        r.lifetime = _MX_TIMEOUT
+        r.cache = dns.resolver.LRUCache()
+        _resolver = r
+    return _resolver
+
+
+async def _resolve(domain: str, rtype: str):
+    return await _get_resolver().resolve(domain, rtype)
+
+
+async def _implicit_mx(domain: str):
+    """RFC 5321 implicit MX: no MX record → deliverable if A or AAAA exists."""
+    import dns.resolver
+
+    for rtype in ("A", "AAAA"):
+        try:
+            await _resolve(domain, rtype)
+            return MX_OK, _MX_CACHE_TTL
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            continue
+        except Exception:
+            return MX_OK, _MX_ERROR_TTL
+    return MX_NONE, _MX_ERROR_TTL
 
 
 async def mx_verdict(email: str) -> str:
     """MX_OK / MX_NONE / MX_DISPOSABLE for the address's domain.
 
     Fails open (MX_OK) on resolver trouble — a DNS blip must never lock real
-    users out of sign-in.
+    users out of sign-in — and error-derived verdicts are cached only briefly
+    so a transient NXDOMAIN can't pin a lockout for an hour.
     """
     import dns.resolver
 
@@ -137,24 +157,20 @@ async def mx_verdict(email: str) -> str:
     if hit and hit[1] > now:
         return hit[0]
 
+    ttl = _MX_CACHE_TTL
     try:
         answers = await _resolve(domain, "MX")
         verdict = classify_mx_hosts(r.exchange for r in answers)
     except dns.resolver.NXDOMAIN:
-        verdict = MX_NONE
+        verdict, ttl = MX_NONE, _MX_ERROR_TTL
     except dns.resolver.NoAnswer:
-        # No MX published: RFC 5321 falls back to the A record for delivery.
-        try:
-            await _resolve(domain, "A")
-            verdict = MX_OK
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-            verdict = MX_NONE
-        except Exception:
-            verdict = MX_OK
+        verdict, ttl = await _implicit_mx(domain)
     except Exception:
-        verdict = MX_OK
+        verdict, ttl = MX_OK, _MX_ERROR_TTL
 
-    if len(_mx_cache) >= _MX_CACHE_MAX:
-        _mx_cache.clear()
-    _mx_cache[domain] = (verdict, now + _MX_CACHE_TTL)
+    # FIFO-evict one entry when full (dicts keep insertion order) — a flood of
+    # junk domains must not wipe the whole cache at once.
+    while len(_mx_cache) >= _MX_CACHE_MAX:
+        _mx_cache.pop(next(iter(_mx_cache)))
+    _mx_cache[domain] = (verdict, now + ttl)
     return verdict

@@ -103,6 +103,36 @@ class TestMxVerdict:
         monkeypatch.setattr(ep, "_resolve", no_mx_but_a)
         assert asyncio.run(ep.mx_verdict("u@a-record-only.example")) == ep.MX_OK
 
+    def test_no_mx_falls_back_to_aaaa_record(self, monkeypatch):
+        dns = pytest.importorskip("dns")
+        import dns.resolver
+
+        async def ipv6_only(domain, rtype):
+            if rtype == "AAAA":
+                return ["::1"]
+            raise dns.resolver.NoAnswer()
+
+        monkeypatch.setattr(ep, "_resolve", ipv6_only)
+        assert asyncio.run(ep.mx_verdict("u@ipv6-only.example")) == ep.MX_OK
+
+    def test_error_verdicts_cached_briefly(self, monkeypatch):
+        dns = pytest.importorskip("dns")
+        import dns.resolver
+
+        async def nx(domain, rtype):
+            raise dns.resolver.NXDOMAIN()
+
+        monkeypatch.setattr(ep, "_resolve", nx)
+        assert asyncio.run(ep.mx_verdict("u@transient-blip.example")) == ep.MX_NONE
+        import time
+        _, expiry = ep._mx_cache["transient-blip.example"]
+        # A transient NXDOMAIN must not pin the lockout for the full hour.
+        assert expiry - time.monotonic() <= ep._MX_ERROR_TTL + 1
+
+    def test_mx_blocklist_loaded_from_file(self):
+        assert "10minutemail.com" in ep._DISPOSABLE_MX
+        assert len(ep._DISPOSABLE_MX) >= 10
+
     def test_verdict_is_cached_per_domain(self, monkeypatch):
         pytest.importorskip("dns")
         calls = []
