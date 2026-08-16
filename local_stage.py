@@ -357,8 +357,18 @@ def release_key(key):
         left = _refs.get(key, 0) - 1
         if left > 0:
             _refs[key] = left
-        else:
-            _refs.pop(key, None)
+            return
+        _refs.pop(key, None)
+
+    # The clock restarts when the last job lets go, not when the copy was made.
+    # Without this the TTL is "12h since the copy", which is a different promise
+    # and breaks in the one case that matters: a render longer than the TTL is
+    # correctly kept while it runs, then expires on the very next sweep, so the
+    # re-run it was cached for pays the full slow-filesystem copy again.
+    try:
+        os.utime(_key_dir(key), None)
+    except OSError:
+        pass  # never staged, or already evicted — nothing to date
 
 
 def sweep(now=None, log=print):

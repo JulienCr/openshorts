@@ -2017,10 +2017,10 @@ async def process_batch_endpoint(request: Request):
     api_base = os.environ.get("PUBLIC_API_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
 
     batch_id = str(uuid.uuid4())
-    created, skipped = [], []
+    created, skipped, resolved = [], [], []
     for raw in raw_paths:
         try:
-            input_path = _resolve_local_ingest(raw)
+            resolved.append((raw, _resolve_local_ingest(raw)))
         except HTTPException as e:
             # A file that vanished between the listing and the submit must not
             # refuse the other twenty-nine. A traversal or a disabled feature is
@@ -2030,6 +2030,11 @@ async def process_batch_endpoint(request: Request):
                 continue
             raise
 
+    # Resolution finishes before anything is created, so a rejected batch really
+    # is a batch that did not start. Registering as we went meant a traversal on
+    # entry twelve returned a 400 with no job ids while entries one to eleven were
+    # already rendering — invisible work the caller would then duplicate on retry.
+    for raw, input_path in resolved:
         job_id = str(uuid.uuid4())
         job_output_dir = os.path.join(OUTPUT_DIR, job_id)
         os.makedirs(job_output_dir, exist_ok=True)

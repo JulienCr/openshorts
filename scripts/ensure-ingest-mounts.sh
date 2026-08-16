@@ -60,14 +60,28 @@ while read -r src mountpoint fstype options; do
     fi
 done <<< "$INGEST_MOUNTS"
 
-if [ "$mounted_any" = "1" ] && [ -n "${ON_MOUNT_CMD:-}" ]; then
-    echo "Mount appeared — running: $ON_MOUNT_CMD"
+# A pending marker, because "did a mount just happen" is the wrong question on
+# every tick but the first. This unit is ordered after local-fs.target only, so at
+# boot it can easily mount the drive before dockerd is listening; ON_MOUNT_CMD
+# then fails, and on the next tick the drive is already mounted, mounted_any is 0,
+# and nothing would ever retry — the backend stays down while the timer keeps
+# cheerfully firing. The marker lives in /run, so it is cleared by a reboot, which
+# is exactly right: a fresh boot re-mounts and re-arms on its own.
+PENDING_FLAG="${INGEST_PENDING_FLAG:-/run/openshorts-ingest-start-pending}"
+
+if [ -n "${ON_MOUNT_CMD:-}" ] && { [ "$mounted_any" = "1" ] || [ -f "$PENDING_FLAG" ]; }; then
+    # Armed *before* the attempt: a command that hangs and gets killed must still
+    # be retried, and a marker written only on failure would be lost with it.
+    : > "$PENDING_FLAG" 2>/dev/null
+    echo "Mounts present — running: $ON_MOUNT_CMD"
     # `up -d` and not `start`: a bind mount is resolved when the container is
     # created, so a container created against the old (absent or empty) path
     # would keep seeing it. Compose recreates it when the mount config differs
-    # and is a no-op when it does not.
-    if ! sh -c "$ON_MOUNT_CMD"; then
-        echo "ON_MOUNT_CMD failed — the backend is still down." >&2
+    # and is a no-op when it does not — which is what makes retrying free.
+    if sh -c "$ON_MOUNT_CMD"; then
+        rm -f "$PENDING_FLAG"
+    else
+        echo "ON_MOUNT_CMD failed — retrying on the next tick." >&2
         status=1
     fi
 fi

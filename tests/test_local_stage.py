@@ -227,3 +227,27 @@ def test_release_drops_the_reference(stage, tmp_path):
     staged = local_stage.acquire(_source(tmp_path))
     local_stage.release(staged)
     assert local_stage._refs == {}
+
+
+def test_release_restarts_the_ttl_clock(stage, tmp_path):
+    """A render longer than the TTL must not expire the moment it finishes."""
+    src = _source(tmp_path)
+    staged = local_stage.acquire(src)
+    key_dir = os.path.dirname(staged)
+    # Pretend the copy was made 13h ago and the job has been reading it since.
+    old = time.time() - 13 * 3600
+    os.utime(key_dir, (old, old))
+
+    local_stage.sweep(now=time.time(), log=lambda _m: None)
+    assert os.path.isfile(staged), "an entry still in use must survive its TTL"
+
+    local_stage.release(staged)
+    local_stage.sweep(now=time.time(), log=lambda _m: None)
+    # The TTL is "since last use", so letting go must restart it — otherwise the
+    # copy dies on the next sweep and the re-run it exists for pays full price.
+    assert os.path.isfile(staged)
+
+
+def test_release_of_an_unstaged_source_is_harmless(stage, tmp_path):
+    local_stage.release_key("never-staged")  # no directory to touch
+    assert local_stage._refs == {}
