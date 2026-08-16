@@ -27,6 +27,11 @@ from s3_uploader import upload_job_artifacts, list_all_clips, upload_actor_to_s3
 
 load_dotenv()
 
+# Imported after load_dotenv: it freezes its LOCAL_STAGE_* settings at import time,
+# so importing it with the other modules above would read the environment before
+# the .env file has been applied.
+import local_stage
+
 # Constants
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
@@ -339,9 +344,27 @@ publish_jobs: Dict[str, Dict] = {}  # {publish_id: {status, result, error}}
 # Semester to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
+# Batch jobs (a folder of recordings submitted in one go) get their own queue and
+# their own cap, because thirty of them must never make a file you launched by
+# hand wait twenty minutes. A second semaphore taken *inside* run_job_wrapper
+# would have done the opposite: the dispatcher hands out a global slot before the
+# job runs, so five queued batch jobs would each hold a slot while four of them
+# block on the batch cap, and the interactive job — dequeued later — would find
+# nothing free. A PriorityQueue does not preempt, so the priority would have been
+# decorative. Two queues, and the global semaphore always taken LAST, means the
+# batch lane can never hold more than LOCAL_BATCH_CONCURRENCY global slots.
+BATCH_PRIORITY = 3
+LOCAL_BATCH_CONCURRENCY = int(os.environ.get("LOCAL_BATCH_CONCURRENCY", "1"))
+batch_queue = asyncio.PriorityQueue()
+batch_semaphore = asyncio.Semaphore(LOCAL_BATCH_CONCURRENCY)
+
 
 def _enqueue_job(job_id: str, priority: int = 2):
-    job_queue.put_nowait((priority, next(_job_seq), job_id))
+    # The priority picks the lane, which is what lets _resume_interrupted_jobs put
+    # a batch job back where it belongs without knowing about lanes at all: it
+    # already replays the priority it read from the manifest.
+    queue = batch_queue if priority >= BATCH_PRIORITY else job_queue
+    queue.put_nowait((priority, next(_job_seq), job_id))
 
 def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     """
@@ -520,12 +543,18 @@ MAX_RESUME_ATTEMPTS = 2
 
 
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
-                           webhook_url=None, webhook_secret=None, base_url=None):
+                           webhook_url=None, webhook_secret=None, base_url=None,
+                           source_path=None, name=None, batch_id=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         with open(path, "w") as f:
             json.dump({
                 "cmd": cmd, "priority": priority,
+                # A local_path job that resumes without these loses its preview
+                # (/api/source has nothing to serve), its staged copy, and its
+                # place in the batch strip — a redeploy halfway through thirty
+                # files being exactly when the grouping matters most.
+                "source_path": source_path, "name": name, "batch_id": batch_id,
                 "user_id": None if user_id is None else str(user_id),
                 "reservation_id": reservation_id,
                 "watermark": bool(watermark), "attempts": 0,
@@ -644,6 +673,9 @@ def _resume_interrupted_jobs() -> set:
             'webhook_url': m.get("webhook_url"),
             'webhook_secret': m.get("webhook_secret"),
             'base_url': m.get("base_url"),
+            'source_path': m.get("source_path"),
+            'name': m.get("name"),
+            'batch_id': m.get("batch_id"),
         }
         if reservation_id:
             keep_reservations.add(str(reservation_id))
@@ -722,6 +754,12 @@ def _enforce_output_size_cap():
     for _mtime, path, job_id in candidates:
         if used <= cap:
             break
+        # Never the job that is writing right now. A batch of thirty is exactly
+        # the shape that crosses OUTPUT_MAX_GB mid-run, and rmtree-ing a live job's
+        # directory deletes the work under it — it does not even free the space,
+        # since main.py keeps writing to the open fds.
+        if (jobs.get(job_id) or {}).get('status') in ('queued', 'processing'):
+            continue
         size = _dir_size(path)
         shutil.rmtree(path, ignore_errors=True)
         jobs.pop(job_id, None)
@@ -767,46 +805,68 @@ async def cleanup_jobs():
             _enforce_output_size_cap()
             _enforce_uploads_size_cap()
 
-            # Cleanup SaaSShorts jobs from memory
-            try:
-                saas_expired = [
-                    jid for jid, jdata in list(saas_jobs.items())
-                    if jdata.get("status") in ("completed", "failed")
-                    and jdata.get("output_dir")
-                    and os.path.isdir(jdata["output_dir"])
-                    and now - os.path.getmtime(jdata["output_dir"]) > JOB_RETENTION_SECONDS
-                ]
-                for jid in saas_expired:
-                    del saas_jobs[jid]
-            except NameError:
-                pass
+            # Staged copies of slow sources: expire what nothing has touched for
+            # LOCAL_STAGE_TTL_SECONDS, then trim to the cap. Carries its own
+            # "disabled means disabled" guard, unlike the two sweeps below did.
+            local_stage.sweep()
 
-            # Cleanup Uploads
-            for filename in os.listdir(UPLOAD_DIR):
-                file_path = os.path.join(UPLOAD_DIR, filename)
+            # The two age sweeps below need the same `> 0` guard as the one on
+            # OUTPUT_DIR above. Without it `now - mtime > 0` is true for every
+            # file, so the self-host default of 0 — which reads as "keep
+            # forever" — deleted every upload within five minutes of it landing,
+            # the source of a running job included.
+            if JOB_RETENTION_SECONDS > 0:
+                # Cleanup SaaSShorts jobs from memory
                 try:
-                    if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
-                         os.remove(file_path)
-                except Exception: pass
+                    saas_expired = [
+                        jid for jid, jdata in list(saas_jobs.items())
+                        if jdata.get("status") in ("completed", "failed")
+                        and jdata.get("output_dir")
+                        and os.path.isdir(jdata["output_dir"])
+                        and now - os.path.getmtime(jdata["output_dir"]) > JOB_RETENTION_SECONDS
+                    ]
+                    for jid in saas_expired:
+                        del saas_jobs[jid]
+                except NameError:
+                    pass
+
+                # Cleanup Uploads
+                for filename in os.listdir(UPLOAD_DIR):
+                    file_path = os.path.join(UPLOAD_DIR, filename)
+                    try:
+                        if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
+                             os.remove(file_path)
+                    except Exception: pass
 
         except Exception as e:
             print(f"⚠️ Cleanup error: {e}")
 
-async def process_queue():
-    """Background worker to process jobs from the queue with concurrency limit."""
-    print(f"🚀 Job Queue Worker started with {MAX_CONCURRENT_JOBS} concurrent slots.")
+async def process_queue(queue=None, lane_semaphore=None, label="interactive"):
+    """Background worker to process jobs from the queue with concurrency limit.
+
+    One instance per lane. `lane_semaphore` is the lane's own cap and is acquired
+    BEFORE the global one — never the other way round. That ordering is the whole
+    safety argument: the global semaphore is always the last resource taken, so
+    nobody ever waits for it while holding something another lane needs.
+    """
+    queue = job_queue if queue is None else queue
+    cap = MAX_CONCURRENT_JOBS if lane_semaphore is None else min(
+        MAX_CONCURRENT_JOBS, LOCAL_BATCH_CONCURRENCY)
+    print(f"🚀 Job Queue Worker [{label}] started with {cap} concurrent slots.")
     while True:
         try:
             # Wait for a job (priority, seq, job_id) — lowest priority first.
-            _priority, _seq, job_id = await job_queue.get()
+            _priority, _seq, job_id = await queue.get()
 
+            if lane_semaphore is not None:
+                await lane_semaphore.acquire()
             # Acquire semaphore slot (waits if max jobs are running)
             await concurrency_semaphore.acquire()
-            print(f"🔄 Acquired slot for job: {job_id}")
+            print(f"🔄 Acquired slot for job: {job_id} [{label}]")
 
             # Process in background task to not block the loop (allowing other slots to fill)
-            asyncio.create_task(run_job_wrapper(job_id))
-            
+            asyncio.create_task(run_job_wrapper(job_id, queue, lane_semaphore))
+
         except Exception as e:
             print(f"❌ Queue dispatch error: {e}")
             await asyncio.sleep(1)
@@ -838,8 +898,9 @@ async def _track_proxy_usage(job_id):
             print(f"⚠️ Proxy alert failed: {e}")
 
 
-async def run_job_wrapper(job_id):
+async def run_job_wrapper(job_id, queue=None, lane_semaphore=None):
     """Wrapper to run job and release semaphore"""
+    queue = job_queue if queue is None else queue
     try:
         job = jobs.get(job_id)
         if job:
@@ -868,7 +929,9 @@ async def run_job_wrapper(job_id):
         await _notify_clip_activity(job_id)
         # Always release semaphore and mark queue task done
         concurrency_semaphore.release()
-        job_queue.task_done()
+        if lane_semaphore is not None:
+            lane_semaphore.release()
+        queue.task_done()
         print(f"✅ Released slot for job: {job_id}")
 
 
@@ -1177,6 +1240,8 @@ async def lifespan(app: FastAPI):
     _resumed_reservation_ids = _resume_interrupted_jobs()
     # Start worker and cleanup
     worker_task = asyncio.create_task(process_queue())
+    batch_worker_task = asyncio.create_task(
+        process_queue(batch_queue, batch_semaphore, "batch"))
     cleanup_task = asyncio.create_task(cleanup_jobs())
     if BILLING_ENABLED:
         await cloud.setup_async(app, keep_reservation_ids=_resumed_reservation_ids)
@@ -1294,17 +1359,50 @@ def enqueue_output(out, job_id):
     finally:
         out.close()
 
+async def _stage_source(job_id, job_data):
+    """Copy a slow-filesystem source to local disk; return the staged path or None.
+
+    Runs here rather than at submit time because this is *after* the concurrency
+    slot was acquired: a 30-file batch then copies one source at a time instead of
+    trying to land 240 GB inside an HTTP handler. Nothing is mutated on the job
+    record's cmd, so the resume manifest keeps pointing at the real source.
+    """
+    source = job_data.get('source_path')
+    if not source or not local_stage.is_slow(source):
+        return None
+
+    def _log(msg):
+        print(f"📝 [Job Output] {msg}")
+        if job_id in jobs:
+            jobs[job_id]['logs'].append(msg)
+
+    staged = await asyncio.get_event_loop().run_in_executor(
+        local_stage.STAGE_POOL, local_stage.acquire, source, _log)
+    # acquire() hands back the source itself when it gave up (no space, read
+    # error): nothing was referenced, so there is nothing to release either.
+    return staged if staged != source else None
+
+
 async def run_job(job_id, job_data):
     """Executes the subprocess for a specific job."""
-    
+
     cmd = job_data['cmd']
     env = job_data['env']
     output_dir = job_data['output_dir']
-    
+
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
+
+    staged = await _stage_source(job_id, job_data)
+    if staged:
+        # Substituted by value, not by the index of "-i": the day another flag is
+        # added before it, an index would silently rewrite the wrong argument.
+        source = job_data['source_path']
+        cmd = [staged if arg == source else arg for arg in cmd]
+        jobs[job_id]['staged_path'] = staged
+
     print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
-    
+
     try:
         process = subprocess.Popen(
             cmd,
@@ -1403,6 +1501,12 @@ async def run_job(job_id, job_data):
         # Exception text can embed URLs with credentials (e.g. the proxy URL
         # inside a yt-dlp/httpx error) — scrub before it reaches client logs.
         jobs[job_id]['logs'].append(_scrub_secrets(f"Execution error: {str(e)}"))
+    finally:
+        # Hand the staged copy back to the cache: it survives for LOCAL_STAGE_TTL,
+        # so a re-run or a resume of the same source skips the copy, but it is now
+        # evictable if the next job needs the room.
+        if staged:
+            local_stage.release(staged)
 
 @app.get("/health")
 async def health():
@@ -1484,7 +1588,37 @@ async def list_local_files():
     entries.sort(key=lambda e: e["mtime"], reverse=True)
     # Surfaced rather than silently dropped: a picker that quietly stops at N
     # looks like the missing files simply are not there.
-    return {"files": entries, "truncated": truncated}
+    return {"files": entries, "truncated": truncated,
+            "sources": _local_ingest_sources(root)}
+
+
+def _local_ingest_sources(root):
+    """One entry per mounted source folder: {name, fstype, entries}.
+
+    A broken mount is indistinguishable from an empty folder in a flat file list,
+    and that is not hypothetical — a cloud drive that was not mounted when the
+    container started made one of two sources vanish from the picker for days,
+    looking exactly like "there is nothing in there". `entries` counts *every*
+    directory entry, not just videos, because a source folder with literally
+    nothing in it is almost always a mount that did not happen.
+    """
+    out = []
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(root, name)
+        if not os.path.isdir(path) or name.startswith((".", "$")):
+            continue
+        try:
+            count = len(os.listdir(path))
+        except OSError:
+            count = 0
+        out.append({"name": name,
+                    "fstype": local_stage.fstype_for(path),
+                    "entries": count})
+    return out
 
 async def _probe_youtube_quality(url: str) -> dict:
     """Run quality_probe.py in a worker thread; {} on any failure (fail-open)."""
@@ -1583,6 +1717,73 @@ def _resolve_local_ingest(raw_path: str) -> str:
     if not os.path.isfile(resolved):
         raise HTTPException(status_code=404, detail=f"No such file: {raw_path}")
     return resolved
+
+
+def _build_job_env(api_key: str, layouts, job_id: str) -> dict:
+    """Environment for the main.py subprocess: server env + caller key + layouts.
+
+    Layouts are per job and the renderer reads them at import time in the
+    subprocess, so they have to be in place before Popen — the same path
+    WATERMARK already takes.
+    """
+    env = os.environ.copy()
+    env["GEMINI_API_KEY"] = api_key  # Override with key from request
+    chosen = layout_env(layouts)
+    env.update(chosen)
+    if chosen:
+        print(f"[layouts] job={job_id} enabled={sorted(chosen)}")
+    return env
+
+
+def _register_job(job_id: str, *, cmd, env, output_dir, attestation, priority,
+                  user_id=None, reservation_id=None, webhook_url=None,
+                  webhook_secret=None, base_url="", source_path=None,
+                  name=None, batch_id=None) -> None:
+    """The one place a job becomes real: memory record, .owner, manifest, queue.
+
+    Batch submission goes through here too rather than repeating the sequence, so
+    it cannot quietly drift from /api/process on ownership, the resume manifest or
+    the completion webhook — three things that fail invisibly when they differ.
+    """
+    jobs[job_id] = {
+        'status': 'queued',
+        'logs': [f"Job {job_id} queued."],
+        'cmd': cmd,
+        'env': env,
+        'output_dir': output_dir,
+        'attestation': attestation,
+        'user_id': user_id,
+        'reservation_id': reservation_id,
+        'watermark': env.get("WATERMARK") == "1",
+        'webhook_url': webhook_url,
+        'webhook_secret': webhook_secret,
+        'base_url': base_url,
+        'source_path': source_path,
+        # What the user picked, for the batch strip's label. The browser knows it
+        # too, but a resumed job has to be nameable after a redeploy.
+        'name': name,
+        'batch_id': batch_id,
+    }
+
+    # Persist the owner so recovered jobs keep their multi-tenant guard after a
+    # restart (see _recover_jobs_from_disk).
+    if user_id is not None:
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            with open(os.path.join(output_dir, ".owner"), "w") as f:
+                f.write(str(user_id))
+        except Exception as e:
+            print(f"⚠️ Could not persist job owner for {job_id}: {e}")
+
+    # Resume manifest: enough to re-run this job if the container dies mid-flight
+    # (a redeploy). No secrets — the env is rebuilt from os.environ on resume.
+    _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
+                           watermark=jobs[job_id]['watermark'],
+                           webhook_url=webhook_url, webhook_secret=webhook_secret,
+                           base_url=base_url, source_path=source_path,
+                           name=name, batch_id=batch_id)
+
+    _enqueue_job(job_id, priority)
 
 
 @app.post("/api/process")
@@ -1684,16 +1885,7 @@ async def process_endpoint(
 
     # Prepare Command
     cmd = ["python", "-u", "main.py"] # -u for unbuffered
-    env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key # Override with key from request
-
-    # Optional layouts are per job. The renderer reads these at import time in
-    # the subprocess, so they must be set before Popen — same path WATERMARK
-    # already takes.
-    chosen = layout_env(layouts)
-    env.update(chosen)
-    if chosen:
-        print(f"[layouts] job={job_id} enabled={sorted(chosen)}")
+    env = _build_job_env(api_key, layouts, job_id)
 
     input_path = None
     if url:
@@ -1744,45 +1936,124 @@ async def process_endpoint(
     # caller connected to.
     api_base = os.environ.get("PUBLIC_API_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
 
-    # Enqueue Job
-    jobs[job_id] = {
-        'status': 'queued',
-        'logs': [f"Job {job_id} queued."],
-        'cmd': cmd,
-        'env': env,
-        'output_dir': job_output_dir,
-        'attestation': attestation,
-        'user_id': user_id,
-        'reservation_id': reservation_id,
-        'watermark': env.get("WATERMARK") == "1",
-        'webhook_url': webhook_url,
-        'webhook_secret': webhook_secret,
-        'base_url': api_base,
-        # Only for local_path jobs: nothing was copied into UPLOAD_DIR, so the
-        # preview endpoint has no upload to glob for and needs the real path.
-        'source_path': input_path if local_path else None,
-    }
-
-    # Persist the owner so recovered jobs keep their multi-tenant guard after a
-    # restart (see _recover_jobs_from_disk).
-    if user_id is not None:
-        try:
-            os.makedirs(job_output_dir, exist_ok=True)
-            with open(os.path.join(job_output_dir, ".owner"), "w") as f:
-                f.write(str(user_id))
-        except Exception as e:
-            print(f"⚠️ Could not persist job owner for {job_id}: {e}")
-
-    # Resume manifest: enough to re-run this job if the container dies mid-flight
-    # (a redeploy). No secrets — the env is rebuilt from os.environ on resume.
-    _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
-                           watermark=jobs[job_id]['watermark'],
-                           webhook_url=webhook_url, webhook_secret=webhook_secret,
-                           base_url=api_base)
-
-    _enqueue_job(job_id, priority)
+    _register_job(job_id, cmd=cmd, env=env, output_dir=job_output_dir,
+                  attestation=attestation, priority=priority,
+                  user_id=user_id, reservation_id=reservation_id,
+                  webhook_url=webhook_url, webhook_secret=webhook_secret,
+                  base_url=api_base,
+                  # Only for local_path jobs: nothing was copied into UPLOAD_DIR,
+                  # so the preview endpoint has no upload to glob for and needs
+                  # the real path.
+                  source_path=input_path if local_path else None,
+                  name=local_path or url or os.path.basename(input_path or ""))
 
     return {"job_id": job_id, "status": "queued"}
+
+
+# Enough to fill a night of rendering; a stray 500-name payload would otherwise
+# create 500 output directories before anyone noticed.
+LOCAL_BATCH_MAX_FILES = int(os.environ.get("LOCAL_BATCH_MAX_FILES", "50"))
+
+
+@app.post("/api/process/batch")
+async def process_batch_endpoint(request: Request):
+    """Queue several sources that already sit on the server, in one submission.
+
+    A separate endpoint rather than a list parameter on /api/process: the response
+    is a different shape, and every existing caller — the dashboard, the CLI, the
+    MCP tools that re-enter this app in-process — reads `job_id` off the top
+    level. Its surface is also strictly smaller: no upload, no URL, no quality
+    gate, no webhook.
+
+    Self-host only, and not by convention: local_ingest_enabled() is false the
+    moment billing is on, which is also why no metering call appears below —
+    _resolve_local_ingest would 403 long before a paying tenant got here.
+    """
+    if not local_ingest_enabled():
+        raise HTTPException(status_code=403,
+                            detail="Local path ingest is not enabled on this server.")
+
+    api_key = await resolve_gemini(request)
+    if not api_key:
+        raise gemini_missing_error()
+
+    body = await request.json()
+    if not body.get("acknowledged"):
+        raise HTTPException(status_code=400,
+                            detail="You must confirm you own the content or have rights to process it.")
+
+    # Preserve the order the user checked things in; drop repeats.
+    raw_paths, seen = [], set()
+    for p in (body.get("local_paths") or []):
+        if isinstance(p, str) and p and p not in seen:
+            seen.add(p)
+            raw_paths.append(p)
+    if not raw_paths:
+        raise HTTPException(status_code=400, detail="local_paths is empty.")
+    if len(raw_paths) > LOCAL_BATCH_MAX_FILES:
+        raise HTTPException(status_code=400,
+                            detail=f"At most {LOCAL_BATCH_MAX_FILES} files per batch.")
+
+    output_format = body.get("output_format")
+    if output_format not in ("vertical", "horizontal", "square"):
+        output_format = "auto"
+    layouts = body.get("layouts")
+    layouts = layouts if isinstance(layouts, list) else []
+
+    client_ip = request.client.host if request.client else "unknown"
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        client_ip = fwd.split(",")[0].strip()
+    # One tick of one checkbox covers the whole submission, so the attestation is
+    # captured once and shared — recording N different timestamps for a single
+    # user action would be fiction.
+    attestation = {
+        "acknowledged": True,
+        "ip": client_ip,
+        "user_agent": request.headers.get("user-agent", ""),
+        "timestamp": time.time(),
+        "source": "local_path",
+    }
+    api_base = os.environ.get("PUBLIC_API_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
+
+    batch_id = str(uuid.uuid4())
+    created, skipped, resolved = [], [], []
+    for raw in raw_paths:
+        try:
+            resolved.append((raw, _resolve_local_ingest(raw)))
+        except HTTPException as e:
+            # A file that vanished between the listing and the submit must not
+            # refuse the other twenty-nine. A traversal or a disabled feature is
+            # a caller error, though, and stops everything.
+            if e.status_code == 404:
+                skipped.append({"name": raw, "error": e.detail})
+                continue
+            raise
+
+    # Resolution finishes before anything is created, so a rejected batch really
+    # is a batch that did not start. Registering as we went meant a traversal on
+    # entry twelve returned a 400 with no job ids while entries one to eleven were
+    # already rendering — invisible work the caller would then duplicate on retry.
+    for raw, input_path in resolved:
+        job_id = str(uuid.uuid4())
+        job_output_dir = os.path.join(OUTPUT_DIR, job_id)
+        os.makedirs(job_output_dir, exist_ok=True)
+
+        cmd = ["python", "-u", "main.py", "-i", input_path, "-o", job_output_dir]
+        if output_format != "auto":
+            cmd.extend(["--format", output_format])
+
+        _register_job(job_id, cmd=cmd,
+                      env=_build_job_env(api_key, layouts, job_id),
+                      output_dir=job_output_dir, attestation=attestation,
+                      priority=BATCH_PRIORITY, base_url=api_base,
+                      source_path=input_path, name=raw, batch_id=batch_id)
+        created.append({"job_id": job_id, "name": raw})
+
+    print(f"[attestation] batch={batch_id} ip={attestation['ip']} "
+          f"files={len(created)} skipped={len(skipped)} ack=true")
+    return {"batch_id": batch_id, "jobs": created, "skipped": skipped}
+
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str, request: Request):
@@ -1823,7 +2094,13 @@ async def get_source_video(job_id: str):
         resolved = os.path.realpath(source)
         if os.path.commonpath([resolved, root]) == root and os.path.isfile(resolved):
             media_type = mimetypes.guess_type(resolved)[0] or "video/mp4"
-            return FileResponse(resolved, media_type=media_type)
+            # Authorisation is still decided on the ORIGINAL, exactly as before —
+            # the staged copy is not a second path to allow, it is the same file
+            # under a name we compute ourselves (sha256 of realpath+size+mtime)
+            # and that no caller can influence. Serving it keeps the preview's
+            # range requests off the slow link the pipeline is already saturating.
+            return FileResponse(local_stage.staged_path_for(resolved) or resolved,
+                                media_type=media_type)
 
     raise HTTPException(status_code=404, detail="Source not found")
 
@@ -1924,6 +2201,57 @@ def _require_local_library():
 
 
 if not BILLING_ENABLED:
+    @app.get("/api/jobs")
+    async def list_jobs(batch_id: Optional[str] = None, ids: Optional[str] = None):
+        """Live state of several jobs at once — what the batch strip polls.
+
+        Pure read of the in-memory record, no disk at all: this is polled every
+        few seconds while thirty jobs are in flight, and _local_project would stat
+        every clip of every project on each tick. `clip_count` comes from the
+        partial result run_job already refreshes every 2s, so the strip shows real
+        progress rather than a binary.
+
+        `ids` is what the UI uses, and `batch_id` is for callers that only have
+        the batch. They are not equivalent across a restart: a job that had
+        already finished is rebuilt by _recover_jobs_from_disk, which reads the
+        metadata on disk and knows nothing of a batch — its resume manifest, the
+        one place batch_id was written, is deleted the moment a job reaches a
+        terminal state. Filtering by batch_id would therefore drop exactly the
+        finished jobs, and a roster row with no answer would sit at "queued"
+        forever. Asking by id survives that, and an id nothing knows about is
+        answered as "unknown" rather than omitted, so the caller can stop waiting
+        on it instead of guessing from a hole in the list.
+
+        Registered self-host only, like the rest of the local library: it has no
+        per-user scoping, so on a shared deployment it would hand every visitor
+        everyone else's jobs.
+        """
+        _require_local_library()
+
+        def _row(job_id, job):
+            logs = job.get('logs') or []
+            return {
+                "job_id": job_id,
+                "name": job.get('name'),
+                "status": job.get('status'),
+                "batch_id": job.get('batch_id'),
+                "clip_count": len(((job.get('result') or {}).get('clips')) or []),
+                "last_log": logs[-1][:120] if logs else None,
+            }
+
+        if ids is not None:
+            out = []
+            for job_id in [i for i in ids.split(",") if i][:100]:
+                job = jobs.get(job_id)
+                out.append(_row(job_id, job) if job else {
+                    "job_id": job_id, "name": None, "status": "unknown",
+                    "batch_id": None, "clip_count": 0, "last_log": None,
+                })
+            return {"jobs": out}
+
+        return {"jobs": [_row(jid, j) for jid, j in list(jobs.items())
+                         if batch_id is None or j.get('batch_id') == batch_id]}
+
     @app.get("/api/projects")
     async def list_local_projects():
         """Re-openable projects, read straight from OUTPUT_DIR."""
@@ -1974,14 +2302,26 @@ if not BILLING_ENABLED:
         if not p:
             raise HTTPException(status_code=404, detail="Project not found")
         result = {"clips": p["shorts"], "cost_analysis": p["cost_analysis"]}
+        # Carry the source over instead of blanking it. Reopening a job that just
+        # finished — the normal move on a batch — used to replace its record with
+        # one that has no source_path, and /api/source then 404s on a preview that
+        # was working a second earlier.
+        previous = jobs.get(job_id) or {}
+        source_path = previous.get('source_path')
         jobs[job_id] = {
             "status": "completed",
             "logs": ["♻️ Project restored from your library."],
             "output_dir": os.path.join(OUTPUT_DIR, job_id),
             "user_id": None,
             "result": result,
+            "source_path": source_path,
+            "name": previous.get('name'),
+            "batch_id": previous.get('batch_id'),
         }
-        return {"job_id": job_id, "result": result, "project_state": p["state"] or None}
+        return {"job_id": job_id, "result": result,
+                "project_state": p["state"] or None,
+                "has_source": bool(source_path) or bool(
+                    glob.glob(os.path.join(UPLOAD_DIR, f"{job_id}_*")))}
 
     @app.put("/api/projects/{job_id}/state")
     async def save_local_project_state(job_id: str, request: Request):

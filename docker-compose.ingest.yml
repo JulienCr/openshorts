@@ -21,11 +21,55 @@ services:
     volumes:
       # Read-only deliberately: the pipeline only ever reads its source, and ro
       # turns "we checked the code doesn't delete it" into a kernel guarantee.
-      # `:?` fails the command loudly when a variable is unset rather than
-      # silently mounting some default directory as an ingest root.
-      - ${REPLAY_DIR:?set REPLAY_DIR to the folder holding your recordings}:/ingest/replays:ro
-      - ${INBOX_DIR:?set INBOX_DIR to the folder you drop new sources into}:/ingest/inbox:ro
+      #
+      # `:?` fails the command loudly when a variable is unset — but it only
+      # checks the *variable*, not that the path is a real mount, and that gap
+      # cost a silent outage: on a WSL host whose source lived on a Google Drive
+      # letter, the drive was not mounted yet at container start, Docker created
+      # the missing directory on the host root, and the ingest tab quietly listed
+      # nothing from it for days. `create_host_path: false` is the other half:
+      # Compose now fails loudly instead of mounting an empty placeholder.
+      #
+      # It does NOT recover on its own, and `restart: unless-stopped` does not
+      # help. Measured both ways: with the source missing, `up -d` fails at
+      # container *creation* and `ps -a` lists nothing, so there is no container
+      # for a restart policy to act on; and a container created earlier, whose
+      # source later went away, stays `exited` after a failed start with no
+      # daemon retry. Bringing the backend back up once the drive appears is the
+      # job of ON_MOUNT_CMD in scripts/ensure-ingest-mounts.sh.
+      - type: bind
+        source: ${REPLAY_DIR:?set REPLAY_DIR to the folder holding your recordings}
+        target: /ingest/replays
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${INBOX_DIR:?set INBOX_DIR to the folder you drop new sources into}
+        target: /ingest/inbox
+        read_only: true
+        bind: { create_host_path: false }
     environment:
       # Presence of this is what enables the feature at all (app.py refuses the
       # local_path parameter when it is empty, and whenever billing is on).
       - LOCAL_INGEST_DIR=/ingest
+      #
+      # A source on a slow mount (9p/drvfs under WSL, cifs, a streamed cloud
+      # drive) is copied to local disk before the pipeline touches it. That is
+      # not one read being optimised: ffprobe, the audio extraction, the scene
+      # detector decoding the whole file, the layout picker's twelve seeks, then
+      # one decode per clip at extraction and another at reframe all go back over
+      # the wire. One sequential copy replaces the lot.
+      #
+      # The choice is automatic: local_stage reads the filesystem type from
+      # /proc/self/mountinfo, where a Docker bind mount reports the underlying
+      # superblock — so /ingest/replays shows up as 9p and /ingest/inbox as ext4,
+      # and only the first is copied. Set always/never to override.
+      # The copies land in ./stage inside the repo bind mount, so there is no
+      # extra volume to configure; point LOCAL_STAGE_DIR elsewhere for a
+      # dedicated NVMe.
+      # - LOCAL_STAGE=auto
+      # - LOCAL_STAGE_MAX_GB=50           # ~4 recordings of 3h, LRU eviction
+      # - LOCAL_STAGE_TTL_SECONDS=43200   # 12h since last use; <=0 disables the sweep
+      #
+      # Batch jobs (several files submitted at once) run in their own lane so a
+      # file you launch by hand never queues behind thirty of them.
+      # - LOCAL_BATCH_CONCURRENCY=1
