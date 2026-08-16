@@ -806,12 +806,18 @@ def finalize_clip_passthrough(input_video, final_output_video):
     return True
 
 
-def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
+def auto_caption_clip(clip_path, transcript, clip_start, clip_end, hook_text=None):
     """Burn the default caption style onto a finished clip.
 
     Captions are mandatory for short-form to land, but they were opt-in behind a
     modal and only 9% of delivered clips ever got them (prod audit, 25-jul-2026).
     So every clip now ships captioned by default.
+
+    ``hook_text`` is Gemini's ``viral_hook_text`` for this clip. When the style
+    preset enables the automatic hook, it is composited **in this same ffmpeg
+    pass** rather than in one of its own. That is a naming constraint, not a
+    speed tweak: the output name below is a contract, and a second pass would
+    have to invent a name outside it (see build_burn_command).
 
     The captioned file is written ALONGSIDE the clip as
     ``subtitled_<ts>_<clip>.mp4`` — the same convention /api/subtitle uses — so
@@ -828,7 +834,7 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
         return None  # silent video: nothing to caption
     try:
         import subtitles as _subs
-        style = _subs.AUTO_CAPTION_STYLE
+        style = _subs.resolve_caption_style()
         output_dir = os.path.dirname(clip_path)
         stem = os.path.basename(clip_path)
         generation_id = int(time.time())
@@ -856,7 +862,8 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
         # burn another's captions.
         ass_path = os.path.join(
             output_dir, f"autosubs_{generation_id}_{uuid.uuid4().hex[:8]}.ass")
-        out_path = os.path.join(output_dir, f"subtitled_{generation_id}_{stem}")
+        out_path = os.path.join(
+            output_dir, _subs.captioned_output_name(stem, generation_id))
 
         if not _subs.generate_ass(
                 transcript, clip_start, clip_end, ass_path,
@@ -869,12 +876,17 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
             print("   ℹ️ No words in range — clip ships without captions.")
             return None
 
-        _subs.burn_subtitles(
-            clip_path, ass_path, out_path,
-            alignment=style["alignment"], fontsize=style["font_size"],
-            font_name=style["font_name"], font_color=style["font_color"],
-            border_color=style["border_color"], border_width=style["border_width"])
-        print(f"   💬 Captions burned: {os.path.basename(out_path)}")
+        import hooks as _hooks
+        with _hooks.auto_hook_overlay(clip_path, hook_text, generation_id) as overlay:
+            _subs.burn_subtitles(
+                clip_path, ass_path, out_path,
+                alignment=style["alignment"], fontsize=style["font_size"],
+                font_name=style["font_name"], font_color=style["font_color"],
+                border_color=style["border_color"], border_width=style["border_width"],
+                **overlay)
+            hooked = bool(overlay)
+        print(f"   💬 Captions burned: {os.path.basename(out_path)}"
+              + (" (+ hook)" if hooked else ""))
         return out_path
     except Exception as e:
         print(f"   ⚠️ Auto-captions failed ({type(e).__name__}: {e}) — "
@@ -1589,8 +1601,11 @@ if __name__ == '__main__':
                         apply_watermark(clip_final_path)
                     if success:
                         # Captions last, so they sit on top of the watermark and
-                        # the canonical file stays clean for re-styling.
-                        auto_caption_clip(clip_final_path, transcript, start, end)
+                        # the canonical file stays clean for re-styling. The
+                        # hook rides the same pass — Gemini already wrote the
+                        # text, it just never reached the video.
+                        auto_caption_clip(clip_final_path, transcript, start, end,
+                                          hook_text=clip.get('viral_hook_text'))
                         print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
                     return success
                 finally:

@@ -1,3 +1,4 @@
+import contextlib
 import os
 import re
 import textwrap
@@ -141,6 +142,10 @@ def download_font_if_needed():
 
 # Hook visual styles. Each maps to box fill (RGBA, alpha 0 = no box), text
 # color, and an optional text outline (color, px) for box-less looks.
+# S/M/L is the vocabulary /api/hook and the style preset both speak; the
+# renderer needs a multiplier. One table so the two cannot disagree.
+HOOK_SIZE_SCALE = {"S": 0.8, "M": 1.0, "L": 1.3}
+
 HOOK_STYLES = {
     # White card, black serif text (original look).
     "classic": {"box": (255, 255, 255, 240), "text": (0, 0, 0), "outline": None, "shadow": True},
@@ -157,13 +162,117 @@ HOOK_STYLES = {
 }
 
 
-def create_hook_image(text, target_width, output_image_path="hook_overlay.png", font_scale=1.0, style="classic"):
+def probe_dimensions(video_path):
+    """(width, height) of a video, or None when it can't be read."""
+    try:
+        res = subprocess.check_output(
+            ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0',
+             video_path], stderr=subprocess.STDOUT, timeout=60).decode().strip()
+        dims = res.split('\n')[0].split('x')
+        return int(dims[0]), int(dims[1])
+    except Exception as e:
+        print(f"⚠️ Could not probe {video_path}: {e}")
+        return None
+
+
+def _draw_auto_hook(clip_path, hook_text):
+    """Draw this clip's automatic hook card. Returns (overlay kwargs, png path).
+
+    ``({}, None)`` means draw nothing: no hook text, the style preset leaves the
+    automatic hook off (the default, so a job without a preset renders exactly
+    as it did before this existed), or something went wrong. The caller is
+    midway through delivering a clip the user already paid for, so a hook that
+    cannot be drawn costs the hook, never the clip.
+    """
+    import style_preset
+
+    png_path = None
+    try:
+        hook = style_preset.resolve_hook_style()
+        if not hook["enabled"] or not hook_text:
+            return {}, None
+
+        dims = probe_dimensions(clip_path)
+        if not dims:
+            return {}, None
+        video_width, video_height = dims
+
+        # Same 90%-of-width budget /api/hook gives the card. Assigned before the
+        # call so a failure part-way through still leaves a path to clean up.
+        png_path = os.path.join(os.path.dirname(os.path.abspath(clip_path)),
+                                f"temp_autohook_{uuid.uuid4().hex[:8]}.png")
+        png_path, box_w, box_h = create_hook_image(
+            hook_text, int(video_width * 0.9), png_path,
+            font_scale=hook["font_scale"], style=hook["style"],
+            font_path=hook["font_path"])
+
+        return {
+            "overlay_png": png_path,
+            "overlay_xy": hook_overlay_geometry(video_width, video_height,
+                                                box_w, box_h, hook["position"]),
+            "overlay_until": hook["duration_seconds"],
+        }, png_path
+    except Exception as e:
+        print(f"⚠️ Automatic hook skipped ({type(e).__name__}: {e}) — "
+              f"clip ships without it.")
+        return {}, png_path
+
+
+@contextlib.contextmanager
+def auto_hook_overlay(clip_path, hook_text, generation_id):
+    """``burn_subtitles`` overlay kwargs for this clip's automatic hook, with the
+    scratch card removed on the way out.
+
+    Cleanup runs even when the burn raises — self-host treats output/ as the
+    permanent project library, so one leaked PNG per clip would accumulate there
+    forever.
+
+    The drawing happens BEFORE the yield, and nothing here catches what the body
+    raises. Wrapping the yield in `except Exception` looks equivalent and is
+    not: contextlib throws the body's exception in at the yield point, so
+    catching it and yielding again raises "generator didn't stop after throw()"
+    and the real ffmpeg error never reaches the caller.
+    """
+    overlay, png_path = _draw_auto_hook(clip_path, hook_text)
+    try:
+        yield overlay
+    finally:
+        if png_path and os.path.exists(png_path):
+            try:
+                os.remove(png_path)
+            except OSError:
+                pass
+
+
+def hook_overlay_geometry(video_width, video_height, box_w, box_h, position):
+    """Where the hook card lands on the frame, as (x, y).
+
+    Shared by /api/hook and the pipeline's automatic hook so the two placements
+    cannot drift apart — they were the same four lines copied twice.
+    """
+    x = (video_width - box_w) // 2
+    if position == "center":
+        y = (video_height - box_h) // 2
+    elif position == "bottom":
+        y = int(video_height * 0.70)  # Bottom 20% mark (approx)
+    else:
+        y = int(video_height * 0.20)  # Top 20% mark
+    return x, y
+
+
+def create_hook_image(text, target_width, output_image_path="hook_overlay.png", font_scale=1.0, style="classic", font_path=None):
     """
     Generates a hook overlay image using pixel-based wrapping.
     target_width: The max width the box should occupy (e.g. 85% of video)
     style: one of HOOK_STYLES (classic/dark/yellow/red/outline/outline_yellow)
+    font_path: override the bundled serif. The hook renders through PIL, on a
+        completely separate path from the libass/fontconfig one the captions
+        use, so setting one font across both takes two different knobs.
     """
-    download_font_if_needed()
+    if not font_path:
+        download_font_if_needed()
+        font_path = FONT_PATH
 
     look = HOOK_STYLES.get(style, HOOK_STYLES["classic"])
     box_fill = look["box"]
@@ -185,9 +294,9 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     font_size = int(base_font_size * font_scale)
     
     try:
-        font = ImageFont.truetype(FONT_PATH, font_size)
+        font = ImageFont.truetype(font_path, font_size)
     except Exception as e:
-        print(f"⚠️ Warning: Could not load font {FONT_PATH}, using default. Error: {e}")
+        print(f"⚠️ Warning: Could not load font {font_path}, using default. Error: {e}")
         font = ImageFont.load_default()
 
     # Emoji handling: render with an emoji-capable font if one exists,
@@ -362,17 +471,10 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
         img_path, box_w, box_h = create_hook_image(text, target_box_width, hook_filename, font_scale=font_scale, style=style)
         
         # 3. Calculate Overlay Position
-        overlay_x = (video_width - box_w) // 2
-        
-        if position == "center":
-            overlay_y = (video_height - box_h) // 2
-        elif position == "bottom":
-             # Bottom 20% mark (approx)
-             overlay_y = int(video_height * 0.70)
-        else:
-             # Top 20% mark
-             overlay_y = int(video_height * 0.20)
-        
+        overlay_x, overlay_y = hook_overlay_geometry(
+            video_width, video_height, box_w, box_h, position)
+
+
         # 4. FFmpeg Command
         print(f"🎬 Overlaying hook: '{text}' at {overlay_x},{overlay_y}")
         

@@ -1,8 +1,13 @@
 """Tests for subtitle word merging, SRT generation and style sanitizing."""
+import json
+
 from subtitles import (
+    AUTO_CAPTION_STYLE,
+    build_burn_command,
     merge_continuation_words,
     generate_srt,
     hex_to_ass_color,
+    resolve_caption_style,
     _sanitize_font_name,
     _clamp_number,
 )
@@ -43,6 +48,117 @@ class TestMergeContinuationWords:
         merge_continuation_words(words)
         assert words[0]["word"] == " a"
         assert words[1]["word"] == "-b"
+
+
+class TestBuildBurnCommand:
+    """Captions and the hook overlay are burned in ONE ffmpeg pass.
+
+    Not an optimisation: auto_caption_clip writes `subtitled_<ts>_<stem>.mp4`,
+    and that name is a contract — the subtitle modal's walk-back and
+    _canonical_clip_file reconstruct the clean original from that exact prefix.
+    A second pass for the hook would have to write `hooked_subtitled_...`, which
+    breaks the reconstruction (and doubles the render time per clip).
+    """
+
+    VF = "ass=filename='/tmp/s.ass':fontsdir='/app/fonts'"
+
+    def _cmd(self, **kw):
+        return build_burn_command("clip.mp4", "out.mp4", self.VF, **kw)
+
+    def test_without_overlay_keeps_the_single_input_form(self):
+        cmd = self._cmd()
+        assert cmd.count("-i") == 1
+        assert "-vf" in cmd
+        assert "-filter_complex" not in cmd
+        assert cmd[-1] == "out.mp4"
+
+    def test_overlay_adds_the_png_as_a_second_input(self):
+        cmd = self._cmd(overlay_png="hook.png", overlay_xy=(12, 34))
+        assert cmd.count("-i") == 2
+        assert cmd[cmd.index("-i") + 1] == "clip.mp4"
+        assert "hook.png" in cmd
+
+    def test_overlay_switches_to_filter_complex(self):
+        # -vf and -filter_complex are mutually exclusive in ffmpeg; emitting
+        # both makes it refuse the whole command.
+        cmd = self._cmd(overlay_png="hook.png", overlay_xy=(12, 34))
+        assert "-filter_complex" in cmd
+        assert "-vf" not in cmd
+
+    def test_overlay_chains_captions_then_hook(self):
+        cmd = self._cmd(overlay_png="hook.png", overlay_xy=(12, 34))
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        assert graph.startswith(f"[0:v]{self.VF}[")
+        assert "[1:v]overlay=x=12:y=34" in graph
+        assert graph.endswith("[v]")
+
+    def test_video_is_mapped_from_the_filter_graph(self):
+        cmd = self._cmd(overlay_png="hook.png", overlay_xy=(0, 0))
+        assert "[v]" in cmd
+
+    def test_audio_mapping_tolerates_a_silent_source(self):
+        # The single-input form got away with a bare `-c:a copy`. Two inputs
+        # make the mapping explicit, and without the trailing `?` ffmpeg aborts
+        # on a source that has no audio stream at all — which the pipeline
+        # already handles everywhere else.
+        cmd = self._cmd(overlay_png="hook.png", overlay_xy=(0, 0))
+        assert "0:a?" in cmd
+
+    def test_hook_is_time_limited_when_a_duration_is_given(self):
+        cmd = self._cmd(overlay_png="hook.png", overlay_xy=(0, 0), overlay_until=3.0)
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        assert "enable='between(t,0,3.0)'" in graph
+
+    def test_hook_without_a_duration_lasts_the_whole_clip(self):
+        # /api/hook has always treated duration_seconds=None as "show it all
+        # the way through"; the preset keeps that meaning.
+        cmd = self._cmd(overlay_png="hook.png", overlay_xy=(0, 0), overlay_until=None)
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        assert "enable=" not in graph
+
+
+class TestResolveCaptionStyle:
+    """The caption look the renderer actually uses: built-in defaults, with the
+    server's style preset merged over the top."""
+
+    def _with_preset(self, monkeypatch, captions):
+        monkeypatch.setenv("OPENSHORTS_STYLE", json.dumps({"captions": captions}))
+
+    def test_no_preset_keeps_the_built_in_look(self, monkeypatch):
+        monkeypatch.delenv("OPENSHORTS_STYLE", raising=False)
+        assert resolve_caption_style() == AUTO_CAPTION_STYLE
+
+    def test_preset_overrides_named_keys(self, monkeypatch):
+        self._with_preset(monkeypatch, {"highlight_color": "#FF00FF"})
+        assert resolve_caption_style()["highlight_color"] == "#FF00FF"
+
+    def test_untouched_keys_keep_their_defaults(self, monkeypatch):
+        self._with_preset(monkeypatch, {"highlight_color": "#FF00FF"})
+        style = resolve_caption_style()
+        assert style["font_name"] == AUTO_CAPTION_STYLE["font_name"]
+        assert style["effect"] == AUTO_CAPTION_STYLE["effect"]
+
+    def test_unknown_keys_are_ignored_not_rejected(self, monkeypatch):
+        # Same rule as layout_env: a newer dashboard writing a key this renderer
+        # has never heard of must not break the job.
+        self._with_preset(monkeypatch, {"font_name": "Anton", "wobble": 3})
+        style = resolve_caption_style()
+        assert style["font_name"] == "Anton"
+        assert "wobble" not in style
+
+    def test_defaults_are_never_mutated(self, monkeypatch):
+        # Clips render in parallel threads inside one process (CLIP_WORKERS), so
+        # a merge that wrote through to the module constant would let one clip
+        # restyle every clip rendered after it.
+        original = dict(AUTO_CAPTION_STYLE)
+        self._with_preset(monkeypatch, {"font_name": "Impact"})
+        resolve_caption_style()
+        assert AUTO_CAPTION_STYLE == original
+
+    def test_preset_without_a_captions_section(self, monkeypatch):
+        # A preset that only sets layouts is legitimate.
+        monkeypatch.setenv("OPENSHORTS_STYLE", json.dumps({"layouts": ["auto"]}))
+        assert resolve_caption_style() == AUTO_CAPTION_STYLE
 
 
 class TestGenerateSrt:

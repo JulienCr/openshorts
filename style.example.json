@@ -1,0 +1,33 @@
+{
+  "_comment": "Copy to style.json to make it this server's default look. Read at submit time, so an edit applies to the next job with no restart. Every key is optional; anything you leave out keeps its built-in default, and a malformed file falls back to the defaults rather than failing the job. Unknown keys are ignored.",
+
+  "captions": {
+    "font_name": "Anton",
+    "font_size": 44,
+    "font_color": "#FFFFFF",
+    "highlight_color": "#FFE500",
+    "border_color": "#000000",
+    "border_width": 4,
+    "style": "karaoke",
+    "effect": "pop",
+    "alignment": "bottom",
+    "base_opacity": 1.0,
+    "uppercase": true,
+    "max_chars": 16,
+    "max_duration": 1.4
+  },
+
+  "hook": {
+    "_comment": "Burns the viral_hook_text the AI already writes for every clip. Off unless you set enabled. duration_seconds: null shows it for the whole clip. style: classic | dark | yellow | red | outline | outline_yellow. size: S | M | L.",
+    "enabled": true,
+    "style": "outline",
+    "position": "top",
+    "size": "M",
+    "duration_seconds": 3.0,
+    "font_path": null
+  },
+
+  "layouts": ["auto", "punch_in"],
+  "output_format": "vertical",
+  "force_low_quality": false
+}

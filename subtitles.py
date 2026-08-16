@@ -248,6 +248,26 @@ AUTO_CAPTION_STYLE = {
 }
 
 
+def resolve_caption_style():
+    """The caption look for this job: the defaults above, with the server's
+    style preset merged over the top.
+
+    Only keys AUTO_CAPTION_STYLE already declares are merged. An unknown key is
+    dropped rather than passed through — same rule as ``layout_env``, where a
+    newer dashboard writing a key this renderer has never heard of must not
+    break the job. Returns a fresh dict every call: clips render in parallel
+    threads inside one process (CLIP_WORKERS), so writing through to the module
+    constant would let one clip restyle every clip rendered after it.
+    """
+    import style_preset
+
+    style = dict(AUTO_CAPTION_STYLE)
+    captions = style_preset.preset_from_env().get("captions")
+    if isinstance(captions, dict):
+        style.update({k: v for k, v in captions.items() if k in AUTO_CAPTION_STYLE})
+    return style
+
+
 def _ass_time(seconds):
     """Format seconds as ASS timestamp H:MM:SS.cc (centiseconds)."""
     seconds = max(0, seconds)
@@ -462,15 +482,77 @@ def _sanitize_font_name(name):
     return cleaned or "Verdana"
 
 
+def captioned_output_name(stem, generation_id):
+    """The name of the derived, styled copy of a clip.
+
+    A contract rather than a label. app.py finds the newest derived clip with
+    ``glob("subtitled_*_<clean>")`` and walks it back with
+    ``re.match(r'^subtitled_\\d+_(.+)$')`` — restore-after-restart, the R2
+    upload and the download bundle all depend on it resolving. The separator
+    positions and the digits-only generation id are therefore load-bearing:
+    a uuid there orphans every clip, silently.
+    """
+    return f"subtitled_{int(generation_id)}_{stem}"
+
+
+def build_burn_command(video_path, output_path, vf, overlay_png=None,
+                       overlay_xy=(0, 0), overlay_until=None):
+    """Assemble the ffmpeg argv that burns captions, and optionally a hook, in
+    ONE pass.
+
+    One pass rather than two is a naming constraint, not a speed tweak.
+    ``auto_caption_clip`` writes ``subtitled_<ts>_<stem>.mp4``, and that name is
+    a contract: the subtitle modal's walk-back and ``_canonical_clip_file``
+    reconstruct the clean original from that exact prefix. A separate hook pass
+    would have to write ``hooked_subtitled_...`` and orphan the pair — besides
+    charging a second full re-encode per clip.
+    """
+    if not overlay_png:
+        inputs = ['-i', video_path]
+        filters = ['-vf', vf]
+        maps = []
+    else:
+        x, y = overlay_xy
+        # None means "for the whole clip", which is what /api/hook has always
+        # meant by duration_seconds=None.
+        enable = ("" if overlay_until is None
+                  else f":enable='between(t,0,{overlay_until})'")
+        graph = (f"[0:v]{vf}[v0];"
+                 f"[v0][1:v]overlay=x={int(x)}:y={int(y)}{enable}[v]")
+        inputs = ['-i', video_path, '-i', overlay_png]
+        filters = ['-filter_complex', graph]
+        # The single-input form got away with a bare '-c:a copy'. Two inputs
+        # make the mapping explicit, and the trailing '?' is load-bearing:
+        # without it ffmpeg aborts on a source with no audio stream, and silent
+        # sources are a case the pipeline handles everywhere else.
+        maps = ['-map', '[v]', '-map', '0:a?']
+
+    return [
+        'ffmpeg', '-y',
+        *inputs,
+        *filters,
+        *maps,
+        '-c:a', 'copy',
+        *video_encode_args(QUALITY),
+        *METADATA_SCRUB,
+        '-movflags', '+faststart',
+        output_path,
+    ]
+
+
 def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
-                   bg_color="#000000", bg_opacity=0.0):
+                   bg_color="#000000", bg_opacity=0.0,
+                   overlay_png=None, overlay_xy=(0, 0), overlay_until=None):
     """
     Burns subtitles into the video using FFmpeg.
     Supports two modes:
     - Outline mode (bg_opacity=0): Text with colored outline/border
     - Box mode (bg_opacity>0): Text with semi-transparent background box
+
+    Pass overlay_png to composite a hook image in the same pass (see
+    build_burn_command for why that must not become a second pass).
     """
     # Position mapping
     ass_alignment = 2
@@ -542,16 +624,9 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         vf = (f"subtitles=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
               f":charenc=UTF-8:force_style='{style_string}'")
 
-    cmd = [
-        'ffmpeg', '-y',
-        '-i', video_path,
-        '-vf', vf,
-        '-c:a', 'copy',
-        *video_encode_args(QUALITY),
-        *METADATA_SCRUB,
-        '-movflags', '+faststart',
-        output_path
-    ]
+    cmd = build_burn_command(video_path, output_path, vf,
+                             overlay_png=overlay_png, overlay_xy=overlay_xy,
+                             overlay_until=overlay_until)
 
     _log(f"🎬 Burning subtitles: {' '.join(cmd)}")
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

@@ -9,6 +9,7 @@ import ThumbnailStudio from './components/ThumbnailStudio';
 import SaaShortsTab from './components/SaaShortsTab';
 import UGCGallery from './components/UGCGallery';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
+import DefaultStyleCard from './components/DefaultStyleCard';
 import UsageMeter from './components/UsageMeter';
 import TopUpModal from './components/TopUpModal';
 import StarBanner from './components/StarBanner';
@@ -1192,6 +1193,12 @@ function App() {
                     </span>
                   </p>
                 </div>
+              </div>
+
+              {/* The look every new job starts from. Read at submit time, so a
+                  change here applies to the next job with no restart. */}
+              <div className="mt-4">
+                <DefaultStyleCard />
               </div>
             </div>
           )}
