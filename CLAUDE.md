@@ -159,6 +159,38 @@ se desactiva porque el modelo diga `none`.
   `emphasis_times` is a plain list of seconds so the transcript's hook words can
   replace it without touching the module.
 
+### Channel branding (`branding.py`, `BRAND_WATERMARK=1`)
+
+Burns the operator's own logo + a secondary badge into every finished clip: one
+line, logo left and badge right, from PNGs in `assets/brand/` (gitignored; see
+the README there). Self-host branding, **not** the hosted free plan's
+`apply_watermark` in `main.py` — do not merge the two. That one is defensive and
+parked at 40% of the height so a free user cannot crop it off; this one is
+cosmetic and deliberately stays out of the way. Both flags can be on at once and
+their bands never touch.
+
+**The vertical band is the whole design, and `BRAND_Y_RATIO` is its TOP edge,
+not its centre.** Three things already own parts of a 9:16 frame: the platform
+chrome (down to y≈12%), the burned captions (`subtitles.SAFE_MARGIN_V`, y≈59-85%)
+and the hook's default `top` card (`hooks.py`, y=20%). Anchoring the centre was
+tried first and is wrong: the band's height depends on the logo's aspect ratio,
+which the operator picks, so a 3:1 logo at a 0.13 centre put its top edge at
+0.109 — back under TikTok's tabs. The tallest mark's top edge is pinned to
+`BRAND_Y_RATIO` and shorter marks are centred against it, so a taller asset
+grows downwards instead. A wide lockup (3:1 or flatter) also clears the hook
+card; a square one cannot and will sit behind it.
+
+Applied in `main.py` right before `auto_caption_clip`, in place on the canonical
+clip, like the watermark — `/api/subtitle` walks back through `subtitled_`
+prefixes to re-style captions, so a mark burned into a derived file would be
+lost there. The `--skip-analysis` path needs its own call; it never reaches the
+per-clip loop.
+
+Per job, the dashboard checkbox sends a **tri-state**: absent means "inherit
+`BRAND_WATERMARK`", which is what keeps older callers (CLI, MCP) working. The
+resolved decision is persisted in the resume manifest, because env is rebuilt
+from `os.environ` on resume and an unticked box would otherwise come back ticked.
+
 ### Key Classes
 - `SmoothedCameraman` - Stabilized camera movement with safe zone logic (prevents jitter)
 - `SpeakerTracker` - Prevents rapid speaker switching, handles temporary occlusions

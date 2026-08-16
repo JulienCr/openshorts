@@ -671,6 +671,7 @@ function App() {
             local_paths: data.payload,
             acknowledged: !!data.acknowledged,
             output_format: data.outputFormat || 'auto',
+            branding: data.branding,
           }),
         });
         if (!d.jobs?.length) throw new Error('No file in the batch could be queued.');
@@ -687,6 +688,7 @@ function App() {
           url: data.payload,
           acknowledged: !!data.acknowledged,
           output_format: data.outputFormat || 'auto',
+          branding: data.branding,
           force_low_quality: forceLowQuality,
         });
       } else if (data.type === 'local') {
@@ -697,6 +699,7 @@ function App() {
           local_path: data.payload,
           acknowledged: !!data.acknowledged,
           output_format: data.outputFormat || 'auto',
+          branding: data.branding,
           force_low_quality: forceLowQuality,
         });
       } else {
@@ -704,6 +707,12 @@ function App() {
         formData.append('file', data.payload);
         formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
         formData.append('output_format', data.outputFormat || 'auto');
+        // Omitted rather than sent empty: a multipart field always arrives as a
+        // string, and "" would read as an explicit "off" instead of "inherit
+        // the server default".
+        if (data.branding !== undefined) {
+          formData.append('branding', data.branding ? 'true' : 'false');
+        }
         body = formData;
       }
 

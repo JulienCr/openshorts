@@ -21,6 +21,7 @@ import mediapipe as mp
 from google import genai
 from google.genai import types as genai_types
 
+import branding
 import gemini_worker
 import layout_picker
 from clip_selection import (build_transcript_windows, clip_count_targets,
@@ -1477,7 +1478,11 @@ if __name__ == '__main__':
     if args.skip_analysis:
         print("⏩ Skipping analysis, processing entire video...")
         output_file = args.output if args.output else os.path.join(output_dir, f"{video_title}_vertical.mp4")
-        render_clip(input_video, output_file, output_format)
+        if render_clip(input_video, output_file, output_format):
+            # This path renders the whole video and never reaches the per-clip
+            # loop, so it needs its own branding call or the one output a
+            # --skip-analysis run produces comes out unmarked.
+            branding.apply_branding(output_file)
     else:
         # Get duration (needed by both the transcript and the vision path).
         cap = cv2.VideoCapture(input_video)
@@ -1588,6 +1593,11 @@ if __name__ == '__main__':
                     if success and os.environ.get("WATERMARK") == "1":
                         apply_watermark(clip_final_path)
                     if success:
+                        # Branding belongs to the canonical file, like the
+                        # watermark: /api/subtitle walks back through the
+                        # `subtitled_` prefixes to re-style captions, so a mark
+                        # burned into a derived file would be dropped there.
+                        branding.apply_branding(clip_final_path)
                         # Captions last, so they sit on top of the watermark and
                         # the canonical file stays clean for re-styling.
                         auto_caption_clip(clip_final_path, transcript, start, end)
