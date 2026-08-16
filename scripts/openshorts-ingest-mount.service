@@ -1,0 +1,14 @@
+[Unit]
+Description=Mount OpenShorts ingest sources that appear after boot
+# Only meaningful once the local filesystems are there; nothing further to order
+# against, because the whole point is that the source shows up unpredictably late.
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# `-` so a missing config file leaves the unit inert instead of failing every tick.
+EnvironmentFile=-/etc/openshorts/ingest-mounts.conf
+ExecStart=/usr/local/bin/ensure-ingest-mounts.sh
+
+[Install]
+WantedBy=multi-user.target

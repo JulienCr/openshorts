@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep the OpenShorts ingest mounts alive
+
+[Timer]
+# Early enough that a reboot is back in business before anyone opens the tab…
+OnBootSec=15s
+# …and often enough that a drive dropped mid-session comes back on its own. The
+# unit is a no-op when everything is mounted, so a short period costs nothing.
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
