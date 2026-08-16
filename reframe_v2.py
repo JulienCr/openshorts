@@ -541,7 +541,10 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
     # reads the output pair. So out_w/out_h being the (possibly upscaled)
     # delivery size doesn't move the camera; only the final scale= uses it.
     cameraman = m.SmoothedCameraman(out_w, out_h, orig_w, orig_h, aspect_ratio=aspect_ratio)
-    tracker = m.SpeakerTracker(cooldown_frames=30)
+    # fps, not a frame count: the tracker's damping windows are durations, and
+    # this repo's real material is 60fps, where a hard-coded 30 is half of what
+    # the code claimed.
+    tracker = m.SpeakerTracker(fps=fps)
 
     xs = _analyze_trajectory(input_video, scene_boundaries, strategies, fps,
                              orig_w, orig_h, cameraman, tracker)

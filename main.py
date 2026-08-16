@@ -830,8 +830,9 @@ def process_video_to_vertical(input_video, final_output_video, aspect_ratio=ASPE
     for s_start, s_end in scenes:
         scene_boundaries.append((s_start.get_frames(), s_end.get_frames()))
 
-    # Global tracker for single-person shots
-    speaker_tracker = SpeakerTracker(cooldown_frames=30)
+    # Global tracker for single-person shots. fps, not a frame count: the
+    # damping windows are durations (see camera.SpeakerTracker).
+    speaker_tracker = SpeakerTracker(fps=float(fps or 30.0))
 
     # Per-stage wall time (server-side diagnostics; hidden from cloud logs).
     stage_seconds = {'detect': 0.0, 'write': 0.0}

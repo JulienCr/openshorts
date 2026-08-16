@@ -26,6 +26,11 @@ ASPECT_RATIO = 9 / 16
 # damping can be dialled back without a deploy; 1 restores the old behaviour.
 JUMP_CONFIRM_FRAMES = max(int(os.environ.get("JUMP_CONFIRM_FRAMES", "3")), 1)
 
+# How long a face keeps its identity after it was last detected, and how long
+# the camera must stay on a subject before it may switch. See SpeakerTracker.
+FORGET_SECONDS = float(os.environ.get("TRACKER_FORGET_SECONDS", "1.0"))
+SWITCH_COOLDOWN_SECONDS = float(os.environ.get("TRACKER_COOLDOWN_SECONDS", "1.0"))
+
 
 class SmoothedCameraman:
     """
@@ -169,15 +174,35 @@ class SpeakerTracker:
     """
     Tracks speakers over time to prevent rapid switching and handle temporary obstructions.
     """
-    def __init__(self, stabilization_frames=15, cooldown_frames=30):
+    def __init__(self, stabilization_frames=15, cooldown_frames=None,
+                 forget_frames=None, fps=30.0):
         self.active_speaker_id = None
         self.speaker_scores = {}  # {id: score}
         self.last_seen = {}       # {id: frame_number}
         self.locked_counter = 0   # How long we've been locked on current speaker
 
-        # Hyperparameters
+        # Hyperparameters. Both of these are DURATIONS, and both used to be
+        # hard-coded frame counts with comments describing them in seconds
+        # ("Forgot faces older than 1s", "Minimum frames before switching") —
+        # true at 30fps and wrong at anything else. Real recordings here are
+        # 60fps, so both damping windows were running at half their intended
+        # length, and the tracker switched subject twice as readily as designed.
+        #
+        # Measured over 93.1s of TRACK footage across three real 60fps
+        # recordings, converting both to seconds: subject switches 34 -> 24,
+        # in-scene travel 43.6 -> 31.3 px/s, on-screen motion 47.2 -> 35.1 px/s
+        # (-26%). The cooldown is the dominant term of the two.
+        #
+        # A 1.5s cooldown measured slightly better again (19 switches, same
+        # motion) but is NOT taken: bdd9e5d rejected a longer cooldown as
+        # "precisely what would make a two-person interview stop following the
+        # conversation", and that judgement has not been re-tested. These are
+        # the values the code already claimed to use.
         self.stabilization_threshold = stabilization_frames # Frames needed to confirm a new speaker
-        self.switch_cooldown = cooldown_frames              # Minimum frames before switching again
+        self.switch_cooldown = (cooldown_frames if cooldown_frames is not None
+                                else max(1, int(SWITCH_COOLDOWN_SECONDS * fps)))
+        self.forget_frames = (forget_frames if forget_frames is not None
+                              else max(1, int(FORGET_SECONDS * fps)))
         self.last_switch_frame = -1000
 
         # ID tracking
@@ -201,7 +226,7 @@ class SpeakerTracker:
 
             # Try to match with known faces seen recently
             for kf in self.known_faces:
-                if frame_number - kf['last_frame'] > 30: # Forgot faces older than 1s (was 2s)
+                if frame_number - kf['last_frame'] > self.forget_frames:
                     continue
 
                 dist = abs(center_x - kf['center'])

@@ -128,3 +128,53 @@ class TestJumpConfirmation:
         cam = self._cam()
         cam.update_target(None)
         assert cam.target_center_x == 500
+
+
+class TestDurationsAreSeconds:
+    """Both damping windows are durations, and used to be frame counts.
+
+    The comments said "1s"; the code said 30 frames. True at 30fps, and half
+    that at the 60fps this repo's real recordings are shot in — so the tracker
+    switched subject twice as readily as designed. Measured over 93.1s of TRACK
+    footage: subject switches 34 -> 24, on-screen crop motion 47.2 -> 35.1 px/s.
+    """
+
+    def test_windows_scale_with_frame_rate(self):
+        slow = camera.SpeakerTracker(fps=30.0)
+        fast = camera.SpeakerTracker(fps=60.0)
+        assert fast.switch_cooldown == 2 * slow.switch_cooldown
+        assert fast.forget_frames == 2 * slow.forget_frames
+
+    def test_thirty_fps_matches_the_historical_constants(self):
+        # The values the code always claimed to use, so nothing changes for
+        # 30fps material.
+        t = camera.SpeakerTracker(fps=30.0)
+        assert t.switch_cooldown == 30
+        assert t.forget_frames == 30
+
+    def test_explicit_frame_counts_still_win(self):
+        # Existing call sites and tests pass frame counts directly.
+        t = camera.SpeakerTracker(cooldown_frames=45, forget_frames=90, fps=60.0)
+        assert (t.switch_cooldown, t.forget_frames) == (45, 90)
+
+    def test_a_sixty_fps_tracker_holds_for_a_real_second(self):
+        # The behavioural statement, not the arithmetic one: a subject is held
+        # for a second of WALL TIME regardless of frame rate.
+        t = camera.SpeakerTracker(fps=60.0)
+        a = _lock_onto(t, 300)
+        # 59 frames later is still inside one second at 60fps.
+        t.get_target([_face(1000)], 59, WIDTH)
+        assert t.active_speaker_id == a
+        for f in range(70, 90):
+            t.get_target([_face(1000)], f, WIDTH)
+        assert t.active_speaker_id != a
+
+    def test_a_face_keeps_its_identity_for_a_second(self):
+        # Identity churn was the symptom: a face missing for half a second came
+        # back as a brand-new id with no score and no stickiness. Measured on
+        # real footage, one 32s scene produced 19 subject switches this way.
+        t = camera.SpeakerTracker(fps=60.0)
+        t.get_target([_face(300)], 0, WIDTH)
+        first_id = t.known_faces[0]['id']
+        t.get_target([_face(300)], 50, WIDTH)   # gone for 50 frames = 0.83s
+        assert t.known_faces[0]['id'] == first_id, "same person, same identity"
