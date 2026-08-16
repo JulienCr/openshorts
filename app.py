@@ -14,6 +14,7 @@ import math
 import itertools
 import asyncio
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 from contextlib import asynccontextmanager
@@ -2244,14 +2245,37 @@ async def get_style():
             "path": style_preset.style_file_path()}
 
 
+def _assert_same_origin(request: Request):
+    """Refuse a cross-origin write.
+
+    Self-host runs with allow_origins=["*"] and no authentication, so without
+    this any page the operator happens to visit could PUT a new style.json and
+    silently restyle every job from then on. /api/process is unauthenticated
+    too, but it only creates one job the operator can see; this changes all of
+    them, persistently, with nothing on screen.
+
+    A missing Origin is allowed on purpose: curl, the CLI and the MCP adapter
+    send none, and they are not the case being defended against — anyone who
+    can call the API directly does not need the operator's browser to do it.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    if urlparse(origin).netloc != urlparse(str(request.base_url)).netloc:
+        raise HTTPException(
+            status_code=403,
+            detail="Cross-origin writes to the default style are refused.")
+
+
 @app.put("/api/style")
-async def put_style(req: StyleRequest):
+async def put_style(req: StyleRequest, request: Request):
     """Replace the server's style preset.
 
     Self-host only. A single server-wide default is meaningless once tenants
     share the instance — whoever saved last would restyle everybody's clips —
     so the cloud build serves this read-only and keeps the built-in look.
     """
+    _assert_same_origin(request)
     if BILLING_ENABLED:
         raise HTTPException(
             status_code=403,

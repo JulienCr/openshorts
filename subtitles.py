@@ -267,11 +267,8 @@ def resolve_caption_style():
     """
     import style_preset
 
-    style = dict(AUTO_CAPTION_STYLE)
     captions = style_preset.preset_from_env().get("captions")
-    if isinstance(captions, dict):
-        style.update({k: v for k, v in captions.items() if k in AUTO_CAPTION_STYLE})
-    return style
+    return style_preset.coerce_section(captions, AUTO_CAPTION_STYLE)
 
 
 def _ass_time(seconds):
@@ -549,6 +546,21 @@ def captioned_output_name(stem, generation_id):
     return f"subtitled_{int(generation_id)}_{stem}"
 
 
+def _finite_seconds(value):
+    """A finite, non-negative float, or None. Nothing else reaches a filtergraph."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")) or number < 0:
+        return None
+    # Trim a trailing .0 so the common 3 stays "3.0" rather than becoming noise
+    # in the logged command; the value is a plain float either way.
+    return number
+
+
 def build_burn_command(video_path, output_path, vf, overlay_png=None,
                        overlay_xy=(0, 0), overlay_until=None):
     """Assemble the ffmpeg argv that burns captions, and optionally a hook, in
@@ -569,8 +581,15 @@ def build_burn_command(video_path, output_path, vf, overlay_png=None,
         x, y = overlay_xy
         # None means "for the whole clip", which is what /api/hook has always
         # meant by duration_seconds=None.
-        enable = ("" if overlay_until is None
-                  else f":enable='between(t,0,{overlay_until})'")
+        #
+        # Coerced HERE and not only upstream, because this is the line that
+        # formats a caller-supplied value into a filtergraph: a string can close
+        # between(...) and rewrite the graph. The preset that feeds it is
+        # hand-edited JSON, and a caller can also send one inline. An
+        # uncoercible value falls back to "no time limit" rather than failing
+        # the burn — the clip matters more than the hook's timing.
+        until = _finite_seconds(overlay_until)
+        enable = "" if until is None else f":enable='between(t,0,{until})'"
         graph = (f"[0:v]{vf}[v0];"
                  f"[v0][1:v]overlay=x={int(x)}:y={int(y)}{enable}[v]")
         inputs = ['-i', video_path, '-i', overlay_png]

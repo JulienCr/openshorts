@@ -94,6 +94,48 @@ HOOK_DEFAULTS = {
 }
 
 
+def coerce_like(value, default):
+    """Return ``value`` typed like ``default``, or ``default`` when it cannot be.
+
+    The preset is hand-edited JSON and can also arrive inline on a request, so
+    nothing guarantees the types. Checking only the top-level shape was not
+    enough: a plausible typo — a number written as a string, ``"max_chars": "16"``
+    — reached the caption generator, raised when compared against an int, and
+    auto_caption_clip swallowed it. Every clip then shipped with no captions at
+    all, silently, which is exactly what "a broken preset costs nothing" is
+    supposed to prevent.
+    """
+    # bool before int: isinstance(True, int) is True in Python, and a string
+    # like "false" is truthy — reading that as True is the wrong answer.
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else default
+    if isinstance(default, (int, float)):
+        if isinstance(value, bool):
+            return default
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        if number != number or number in (float("inf"), float("-inf")):
+            return default
+        return int(number) if isinstance(default, int) else number
+    if isinstance(default, str):
+        return value if isinstance(value, str) else default
+    return value
+
+
+def coerce_section(configured, defaults):
+    """Merge a preset section over its defaults, keeping only known keys and
+    only values that can be typed like the default. One bad field must not take
+    the good ones down with it."""
+    resolved = dict(defaults)
+    if isinstance(configured, dict):
+        for key, value in configured.items():
+            if key in defaults:
+                resolved[key] = coerce_like(value, defaults[key])
+    return resolved
+
+
 def resolve_hook_style():
     """The automatic-hook settings for this job, defaults filled in.
 
@@ -103,13 +145,35 @@ def resolve_hook_style():
     """
     from hooks import HOOK_SIZE_SCALE
 
-    hook = dict(HOOK_DEFAULTS)
     configured = preset_from_env().get("hook")
-    if isinstance(configured, dict):
-        hook.update({k: v for k, v in configured.items() if k in HOOK_DEFAULTS})
-    hook["enabled"] = bool(hook["enabled"])
+    hook = coerce_section(configured, HOOK_DEFAULTS)
+
+    # duration_seconds is the one field where None is meaningful ("the whole
+    # clip", the same meaning /api/hook gives it) AND where the value ends up
+    # interpolated into an ffmpeg filtergraph. /api/hook gets this checked for
+    # free from a pydantic float field; nothing types the preset, so a crafted
+    # string could otherwise close between(...) and rewrite the graph.
+    raw_duration = (configured or {}).get("duration_seconds", HOOK_DEFAULTS["duration_seconds"]) \
+        if isinstance(configured, dict) else HOOK_DEFAULTS["duration_seconds"]
+    hook["duration_seconds"] = (
+        None if raw_duration is None
+        else _positive_seconds(raw_duration, HOOK_DEFAULTS["duration_seconds"]))
+
     hook["font_scale"] = HOOK_SIZE_SCALE.get(hook["size"], 1.0)
     return hook
+
+
+def _positive_seconds(value, fallback):
+    """A finite, non-negative number of seconds, or ``fallback``."""
+    if isinstance(value, bool):
+        return fallback
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if number != number or number in (float("inf"), float("-inf")) or number < 0:
+        return fallback
+    return number
 
 
 def preset_from_env():

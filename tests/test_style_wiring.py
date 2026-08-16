@@ -229,3 +229,31 @@ class TestStyleFileIsWrittenAtomically:
     def test_the_saved_file_is_always_complete(self, preset_file):
         _client_call("put", "/api/style", json={"style": {"captions": {"font_name": "Anton"}}})
         assert json.loads(preset_file.read_text())["captions"]["font_name"] == "Anton"
+
+
+class TestStyleWriteIsNotDriveBy:
+    """PUT /api/style persists a server-wide setting, and self-host runs with
+    allow_origins=["*"]. Without an origin check any page the operator happens
+    to visit can silently restyle every future job — /api/process at least only
+    creates one job, this changes all of them."""
+
+    def test_a_foreign_origin_is_refused(self, preset_file):
+        resp = _client_call("put", "/api/style", json={"style": {"output_format": "square"}},
+                            headers={"Origin": "https://evil.example"})
+        assert resp.status_code == 403
+        assert not preset_file.exists()
+
+    def test_the_dashboards_own_origin_is_allowed(self, preset_file):
+        resp = _client_call("put", "/api/style", json={"style": {"output_format": "square"}},
+                            headers={"Origin": "http://t"})
+        assert resp.status_code == 200
+
+    def test_a_non_browser_client_is_allowed(self, preset_file):
+        # curl and the CLI send no Origin. They are not the CSRF case: anyone
+        # who can call the API directly does not need the operator's browser.
+        resp = _client_call("put", "/api/style", json={"style": {"output_format": "square"}})
+        assert resp.status_code == 200
+
+    def test_reading_the_style_stays_open(self, preset_file):
+        resp = _client_call("get", "/api/style", headers={"Origin": "https://evil.example"})
+        assert resp.status_code == 200

@@ -135,3 +135,72 @@ class TestResolveHookStyle:
         # duration_seconds=None.
         self._with_hook(monkeypatch, {"enabled": True, "duration_seconds": None})
         assert style_preset.resolve_hook_style()["duration_seconds"] is None
+
+
+class TestPresetValuesAreValidated:
+    """Top-level shape was checked; the values inside were not. A preset is
+    hand-edited JSON, so a plausible typo — a number written as a string —
+    reached the caption generator and raised there. auto_caption_clip swallows
+    that, so every clip silently shipped with no captions at all."""
+
+    def _with_captions(self, monkeypatch, captions):
+        monkeypatch.setenv("OPENSHORTS_STYLE", json.dumps({"captions": captions}))
+
+    def test_a_number_written_as_a_string_is_coerced(self, monkeypatch):
+        import subtitles
+        self._with_captions(monkeypatch, {"max_chars": "16"})
+        assert subtitles.resolve_caption_style()["max_chars"] == 16
+
+    def test_an_uncoercible_value_falls_back_to_the_default(self, monkeypatch):
+        import subtitles
+        self._with_captions(monkeypatch, {"max_chars": "sixteen"})
+        assert (subtitles.resolve_caption_style()["max_chars"]
+                == subtitles.AUTO_CAPTION_STYLE["max_chars"])
+
+    def test_a_bad_value_does_not_take_the_good_ones_down(self, monkeypatch):
+        import subtitles
+        self._with_captions(monkeypatch, {"max_chars": "sixteen", "font_name": "Impact"})
+        assert subtitles.resolve_caption_style()["font_name"] == "Impact"
+
+    def test_a_string_is_never_read_as_a_boolean(self):
+        # "false" is truthy as a string, so a plain bool() would turn the JSON
+        # the user most likely meant as "off" into "on". The value is refused
+        # and the default stands, whichever way the default points.
+        assert style_preset.coerce_like("false", False) is False
+        assert style_preset.coerce_like("false", True) is True
+        assert style_preset.coerce_like("true", False) is False
+
+    def test_a_real_boolean_passes_through(self):
+        assert style_preset.coerce_like(False, True) is False
+        assert style_preset.coerce_like(True, False) is True
+
+    def test_a_string_boolean_in_the_preset_keeps_the_default(self, monkeypatch):
+        import subtitles
+        self._with_captions(monkeypatch, {"uppercase": "false"})
+        assert (subtitles.resolve_caption_style()["uppercase"]
+                is subtitles.AUTO_CAPTION_STYLE["uppercase"])
+
+
+class TestHookDurationIsSanitised:
+    """duration_seconds is interpolated into an ffmpeg filtergraph. It comes
+    from hand-edited JSON or an inline request style, neither of which is typed
+    — /api/hook gets this for free from a pydantic float field."""
+
+    def _with_hook(self, monkeypatch, hook):
+        monkeypatch.setenv("OPENSHORTS_STYLE", json.dumps({"hook": {"enabled": True, **hook}}))
+
+    def test_a_crafted_string_never_reaches_the_graph(self, monkeypatch):
+        self._with_hook(monkeypatch, {"duration_seconds": "3)';drop[x];a=('"})
+        assert style_preset.resolve_hook_style()["duration_seconds"] == 3.0
+
+    def test_a_negative_duration_falls_back(self, monkeypatch):
+        self._with_hook(monkeypatch, {"duration_seconds": -5})
+        assert style_preset.resolve_hook_style()["duration_seconds"] == 3.0
+
+    def test_null_still_means_the_whole_clip(self, monkeypatch):
+        self._with_hook(monkeypatch, {"duration_seconds": None})
+        assert style_preset.resolve_hook_style()["duration_seconds"] is None
+
+    def test_a_normal_value_survives(self, monkeypatch):
+        self._with_hook(monkeypatch, {"duration_seconds": 4.5})
+        assert style_preset.resolve_hook_style()["duration_seconds"] == 4.5

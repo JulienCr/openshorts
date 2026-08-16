@@ -1,3 +1,4 @@
+import functools
 import time
 import cv2
 import scenedetect
@@ -879,15 +880,28 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, hook_text=Non
                 if captions_wanted:
                     print("   ℹ️ No words in range — clip ships without captions.")
                 return None
-            _subs.burn_subtitles(
-                clip_path, ass_path, out_path,
+            burn = functools.partial(
+                _subs.burn_subtitles, clip_path, ass_path, out_path,
                 alignment=style["alignment"], fontsize=style["font_size"],
                 font_name=style["font_name"], font_color=style["font_color"],
-                border_color=style["border_color"], border_width=style["border_width"],
-                **overlay)
+                border_color=style["border_color"], border_width=style["border_width"])
+            hooked = bool(overlay)
+            try:
+                burn(**overlay)
+            except Exception as e:
+                # The hook is the optional half. Letting its failure escape
+                # would deliver the clip with no captions either, even though
+                # they generated fine — so enabling hooks could silently strip
+                # captions from every clip whose overlay misbehaves.
+                if not ass_path:
+                    raise
+                print(f"   ⚠️ Hook overlay failed ({type(e).__name__}: {e}) — "
+                      f"burning captions alone.")
+                burn()
+                hooked = False
             burned = ", ".join(
                 part for part, on in (("captions", bool(ass_path)),
-                                      ("hook", bool(overlay))) if on)
+                                      ("hook", hooked)) if on)
         print(f"   💬 Burned {burned}: {os.path.basename(out_path)}")
         return out_path
     except Exception as e:

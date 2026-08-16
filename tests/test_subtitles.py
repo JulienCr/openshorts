@@ -555,3 +555,25 @@ class TestBurnWithoutCaptions:
         assert _burn_filter(None, "") == "null"
         assert _burn_filter("/tmp/s.ass", "", "/tmp/s.ass", "/fonts").startswith("ass=")
         assert _burn_filter("/tmp/s.srt", "X", "/tmp/s.srt", "/fonts").startswith("subtitles=")
+
+
+class TestOverlayUntilIsNeverInterpolatedRaw:
+    """The last line of defence: build_burn_command formats the value straight
+    into the filtergraph, so it must not trust its caller."""
+
+    def test_a_string_cannot_break_out_of_the_enable_clause(self):
+        cmd = build_burn_command("c.mp4", "o.mp4", "null", overlay_png="h.png",
+                                 overlay_xy=(0, 0), overlay_until="3)';drop[x];a=('")
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        assert "drop[x]" not in graph
+
+    def test_a_numeric_string_is_accepted_as_a_number(self):
+        cmd = build_burn_command("c.mp4", "o.mp4", "null", overlay_png="h.png",
+                                 overlay_xy=(0, 0), overlay_until="2.5")
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        assert "enable='between(t,0,2.5)'" in graph
+
+    def test_none_still_means_the_whole_clip(self):
+        cmd = build_burn_command("c.mp4", "o.mp4", "null", overlay_png="h.png",
+                                 overlay_xy=(0, 0), overlay_until=None)
+        assert "enable=" not in cmd[cmd.index("-filter_complex") + 1]
