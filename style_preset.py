@@ -69,15 +69,40 @@ def load_style(path=None):
         return {}
 
 
+# The top-level keys a preset may carry. Anything else is dropped rather than
+# forwarded: an inline style is caller-supplied JSON, and the whole thing goes
+# into ONE environment variable.
+SUPPORTED_KEYS = ("captions", "hook", "layouts", "output_format",
+                  "force_low_quality")
+
+# Linux caps a single environment string at MAX_ARG_STRLEN (128 KiB). Past it
+# execve fails, so Popen raises and the QUEUED JOB IS LOST — far worse than the
+# style being ignored, which is what every other failure in this module does.
+# A real preset is a few hundred bytes; this is only ever hit by junk.
+MAX_STYLE_BYTES = 32 * 1024
+
+
 def style_env(preset):
     """Environment overrides carrying the preset into the renderer subprocess.
 
     Shaped like ``layout_env``: an empty preset adds nothing at all, so a job
     without a style is byte-for-byte the job we ran before this existed.
+
+    Filtered and size-capped, because this value is chosen by the caller and
+    spent on a subprocess environment — see MAX_STYLE_BYTES.
     """
-    if not preset:
+    if not isinstance(preset, dict):
         return {}
-    return {STYLE_ENV: json.dumps(preset)}
+    kept = {k: v for k, v in preset.items() if k in SUPPORTED_KEYS}
+    if not kept:
+        return {}
+
+    serialised = json.dumps(kept)
+    if len(serialised.encode("utf-8")) > MAX_STYLE_BYTES:
+        print(f"⚠️ Style preset is {len(serialised)} bytes, over the "
+              f"{MAX_STYLE_BYTES}-byte limit — ignoring it for this job.")
+        return {}
+    return {STYLE_ENV: serialised}
 
 
 # Gemini writes a viral_hook_text for every clip and nothing has ever burned it

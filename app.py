@@ -1773,8 +1773,18 @@ LAYOUTS_ENV = "OPENSHORTS_LAYOUTS"
 def effective_preset(style=None):
     """The preset this job runs under: the one carried on the request, else the
     server's file. A non-object is ignored rather than honoured — a malformed
-    request must never silently blank the server's look."""
-    return style if isinstance(style, dict) else style_preset.load_style()
+    request must never silently blank the server's look.
+
+    In cloud mode the FILE is ignored entirely. Refusing PUT /api/style is not
+    isolation on its own: a style.json baked into the image or left over from a
+    self-host run would still be read on every submission and restyle every
+    tenant, and could globally waive the quality gate. Inline per-job styles
+    still apply — an agent legitimately sends one, and it only affects its own
+    job.
+    """
+    if isinstance(style, dict):
+        return style
+    return {} if BILLING_ENABLED else style_preset.load_style()
 
 
 def parse_inline_style(raw):

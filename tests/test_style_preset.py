@@ -204,3 +204,37 @@ class TestHookDurationIsSanitised:
     def test_a_normal_value_survives(self, monkeypatch):
         self._with_hook(monkeypatch, {"duration_seconds": 4.5})
         assert style_preset.resolve_hook_style()["duration_seconds"] == 4.5
+
+
+class TestStyleEnvIsBounded:
+    """The preset rides to the renderer in ONE environment variable, and Linux
+    caps a single env string at 128 KiB (MAX_ARG_STRLEN). Past that, Popen
+    itself fails and the queued job is lost — a much worse outcome than the
+    malformed style being ignored, which is what every other failure here does.
+
+    An inline style is caller-supplied JSON of arbitrary size, so the bound
+    cannot be assumed.
+    """
+
+    def test_unsupported_top_level_keys_never_travel(self):
+        env = style_preset.style_env({"captions": {"font_name": "Anton"},
+                                      "junk": "x" * 100})
+        assert json.loads(env[style_preset.STYLE_ENV]) == {
+            "captions": {"font_name": "Anton"}}
+
+    def test_a_preset_of_only_junk_travels_as_nothing(self):
+        assert style_preset.style_env({"junk": "x" * 100}) == {}
+
+    def test_an_oversized_preset_is_dropped_rather_than_losing_the_job(self):
+        huge = {"captions": {"font_name": "A" * 200_000}}
+        assert style_preset.style_env(huge) == {}
+
+    def test_a_normal_preset_is_well_under_the_limit(self):
+        env = style_preset.style_env({
+            "captions": {"font_name": "Anton", "highlight_color": "#FFE500"},
+            "hook": {"enabled": True, "style": "outline"},
+            "layouts": ["auto", "punch_in"],
+            "output_format": "vertical",
+            "force_low_quality": False,
+        })
+        assert 0 < len(env[style_preset.STYLE_ENV]) < 2000

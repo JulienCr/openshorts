@@ -298,3 +298,31 @@ class TestPresetQualityGateIsTyped:
     def test_a_real_boolean_still_works(self, preset_file):
         preset_file.write_text(json.dumps({"force_low_quality": True}))
         assert app_module.resolve_force_low_quality(None) is True
+
+
+class TestCloudIgnoresTheServerFile:
+    """Blocking PUT /api/style is not isolation on its own.
+
+    A style.json baked into the image, or left over from a self-host run, would
+    still be read on every submission and restyle every tenant — and could
+    globally waive force_low_quality. Cloud keeps inline per-job styles, which
+    an agent legitimately sends, and ignores the file.
+    """
+
+    def test_the_file_is_ignored_when_billing_is_on(self, preset_file, monkeypatch):
+        preset_file.write_text(json.dumps({"output_format": "square",
+                                           "force_low_quality": True}))
+        monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
+
+        assert app_module.effective_preset() == {}
+        assert app_module.resolve_output_format(None) == "auto"
+        assert app_module.resolve_force_low_quality(None) is False
+
+    def test_an_inline_style_still_applies_in_cloud(self, preset_file, monkeypatch):
+        monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
+        preset = app_module.effective_preset({"output_format": "square"})
+        assert preset == {"output_format": "square"}
+
+    def test_self_host_still_reads_the_file(self, preset_file):
+        preset_file.write_text(json.dumps({"output_format": "square"}))
+        assert app_module.effective_preset()["output_format"] == "square"

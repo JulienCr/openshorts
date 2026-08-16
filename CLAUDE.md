@@ -285,7 +285,14 @@ pays: thirty queued recordings carry no style fields at all.
 
 `GET/PUT /api/style` backs the dashboard's "Default style" panel. The PUT refuses
 when `BILLING_ENABLED` — one server-wide default is meaningless once tenants
-share an instance, since whoever saved last would restyle everybody's clips.
+share an instance, since whoever saved last would restyle everybody's clips — and
+cloud **ignores the file on read too**. Refusing the write alone is not
+isolation: a `style.json` baked into the image or left over from a self-host run
+would still be read on every submission. Inline per-job styles keep working
+there, since they only affect their own job. The PUT is guarded by
+`Sec-Fetch-Site`, not by comparing `Origin` to the request host: Vite proxies
+`/api` with `changeOrigin: true`, so the two can never match and comparing them
+rejects every save from the documented dashboard.
 
 **The automatic hook.** Gemini has always written a `viral_hook_text` for every
 clip and nothing ever burned it; it waited for someone to open the modal. Under
