@@ -48,7 +48,44 @@ class TestJobEnv:
     def test_explicit_false_overrides_the_server_default(self, monkeypatch):
         monkeypatch.setenv("BRAND_WATERMARK", "1")
         env = _build_job_env("k", [], "job1", branding=False)
-        assert "BRAND_WATERMARK" not in env
+        assert env["BRAND_WATERMARK"] == "0"
+
+    def test_explicit_false_is_recorded_as_off_for_the_job(self, monkeypatch):
+        """_register_job derives the persisted flag from the env, so "0" has to
+        read as off there too."""
+        monkeypatch.setenv("BRAND_WATERMARK", "1")
+        env = _build_job_env("k", [], "job1", branding=False)
+        assert (env.get("BRAND_WATERMARK") == "1") is False
+
+    def test_an_unticked_box_survives_the_childs_load_dotenv(self, tmp_path, monkeypatch):
+        """The regression this whole "0" business exists for.
+
+        The child runs main.py, which calls load_dotenv(); dotenv fills in any
+        variable that is ABSENT. Deleting the key therefore handed `.env` the
+        last word, and BRAND_WATERMARK=1 there re-branded a job the user had
+        explicitly unticked. Asserting the key's absence — which the first
+        version of this test did — passed happily while that was broken, so this
+        one asserts what the renderer actually decides.
+        """
+        from dotenv import load_dotenv
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("BRAND_WATERMARK=1\n")
+
+        monkeypatch.setenv("BRAND_WATERMARK", "1")   # the operator's default
+        child_env = _build_job_env("k", [], "job1", branding=False)
+
+        # Stand in for the subprocess: its os.environ is child_env, and then
+        # main.py calls load_dotenv() on the repo's .env.
+        for key in [k for k in os.environ if k.startswith("BRAND_")]:
+            monkeypatch.delenv(key, raising=False)
+        for key, value in child_env.items():
+            if key.startswith("BRAND_"):
+                monkeypatch.setenv(key, value)
+        load_dotenv(env_file)
+
+        import branding
+        assert branding.settings().enabled is False
 
     def test_explicit_true_turns_it_on_for_this_job(self, monkeypatch):
         monkeypatch.delenv("BRAND_WATERMARK", raising=False)
@@ -93,7 +130,8 @@ class TestResumeManifest:
         this job said no, and the redeploy must not overrule the user."""
         monkeypatch.setenv("BRAND_WATERMARK", "1")
         env = app_module._resume_mark_env(os.environ.copy(), {"branding": False})
-        assert "BRAND_WATERMARK" not in env
+        # "0", not absent: the resumed child calls load_dotenv() too.
+        assert env["BRAND_WATERMARK"] == "0"
 
     def test_a_ticked_box_survives_a_server_default_of_off(self, monkeypatch):
         monkeypatch.delenv("BRAND_WATERMARK", raising=False)
@@ -106,13 +144,13 @@ class TestResumeManifest:
         env = app_module._resume_mark_env(
             os.environ.copy(), {"watermark": True, "branding": False})
         assert env["WATERMARK"] == "1"
-        assert "BRAND_WATERMARK" not in env
+        assert env["BRAND_WATERMARK"] == "0"
 
     def test_a_manifest_predating_branding_resumes_unbranded(self, monkeypatch):
         """Old manifests on disk have no `branding` key at all."""
         monkeypatch.setenv("BRAND_WATERMARK", "1")
         env = app_module._resume_mark_env(os.environ.copy(), {"watermark": True})
-        assert "BRAND_WATERMARK" not in env
+        assert env["BRAND_WATERMARK"] == "0"
 
 
 class TestConfigEndpoint:

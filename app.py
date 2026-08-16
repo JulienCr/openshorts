@@ -591,12 +591,14 @@ def _resume_mark_env(env, manifest):
     and a job submitted with the branding box unticked would come back branded.
     Both flags are per job and neither can be re-derived after the fact, which
     is why the manifest stores the resolved decision rather than the request.
+
+    "off" is written as "0" rather than by deleting the key, for the same reason
+    as in _build_job_env: the resumed child calls load_dotenv(), which fills in
+    *absent* variables, so a deleted flag is one `.env` line away from coming
+    back on.
     """
     for var, key in (("WATERMARK", "watermark"), ("BRAND_WATERMARK", "branding")):
-        if manifest.get(key):
-            env[var] = "1"
-        else:
-            env.pop(var, None)
+        env[var] = "1" if manifest.get(key) else "0"
     return env
 
 
@@ -1784,7 +1786,12 @@ def _build_job_env(api_key: str, layouts, job_id: str, branding=None) -> dict:
     if branding is True:
         env["BRAND_WATERMARK"] = "1"
     elif branding is False:
-        env.pop("BRAND_WATERMARK", None)
+        # "0", not a pop. The child runs main.py, which calls load_dotenv(), and
+        # dotenv sets any variable that is *absent* — so deleting the key hands
+        # `.env` the last word and BRAND_WATERMARK=1 there silently re-brands a
+        # job the user explicitly unticked. Measured. An explicit "0" is already
+        # present, so dotenv's default override=False leaves it alone.
+        env["BRAND_WATERMARK"] = "0"
     return env
 
 
