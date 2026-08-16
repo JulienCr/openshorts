@@ -177,8 +177,26 @@ tried first and is wrong: the band's height depends on the logo's aspect ratio,
 which the operator picks, so a 3:1 logo at a 0.13 centre put its top edge at
 0.109 — back under TikTok's tabs. The tallest mark's top edge is pinned to
 `BRAND_Y_RATIO` and shorter marks are centred against it, so a taller asset
-grows downwards instead. A wide lockup (3:1 or flatter) also clears the hook
-card; a square one cannot and will sit behind it.
+grows downwards instead.
+
+**`MAX_BAND_HEIGHT_RATIO` is the other half of that.** Widths are a fraction of
+the clip *width*, but the safe band is measured in *height*, and the two only
+relate through the aspect ratio of the frame **and** of the asset — neither of
+which this code picks. `output_format` also delivers 1920×1080 and 1080×1080,
+where a 3:1 logo at 22% width spans 26% of the height instead of 13% and lands
+on the hook card. Measured across both frame shapes and both asset shapes, every
+combination except the 9:16 wide lockup collided. The clamp scales **only the
+mark that breaks the band**, not the whole band: scaling everything by the
+tallest one's excess was tried and dragged the badge down to 83×19, which is
+unreadable on a phone.
+
+**Settings are read per call (`settings()`), never frozen at import.** `main.py`
+is also a CLI, and there the import block runs *before* `load_dotenv()`, so an
+import-time read saw nothing from `.env` — the documented way to switch this on.
+Reordering that import would have papered over it; reading at call time removes
+the ordering constraint instead of documenting one no autoformatter can see.
+The sibling modules (`punch_in`, `layout_picker`, `screencast_layout`) still
+freeze at import and still have this hole on the direct-CLI path.
 
 Applied in `main.py` right before `auto_caption_clip`, in place on the canonical
 clip, like the watermark — `/api/subtitle` walks back through `subtitled_`

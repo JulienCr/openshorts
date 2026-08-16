@@ -21,6 +21,8 @@ import mediapipe as mp
 from google import genai
 from google.genai import types as genai_types
 
+# Safe to import before load_dotenv() below: branding reads its environment in
+# settings(), per call, precisely so this import's position is not load-bearing.
 import branding
 import gemini_worker
 import layout_picker
