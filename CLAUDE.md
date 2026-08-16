@@ -118,6 +118,16 @@ se desactiva porque el modelo diga `none`.
 
 ### Video Reframing Modes
 - **TRACK Mode** (single subject): MediaPipe face detection + YOLOv8 fallback with "Heavy Tripod" stabilization
+  (`camera.py`, extracted from `main.py` so CI actually runs its tests — `main`
+  cannot be imported without mediapipe/torch, which silently skipped every
+  regression test the camera has). A TRACK scene shorter than
+  `MIN_TRACK_SECONDS` (1.5) is rendered GENERAL instead: it costs a snap plus
+  a pan and there is no time to establish a subject. On real 60fps multicam
+  podcasts, runs of sub-second cuts were the main source of "the frame
+  lurches" — 72 → 47 px/s of on-screen crop motion, worst cut jump 517 → 125px.
+  The tracker's two damping windows are **durations** (`TRACKER_FORGET_SECONDS`,
+  `TRACKER_COOLDOWN_SECONDS`, both 1.0s); they used to be hard-coded 30-frame
+  counts whose comments said "1s", so at 60fps they ran at half strength.
 - **GENERAL Mode** (groups/landscapes): Blurred background layout preserving full width
 - **SPLIT Mode** (two-shot conversation, `split_layout.py`): both speakers stacked
   in half-frames. Off by default (`SPLIT_LAYOUT=1`); v2 engine only, so a
@@ -127,8 +137,15 @@ se desactiva porque el modelo diga `none`.
   what separates a real two-shot from a plano/contraplano, where stacking would
   show the same person twice. `SPLIT_TIGHTNESS` (default 0.8) trades a little
   upscale for keeping the other speaker out of each half.
-- **SCREENCAST / WIDE Modes** (`screencast_layout.py`, `SCREENCAST_LAYOUT=1`):
-  for scenes whose meaning lives outside the centre. Gemini reports each range's
+- **SCREENCAST / WIDE Modes** (`screencast_layout.py`, `SCREENCAST_LAYOUT=1`).
+  ⚠️ **Currently unreachable in production**, whatever `layouts=` says:
+  `main.py` calls `reframe_v2.render()` without `content_ranges`, and
+  `screencast_layout.detect_content_ranges()` has no caller anywhere outside
+  the tests, so the branches that would select these never run. The same is
+  true of INSET, which chains behind the screencast decision. Only TRACK,
+  GENERAL, SPLIT and ALTERNATE are actually reachable today. Everything below
+  describes the design, not the shipped behaviour.
+  For scenes whose meaning lives outside the centre. Gemini reports each range's
   **width_fraction**, and that is the gate — coverage was tried before and did
   not separate a spreadsheet from a corner ticker, while width does (a bug spans
   ~15% and survives any crop, a spreadsheet spans ~100% and cannot). Content
@@ -160,8 +177,36 @@ se desactiva porque el modelo diga `none`.
   replace it without touching the module.
 
 ### Key Classes
+
+Both live in `camera.py` and are re-exported from `main.py`. They are pure
+state machines over numbers, deliberately importable without the ML stack.
+
 - `SmoothedCameraman` - Stabilized camera movement with safe zone logic (prevents jitter)
-- `SpeakerTracker` - Prevents rapid speaker switching, handles temporary occlusions
+- `SpeakerTracker` - Prevents rapid speaker switching, handles temporary occlusions.
+  Note `stabilization_frames` is **dead**: `stabilization_threshold`,
+  `last_seen` and `locked_counter` are written and never read.
+
+### Tuning the camera
+
+`scripts/replay_camera.py` records a clip's detections once and replays them
+through cameraman variants, because MediaPipe is not deterministic and
+rendering twice measures the detector as much as the change. Two metrics, and
+picking the wrong one costs you the answer: `scene_metrics` excludes scene
+boundaries (bdd9e5d's definition — "a cut is supposed to reframe"), while
+`screen_motion` includes them. On multicam material the first says nothing is
+wrong and the second finds 517px lurches at the cuts; consecutive shots of the
+same room are not a reframe.
+
+**Record at stride 1.** A trace holding only every 4th frame, replayed with a
+different stride, consults frames with no detections at all — the camera then
+receives no target and the travel metric collapses, which reads as a
+spectacular win. That artefact produced a fake -57% before it was caught.
+
+Three plausible fixes measured WORSE or neutral and are not in the code: a
+Schmitt-trigger controller that settles on the subject instead of the deadzone
+edge (54.5 → 79.1 px/s, 0 scenes calmer, 4 busier), phasing the detection
+stride on scene starts (54.4 → 58.2), and resetting tracker identities at cuts
+(54.5 → 56.3, one scene 188 → 356).
 
 ### API Endpoints
 | Method | Route | Purpose |
@@ -196,6 +241,41 @@ se desactiva porque el modelo diga `none`.
   Fired once per job from `run_job_wrapper` after the R2 archive so the payload
   can carry durable download links; survives redeploys via the resume manifest.
   `PUBLIC_API_URL` env sets the absolute-URL base when behind a proxy.
+
+### Two renders per clip
+
+`POST /api/process` takes `variants`: `auto` (the pipeline's own per-scene
+framing) and/or `safe` (the whole 16:9 frame on a blurred background, camera
+fixed, no subject choice). `auto` is always delivered; the dashboard offers
+`safe` as a pre-checked box and shows an A/B toggle on each result card.
+
+The safe render is a dedicated `reframe_v2.render_general()`, **not** a flag
+threaded through `render()`. Three reasons, all load-bearing: `render()` has
+already paid `detect_scenes` and `analyze_scenes_strategy` (MediaPipe behind
+`DETECT_LOCK`) before its segment loop, and this needs no detection at all;
+`process_video_to_vertical` swallows any v2 exception and silently falls back
+to the v1 loop, which would ignore the flag and ship a tracked render as
+"safe"; and the layout flags are module globals that `layout_picker.apply()`
+mutates process-wide while three clips render in threads. Reading no flag
+makes "the camera never moves" structural rather than conditional.
+
+It renders from the same 16:9 temp as the auto variant, **before**
+`_process_one_clip`'s `finally` deletes it, and uses
+`full_width_content_height` rather than the default 0.42 ratio — the default
+crops the sides and throws away ~24% of the width, which is the opposite of
+what this variant promises.
+
+Naming is a **suffix** (`<base>_clip_3_safe.mp4`), never a prefix: the caption
+glob for a clip is `subtitled_*_<base>_clip_3.mp4` and requires the name to END
+there, so the two variants cannot capture each other's files. `clip["video_url"]`
+is untouched and a sibling `clip["variants"]` appears only when there are two,
+so webhook, MCP, ZIP and the local library are unaffected.
+
+Cloud collapses to auto-only: R2 archives one object per clip index and
+`archive_clip_edit` deletes the superseded one. **Disk doubles** (~82MB/clip →
+~164MB with captions on both), and in self-host `_enforce_output_size_cap`
+rmtree's the oldest projects permanently — raise `OUTPUT_MAX_GB` before
+turning this on.
 
 ### Concurrency Model
 
