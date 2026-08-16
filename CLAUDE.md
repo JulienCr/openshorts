@@ -183,8 +183,9 @@ grows downwards instead.
 the clip *width*, but the safe band is measured in *height*, and the two only
 relate through the aspect ratio of the frame **and** of the asset — neither of
 which this code picks. `output_format` also delivers 1920×1080 and 1080×1080,
-where a 3:1 logo at 22% width spans 26% of the height instead of 13% and lands
-on the hook card. Measured across both frame shapes and both asset shapes, every
+where a 3:1 logo at 22% width is 13% of the height instead of 4.1%, so the band
+runs from 13% to 26% and crosses the hook card at 20%. Measured across both
+frame shapes and both asset shapes, every
 combination except the 9:16 wide lockup collided. The clamp scales **only the
 mark that breaks the band**, not the whole band: scaling everything by the
 tallest one's excess was tried and dragged the badge down to 83×19, which is

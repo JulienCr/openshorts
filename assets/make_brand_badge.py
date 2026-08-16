@@ -93,5 +93,8 @@ if __name__ == "__main__":
     p.add_argument("--bg", type=_colour, default="#001979")
     p.add_argument("--out", default=os.path.join(REPO, "assets", "brand", "twitch.png"))
     a = p.parse_args()
-    os.makedirs(os.path.dirname(a.out), exist_ok=True)
-    build(a.handle, a.fg, a.bg, a.out)
+    # abspath first: a bare filename gives dirname "" and os.makedirs("") raises
+    # before anything is written.
+    out = os.path.abspath(a.out)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    build(a.handle, a.fg, a.bg, out)

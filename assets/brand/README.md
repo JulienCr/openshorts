@@ -10,7 +10,9 @@ bar: logo on the left, badge on the right.
 | `twitch.png` | 16% of the clip width | right, at the right margin |
 
 Either file may be absent — a logo with no badge, or a badge alone, both render
-fine. With neither, branding is a silent no-op.
+fine. With neither, branding does nothing: silently if `BRAND_WATERMARK` is off,
+and with one warning per run (not per clip) if it is on, so an enabled-but-empty
+setup tells you rather than looking like it worked.
 
 ## What makes a good asset
 

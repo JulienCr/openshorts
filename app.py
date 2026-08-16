@@ -29,9 +29,14 @@ load_dotenv()
 
 # Imported after load_dotenv: it freezes its LOCAL_STAGE_* settings at import time,
 # so importing it with the other modules above would read the environment before
-# the .env file has been applied. branding is the same — it resolves BRAND_DIR
-# and its ratios at import.
+# the .env file has been applied.
 import local_stage
+
+# branding, by contrast, is import-order-independent on purpose: it resolves
+# BRAND_DIR and its ratios in settings(), per call. Do not "optimise" that back
+# into module constants — main.py imports it before its own load_dotenv(), so
+# freezing at import is what made BRAND_WATERMARK=1 in .env a silent no-op on
+# the direct-CLI path.
 from branding import assets_present as branding_assets_present
 
 # Constants
@@ -578,6 +583,23 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
         print(f"⚠️ Could not write resume manifest for {job_id}: {e}")
 
 
+def _resume_mark_env(env, manifest):
+    """Re-apply the burned-in mark decisions a resume manifest recorded.
+
+    A resumed job rebuilds its env from os.environ, which holds the *server's*
+    defaults — so without this a free-plan job would come back unwatermarked,
+    and a job submitted with the branding box unticked would come back branded.
+    Both flags are per job and neither can be re-derived after the fact, which
+    is why the manifest stores the resolved decision rather than the request.
+    """
+    for var, key in (("WATERMARK", "watermark"), ("BRAND_WATERMARK", "branding")):
+        if manifest.get(key):
+            env[var] = "1"
+        else:
+            env.pop(var, None)
+    return env
+
+
 def _clear_resume_manifest(job_id):
     """Drop the manifest once a job reaches a terminal state, so it is never
     re-run on a later restart. Only an interrupted (still-running) job keeps it."""
@@ -647,14 +669,7 @@ def _resume_interrupted_jobs() -> set:
                 env["GEMINI_API_KEY"] = managed_keys.gemini_key()
             except Exception:
                 pass
-        if m.get("watermark"):
-            env["WATERMARK"] = "1"
-        else:
-            env.pop("WATERMARK", None)
-        if m.get("branding"):
-            env["BRAND_WATERMARK"] = "1"
-        else:
-            env.pop("BRAND_WATERMARK", None)
+        _resume_mark_env(env, m)
 
         m["attempts"] = attempts
         try:

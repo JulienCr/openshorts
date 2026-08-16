@@ -4,6 +4,7 @@ plan_marks/build_filter are pure, so the whole safe-zone argument is checked
 here without rendering a frame. The numbers that matter are the *bands*: the
 platform chrome above, the hook card below, the captions below that.
 """
+import os
 import subprocess
 
 import pytest
@@ -17,7 +18,33 @@ PLATFORM_CHROME_BOTTOM = 0.12   # TikTok's tabs / Shorts' search icons
 HOOK_TOP_POSITION = 0.20        # hooks.py: int(video_height * 0.20)
 CAPTION_TOP = 0.59              # subtitles.py SAFE_MARGIN_V, two lines
 
-CFG = settings()
+
+@pytest.fixture(autouse=True)
+def _isolate_brand_env(monkeypatch):
+    """Every BRAND_* override off, for every test in this module.
+
+    Without it these assertions read the developer's own environment: anyone
+    following the new .env documentation (BRAND_WATERMARK=1, a custom ratio)
+    would see the hard-coded geometry numbers fail for reasons that have nothing
+    to do with the code.
+    """
+    for key in [k for k in os.environ if k.startswith("BRAND_")]:
+        monkeypatch.delenv(key, raising=False)
+
+
+# Built from the DEFAULT_* constants rather than settings(), because module
+# scope runs before the fixture above can clear anything.
+CFG = branding.Settings(
+    enabled=False,
+    brand_dir=branding.DEFAULT_BRAND_DIR,
+    logo_file=branding.DEFAULT_LOGO_FILE,
+    badge_file=branding.DEFAULT_BADGE_FILE,
+    y_ratio=branding.DEFAULT_Y_RATIO,
+    margin_ratio=branding.DEFAULT_MARGIN_RATIO,
+    logo_width_ratio=branding.DEFAULT_LOGO_WIDTH_RATIO,
+    badge_width_ratio=branding.DEFAULT_BADGE_WIDTH_RATIO,
+    opacity=branding.DEFAULT_OPACITY,
+)
 
 LOGO = ("assets/brand/logo.png", (900, 300), CFG.logo_width_ratio, "left")
 BADGE = ("assets/brand/twitch.png", (1200, 200), CFG.badge_width_ratio, "right")
@@ -52,6 +79,15 @@ class TestSettings:
     def test_a_malformed_ratio_falls_back_instead_of_raising(self, monkeypatch):
         monkeypatch.setenv("BRAND_Y_RATIO", "not-a-number")
         assert settings().y_ratio == branding.DEFAULT_Y_RATIO
+
+    @pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "Infinity"])
+    def test_non_finite_ratios_fall_back(self, monkeypatch, raw):
+        """float() accepts nan/inf, and they only blow up later, in plan_marks'
+        int(vw * ratio) — past every guard, so the clip loses its captions."""
+        monkeypatch.setenv("BRAND_LOGO_WIDTH_RATIO", raw)
+        assert settings().logo_width_ratio == branding.DEFAULT_LOGO_WIDTH_RATIO
+        # And the geometry it feeds still works.
+        assert plan_marks(1080, 1920, [LOGO])[0].width > 0
 
     def test_module_never_froze_a_flag_at_import(self):
         """Regression guard: an ENABLED constant would reintroduce the bug."""
@@ -293,7 +329,6 @@ class TestApplyBrandingGuards:
 
         monkeypatch.setattr(branding.subprocess, "run", boom)
         assert branding.apply_branding(str(clip)) is False
-        import os
         assert not os.path.exists(leftover), "temp file must be cleaned up"
 
     def test_ffmpeg_missing_does_not_escape(self, one_asset, monkeypatch, tmp_path):
@@ -303,3 +338,25 @@ class TestApplyBrandingGuards:
         monkeypatch.setattr(branding.subprocess, "run",
                             lambda *a, **kw: (_ for _ in ()).throw(OSError("no ffmpeg")))
         assert branding.apply_branding(str(clip)) is False
+
+    def test_a_failing_swap_does_not_escape(self, one_asset, monkeypatch, tmp_path):
+        """os.replace can fail too — a full disk, a transient FS error. Letting
+        it through would abort an already-rendered clip before its captions."""
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"x")
+        tmp = str(clip) + ".brand.mp4"
+
+        class _Ok:
+            returncode = 0
+            stderr = b""
+
+        def fake_run(*a, **kw):
+            open(tmp, "wb").write(b"branded")
+            return _Ok()
+
+        monkeypatch.setattr(branding, "probe_size", lambda p: (1080, 1920))
+        monkeypatch.setattr(branding.subprocess, "run", fake_run)
+        monkeypatch.setattr(branding.os, "replace",
+                            lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+        assert branding.apply_branding(str(clip)) is False
+        assert not os.path.exists(tmp), "temp file must be cleaned up"

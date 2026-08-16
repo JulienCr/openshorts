@@ -42,6 +42,7 @@ Off by default (``BRAND_WATERMARK=1``). Turned on with nothing in
 ``assets/brand/`` it warns once per run, not once per clip — a ten-clip job
 should not print the same line ten times.
 """
+import math
 import os
 import subprocess
 from collections import namedtuple
@@ -90,10 +91,10 @@ MIN_MARK_WIDTH = 80
 # mark looks — but height is what eats the safe band, and the two are only
 # related through the aspect ratio of the frame *and* of the asset. Neither is
 # ours to choose: `output_format` also produces 1920x1080 and 1080x1080, and the
-# operator picks the logo. Unclamped, a 3:1 logo at 22% width spans 13% of a
-# 9:16 frame's height but 26% of a 16:9 one, which walks straight into the hook
-# card at 20%. Measured across both frame shapes and both asset shapes, every
-# combination except the 9:16 wide lockup collided.
+# operator picks the logo. Unclamped, a 3:1 logo at 22% width is 4.1% of a 9:16
+# frame's height but 13% of a 16:9 one, so on landscape the band runs from 13%
+# to 26% and crosses the hook card at 20%. Measured across both frame shapes and
+# both asset shapes, every combination except the 9:16 wide lockup collided.
 #
 # 0.06 is chosen so the intended case — a wide lockup on a vertical clip, 4.1% —
 # is untouched, and everything else is scaled down until it fits rather than
@@ -110,15 +111,25 @@ _warned_missing = False
 
 
 def _env_float(name, default):
-    """A malformed ratio must not take the whole job down with a ValueError."""
+    """A malformed ratio must not take the whole job down with a ValueError.
+
+    ``float()`` happily returns nan and inf, which parse fine here and then blow
+    up much later in ``plan_marks`` on ``int(vw * ratio)`` — past every guard,
+    so a --skip-analysis run would fail after rendering its output and a normal
+    clip would lose its captions. isfinite is what makes the fallback real.
+    """
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         print(f"   ⚠️ {name}={raw!r} is not a number; using {default}.")
         return default
+    if not math.isfinite(value):
+        print(f"   ⚠️ {name}={raw!r} is not a finite number; using {default}.")
+        return default
+    return value
 
 
 def settings():
@@ -358,7 +369,16 @@ def apply_branding(video_path, cfg=None):
         return False
 
     if result.returncode == 0 and os.path.exists(tmp_path):
-        os.replace(tmp_path, video_path)
+        # os.replace can fail too (a transient filesystem error, a full disk).
+        # Letting that through would abort an already-rendered clip before its
+        # captions — the same failure the ffmpeg guard above exists to prevent.
+        try:
+            os.replace(tmp_path, video_path)
+        except OSError as e:
+            print(f"   ⚠️ Could not swap in the branded clip ({e}); "
+                  f"clip left unbranded.")
+            _remove_quietly(tmp_path)
+            return False
         print(f"   🏷️  Branding applied ({len(placements)} mark(s)).")
         return True
 
