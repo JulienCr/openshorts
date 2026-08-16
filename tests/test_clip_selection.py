@@ -415,6 +415,27 @@ class TestSnapClipToWords:
                                          min_duration=1.0, max_duration=60.0)
         assert start <= 10.0, f"cut at {start}, inside the word from 10.0 to 20.0"
 
+    def test_duration_repair_does_not_pad_into_contiguous_speech(self):
+        """Contiguous words leave no room for a fixed tail, so the old flat
+        +0.2s in the min-duration repair landed inside the next word — and that
+        pair is the first one the preference list tries, so it was returned.
+        """
+        words = [_word(f"w{i}", float(i), float(i + 1)) for i in range(40)]
+        _start, end = snap_clip_to_words(0.0, 5.0, words, 100.0)
+        assert end == 15.0, f"cut at {end}, inside the word spanning {int(end)}-{int(end) + 1}"
+
+    def test_duration_repair_skips_an_end_buried_in_an_overlapping_word(self):
+        """The repair picked from every word end, including ones inside a word
+        still being spoken — the defect the snapping path had just been taught
+        to avoid.
+        """
+        words = [_word("early", 5.0, 6.0), _word("looong", 20.0, 40.0),
+                 _word("in", 25.0, 26.0), _word("tail", 45.0, 46.0)]
+        _start, end = snap_clip_to_words(5.0, 6.5, words, 100.0)
+        # The nested word's end (26.0) is the first one past the 15s target and
+        # sits inside the word running to 40.0; the repair must skip it.
+        assert not 20.0 < end < 40.0, f"cut at {end}, inside the word 20.0-40.0"
+
     def test_failed_repair_keeps_the_bound_that_did_snap(self):
         """The old code returned the raw input the moment the duration repair
         failed, throwing away a start that had snapped correctly because the

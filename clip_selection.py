@@ -393,6 +393,29 @@ def _nearest_cuttable(time, boundaries, starts, max_ends):
     return min(cuttable or boundaries, key=lambda b: abs(b - time))
 
 
+def _cut_after(word_end, starts, max_tail):
+    """Cut point just past a word, reaching into the following silence only.
+
+    The padding comes from the gap that actually follows, never from a fixed
+    constant: contiguous speech leaves no room at all, and a constant there
+    puts the cut inside the next word. Every place that closes a clip goes
+    through this, including the duration repairs — that is the point of it
+    being a function.
+    """
+    following = [s for s in starts if s >= word_end]
+    gap = (min(following) - word_end) if following else None
+    tail = max_tail if gap is None else min(max_tail, max(0.0, gap) / 2)
+    return word_end + tail
+
+
+def _cut_before(word_start, ends, max_lead):
+    """Mirror of _cut_after: cut point just before a word."""
+    preceding = [e for e in ends if e <= word_start]
+    gap = (word_start - max(preceding)) if preceding else None
+    lead = max_lead if gap is None else min(max_lead, max(0.0, gap) / 2)
+    return max(0.0, word_start - lead)
+
+
 def _falls_inside_a_word(time, starts, max_ends, open_edge):
     """True when ``time`` lands inside a spoken word rather than in a gap.
 
@@ -485,30 +508,39 @@ def snap_clip_to_words(start, end, words, video_duration,
     new_start = float(start)
     word_start = _snap_start_to_speech(new_start, starts, max_ends, max_silence_skip)
     if word_start is not None:
-        prev_ends = [e for e in ends if e <= word_start]
-        lead = min(max_lead, max(0.0, word_start - max(prev_ends)) / 2) if prev_ends else max_lead
-        new_start = max(0.0, word_start - lead)
+        new_start = _cut_before(word_start, ends, max_lead)
 
     # END: onto a word end, then trail into the silence after it.
     new_end = float(end)
     word_end = _snap_end_to_speech(new_end, ends, starts, max_ends, max_silence_skip)
     if word_end is not None:
-        next_starts = [s for s in starts if s >= word_end]
-        tail = min(max_tail, max(0.0, min(next_starts) - word_end) / 2) if next_starts else max_tail
-        new_end = min(float(video_duration), word_end + tail)
+        new_end = min(float(video_duration), _cut_after(word_end, starts, max_tail))
 
-    # Repair the duration while staying on word boundaries.
+    # Repair the duration — through the same two rules as above, not around
+    # them. This path used to pick a raw word end and add a flat 0.2s, so it
+    # reintroduced both defects the snapping had just fixed: an end buried
+    # inside an overlapping word, and padding that lands in the next word when
+    # speech is contiguous. And it did so invisibly, because the repaired pair
+    # is the first one the preference list tries.
+    cuttable_ends = [e for e in ends if not _is_mid_word(e, starts, max_ends)]
     repaired_end = new_end
     if repaired_end - new_start < min_duration:
         target = new_start + min_duration
-        later = [e for e in ends if e >= target]
+        later = [e for e in cuttable_ends if e >= target]
         if later and later[0] - new_start <= max_duration:
-            repaired_end = min(float(video_duration), later[0] + 0.2)
+            repaired_end = min(float(video_duration),
+                               _cut_after(later[0], starts, max_tail))
     if repaired_end - new_start > max_duration:
         target = new_start + max_duration
-        earlier = [e for e in ends if new_start < e <= target]
-        repaired_end = (max(earlier) + 0.2) if earlier else target
-        repaired_end = min(repaired_end, new_start + max_duration, float(video_duration))
+        earlier = [e for e in cuttable_ends if new_start < e <= target]
+        if earlier:
+            repaired_end = min(_cut_after(max(earlier), starts, max_tail),
+                               new_start + max_duration, float(video_duration))
+        elif not _is_mid_word(target, starts, max_ends):
+            repaired_end = min(target, float(video_duration))
+        # Neither a cuttable end nor a cuttable target inside the limit: leave
+        # the pair over-long and let the preference list below reject it, rather
+        # than invent a cut in the middle of a word to satisfy the duration.
 
     # Take the most-snapped pair that is actually valid. The old code returned
     # the raw input the moment the repair failed, which threw away a bound that
