@@ -32,6 +32,11 @@ export default function MediaInput({ onProcess, isProcessing }) {
     // today's behaviour instead of dropping the guard silently.
     const [requireRights, setRequireRights] = useState(true);
     const [outputFormat, setOutputFormat] = useState('vertical'); // vertical | horizontal | square
+    // Channel branding. The checkbox only appears when the server has a brand
+    // asset to burn (brandingAvailable); its initial state mirrors the operator's
+    // BRAND_WATERMARK default, so unticking it is an override for this job only.
+    const [brandingAvailable, setBrandingAvailable] = useState(false);
+    const [branding, setBranding] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
     const infoRef = useRef(null);
 
@@ -57,6 +62,10 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 // `=== false`, not `!cfg.billingEnabled`: a server too old to
                 // send the key keeps the box rather than losing it by accident.
                 if (cfg && cfg.billingEnabled === false) setRequireRights(false);
+                if (cfg && cfg.brandingAvailable) {
+                    setBrandingAvailable(true);
+                    setBranding(!!cfg.brandingDefault);
+                }
             })
             .catch(() => {});
     }, []);
@@ -129,18 +138,22 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!rightsOk) return;
+        // Only sent when the server offered the choice: on a server with no
+        // brand asset, `undefined` leaves the decision to BRAND_WATERMARK
+        // instead of pinning it to this build's idea of the default.
+        const brand = brandingAvailable ? branding : undefined;
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat });
+            onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat, branding: brand });
         } else if (mode === 'file' && file) {
-            onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat });
+            onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat, branding: brand });
         } else if (mode === 'local' && localSelected.size) {
             const names = [...localSelected];
             // One file takes the single-job path it always took, byte for byte.
             // The batch endpoint only comes into play from two, so the common
             // case gains nothing to go wrong.
             onProcess(names.length === 1
-                ? { type: 'local', payload: names[0], acknowledged: true, outputFormat }
-                : { type: 'local-batch', payload: names, acknowledged: true, outputFormat });
+                ? { type: 'local', payload: names[0], acknowledged: true, outputFormat, branding: brand }
+                : { type: 'local-batch', payload: names, acknowledged: true, outputFormat, branding: brand });
         }
     };
 
@@ -407,6 +420,18 @@ export default function MediaInput({ onProcess, isProcessing }) {
                         })}
                     </div>
                 </div>
+
+                {brandingAvailable && (
+                    <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={branding}
+                            onChange={(e) => setBranding(e.target.checked)}
+                            className="mt-0.5 accent-[var(--color-accent)] cursor-pointer"
+                        />
+                        <span>Burn the channel logo into every clip, clear of the captions and the platform UI.</span>
+                    </label>
+                )}
 
                 {requireRights && (
                     <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
