@@ -194,6 +194,40 @@ def variant_filename(clip_filename, variant):
     return f"{stem}_{variant}{dot}{ext}"
 
 
+def clear_stale_variants(output_dir, clip_filename):
+    """Drop a previous run's variant files for this clip index.
+
+    Variant files are resolved from the clip INDEX, and re-analysing the same
+    source can return a different number of clips — so a
+    ``<base>_clip_7_safe.mp4`` left by a longer run would otherwise surface as
+    a variant of a clip that was never rendered with one.
+
+    The burned-in copies go too. Dropping only the pristine file already hides
+    the variant (app.py tests existence on the pristine name), but it leaves
+    every ``subtitled_<ts>_<clip>_safe.mp4`` on disk with nothing able to reach
+    it again — dead weight on the one deployment where the size cap deletes
+    whole projects for good. Found by re-running a job without the flag and
+    listing the directory, not by reasoning about it.
+    """
+    import glob
+
+    removed = []
+    for variant in VARIANTS:
+        if variant == VARIANT_AUTO:
+            continue
+        name = variant_filename(clip_filename, variant)
+        candidates = [os.path.join(output_dir, name)]
+        candidates += glob.glob(os.path.join(output_dir, f"subtitled_*_{name}"))
+        for path in candidates:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    removed.append(os.path.basename(path))
+            except OSError as e:
+                print(f"   ⚠️ Could not remove stale variant {path}: {e}")
+    return removed
+
+
 def _probe_dimensions(video_path):
     """(width, height) of the first video stream, via ffprobe. Raises on failure.
 

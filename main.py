@@ -928,24 +928,6 @@ def render_safe_variant(clip_temp_path, output_dir, clip_filename, output_format
     return safe_path
 
 
-def clear_stale_variants(output_dir, clip_filename):
-    """Drop a previous run's variant files for this clip index.
-
-    Variant files are resolved from the clip INDEX, and a re-analysis of the
-    same source can return a different number of clips — so a
-    `<base>_clip_7_safe.mp4` left over from a longer run would otherwise
-    surface as a variant of a clip that was never rendered with one.
-    """
-    import reframe_v2
-    for variant in reframe_v2.VARIANTS:
-        if variant == reframe_v2.VARIANT_AUTO:
-            continue
-        stale = os.path.join(
-            output_dir, reframe_v2.variant_filename(clip_filename, variant))
-        if os.path.exists(stale):
-            os.remove(stale)
-
-
 # Watermark geometry, as fractions of the clip width/height.
 #
 # Vertical placement is the whole point: the top and bottom strips of a 9:16
@@ -1649,7 +1631,7 @@ if __name__ == '__main__':
 
                 try:
                     if reframe_v2.VARIANT_SAFE not in variants:
-                        clear_stale_variants(output_dir, clip_filename)
+                        reframe_v2.clear_stale_variants(output_dir, clip_filename)
 
                     # ffmpeg cut — re-encoding for precision on strict seconds
                     cut_command = [

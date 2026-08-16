@@ -1,6 +1,7 @@
 from reframe_v2 import (
     DELIVERY_MIN_WIDTH,
     GENERAL_CONTENT_HEIGHT_RATIO,
+    clear_stale_variants,
     concat_list_content,
     dedupe_sendcmd_lines,
     delivery_size,
@@ -243,3 +244,46 @@ def test_general_graph_has_no_time_varying_construct():
     graph = general_filtergraph(1080, 1920)
     assert "sendcmd" not in graph
     assert "enable=" not in graph
+
+
+class TestClearStaleVariants:
+    """Re-running a job without the flag must not leave orphans behind.
+
+    Found end-to-end: clearing only the pristine file hid the toggle correctly
+    but stranded every burned-in copy on disk, unreachable and uncounted.
+    """
+
+    def _touch(self, d, name):
+        (d / name).write_text("x")
+
+    def test_removes_pristine_and_burned_copies(self, tmp_path):
+        for name in ("Talk_clip_1.mp4", "subtitled_100_Talk_clip_1.mp4",
+                     "Talk_clip_1_safe.mp4", "subtitled_200_Talk_clip_1_safe.mp4"):
+            self._touch(tmp_path, name)
+
+        removed = clear_stale_variants(str(tmp_path), "Talk_clip_1.mp4")
+
+        assert sorted(removed) == ["Talk_clip_1_safe.mp4",
+                                   "subtitled_200_Talk_clip_1_safe.mp4"]
+        left = sorted(p.name for p in tmp_path.iterdir())
+        assert left == ["Talk_clip_1.mp4", "subtitled_100_Talk_clip_1.mp4"]
+
+    def test_never_touches_the_auto_variant(self, tmp_path):
+        # The clip the user actually asked for. Suffix matching is what keeps
+        # these apart, so this is the assertion that a regression would trip.
+        for name in ("Talk_clip_1.mp4", "subtitled_100_Talk_clip_1.mp4"):
+            self._touch(tmp_path, name)
+
+        assert clear_stale_variants(str(tmp_path), "Talk_clip_1.mp4") == []
+        assert len(list(tmp_path.iterdir())) == 2
+
+    def test_leaves_other_clip_indices_alone(self, tmp_path):
+        self._touch(tmp_path, "Talk_clip_1_safe.mp4")
+        self._touch(tmp_path, "Talk_clip_2_safe.mp4")
+
+        clear_stale_variants(str(tmp_path), "Talk_clip_1.mp4")
+
+        assert [p.name for p in tmp_path.iterdir()] == ["Talk_clip_2_safe.mp4"]
+
+    def test_is_a_no_op_on_a_clean_directory(self, tmp_path):
+        assert clear_stale_variants(str(tmp_path), "Talk_clip_1.mp4") == []
