@@ -8,6 +8,7 @@ from clip_selection import (
     clip_count_targets,
     drop_overlapping_clips,
     merge_overlapping_windows,
+    reconcile_scores,
     shortlist_size,
     snap_clip_to_words,
     lookup_model_prices,
@@ -131,6 +132,70 @@ class TestDropOverlappingClips:
     def test_empty_input(self):
         assert drop_overlapping_clips([]) == []
         assert drop_overlapping_clips(None) == []
+
+    def test_collision_is_resolved_on_score_not_position(self):
+        """The detail prompt asks for best-first order but cannot guarantee it,
+        and the candidate payload it reads is chronological — so position is
+        exactly the wrong thing to stake the choice on.
+        """
+        weak = {"start": 10, "end": 40, "predicted_score": 40, "id": "weak"}
+        strong = {"start": 12, "end": 42, "predicted_score": 90, "id": "strong"}
+        kept = drop_overlapping_clips([weak, strong])
+        assert [c["id"] for c in kept] == ["strong"]
+
+    def test_output_keeps_the_models_order(self):
+        first = {"start": 100, "end": 130, "predicted_score": 50, "id": "first"}
+        second = {"start": 10, "end": 40, "predicted_score": 90, "id": "second"}
+        kept = drop_overlapping_clips([first, second])
+        assert [c["id"] for c in kept] == ["first", "second"]
+
+    def test_missing_score_does_not_crash_and_loses_to_a_scored_clip(self):
+        unscored = {"start": 10, "end": 40, "id": "unscored"}
+        scored = {"start": 12, "end": 42, "predicted_score": 10, "id": "scored"}
+        assert [c["id"] for c in drop_overlapping_clips([unscored, scored])] == ["scored"]
+
+
+class TestReconcileScores:
+    """"Score EVERY window" is an instruction, not a guarantee: the response
+    schema accepts any list length, so an omitted window would drop out of the
+    ranking entirely — the same loss the batch cap used to cause.
+    """
+
+    def _windows(self, n=3):
+        return [{"id": f"window_{i:03d}", "start": i * 10.0, "end": i * 10.0 + 10}
+                for i in range(1, n + 1)]
+
+    def test_omitted_windows_are_ranked_last_not_dropped(self):
+        windows = self._windows()
+        scored, missing = reconcile_scores([{"id": "window_002", "score": 70}], windows)
+        assert missing == ["window_001", "window_003"]
+        assert {e["id"] for e in scored} == {w["id"] for w in windows}
+        assert [e["score"] for e in scored if e["id"] != "window_002"] == [0, 0]
+
+    def test_nothing_missing_when_everything_is_scored(self):
+        windows = self._windows()
+        payload = [{"id": w["id"], "score": 50} for w in windows]
+        scored, missing = reconcile_scores(payload, windows)
+        assert missing == []
+        assert scored == payload
+
+    def test_hallucinated_ids_are_dropped(self):
+        windows = self._windows(1)
+        scored, missing = reconcile_scores(
+            [{"id": "window_001", "score": 80}, {"id": "window_999", "score": 99}], windows)
+        assert [e["id"] for e in scored] == ["window_001"]
+        assert missing == []
+
+    def test_duplicate_ids_keep_the_first(self):
+        windows = self._windows(1)
+        scored, _ = reconcile_scores(
+            [{"id": "window_001", "score": 80}, {"id": "window_001", "score": 10}], windows)
+        assert [e["score"] for e in scored] == [80]
+
+    def test_empty_response_still_yields_every_window(self):
+        windows = self._windows()
+        scored, missing = reconcile_scores([], windows)
+        assert len(scored) == 3 and len(missing) == 3
 
 
 class TestShortlistSize:
@@ -263,6 +328,27 @@ class TestSnapClipToWords:
         """
         words = self._words_with_gap(10, 60)
         assert snap_clip_to_words(15.0, 35.0, words, 80.0) == (15.0, 35.0)
+
+    def test_bound_in_a_short_pause_still_walks_the_right_way(self):
+        """Copilot's case: words at 10s and 12s, a start proposed at 10.9s. The
+        nearest word start is 10.0, but 10.9 is in the pause after it, so
+        opening there would replay the tail of the previous phrase.
+        """
+        words = [_word("a", 10.0, 10.8), _word("b", 12.0, 12.8),
+                 _word("c", 30.0, 30.8), _word("d", 32.0, 32.8)]
+        start, _end = snap_clip_to_words(10.9, 32.5, words, 100.0,
+                                         min_duration=1.0, max_duration=60.0)
+        assert start == 12.0 - 0.35  # walked forward, not back to 10.0
+
+    def test_end_at_a_sentence_marker_does_not_swallow_the_next_word(self):
+        """The detail prompt asks for `end` at the marker of the sentence AFTER
+        the last one wanted, so the nearest word END is frequently the first
+        word of a sentence the clip must not contain.
+        """
+        words = [_word("last", 28.0, 29.0), _word("next", 30.5, 31.2)]
+        _start, end = snap_clip_to_words(10.0, 30.5, words, 100.0,
+                                         min_duration=1.0, max_duration=60.0)
+        assert end == 29.0 + 0.45  # the previous word's end, not 31.2
 
     def test_failed_repair_keeps_the_bound_that_did_snap(self):
         """The old code returned the raw input the moment the duration repair

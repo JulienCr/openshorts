@@ -81,7 +81,7 @@ la croiser avec ce que l'amont remue au même endroit.
 | `dashboard/src/components/HistoryTab.jsx` | +12 | 3 | bibliothèque de projets |
 
 `app.py` et `main.py` concentrent le danger : gros patch **et** fichier remué en
-amont. `MediaInput.jsx` porte le troisième plus gros patch du fork mais l'amont
+amont. `MediaInput.jsx` porte le quatrième plus gros patch du fork mais l'amont
 n'y touche presque pas, donc il passe sans bruit ; `clip_selection.py` est le
 cas confortable, un très gros écart dans un fichier que l'amont ignore
 quasiment (2 commits sur 90 jours) — c'est d'ailleurs la raison de l'y mettre

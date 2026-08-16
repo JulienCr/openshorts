@@ -105,6 +105,35 @@ def shortlist_size(n_windows):
     return max(3, min(ceiling, n))
 
 
+def reconcile_scores(scored, windows):
+    """Give every submitted window a score, and report the ones Gemini skipped.
+
+    ``Score EVERY window`` is an instruction, not a guarantee: the response
+    schema accepts any list length, so a window the model simply omits would
+    vanish from the ranking entirely and never reach the detail pass — which is
+    the very failure the batch cap used to cause, arriving through a different
+    door. Whatever the model does not rank lands at the bottom rather than
+    outside, so `shortlist_size` stays the only thing that removes material.
+
+    Returns (scored, missing_ids). Entries whose id matches no submitted window
+    are dropped: those are hallucinations, not omissions.
+    """
+    known = {w["id"] for w in windows}
+    seen = set()
+    reconciled = []
+    for entry in scored or []:
+        window_id = entry.get("id")
+        if window_id not in known or window_id in seen:
+            continue
+        seen.add(window_id)
+        reconciled.append(entry)
+
+    missing = [w["id"] for w in windows if w["id"] not in seen]
+    reconciled.extend({"id": window_id, "score": 0, "reason": "not scored"}
+                      for window_id in missing)
+    return reconciled, missing
+
+
 def transcript_segments(transcript_result):
     """The transcript's non-empty segments as (start, end, text) tuples.
 
@@ -259,15 +288,22 @@ MAX_CLIP_OVERLAP_SECONDS = 1.0
 
 
 def drop_overlapping_clips(shorts, max_overlap=MAX_CLIP_OVERLAP_SECONDS):
-    """Remove clips that repeat a better-ranked clip's footage.
+    """Remove clips that repeat a stronger clip's footage.
 
-    Input order is Gemini's ranking (best first), so the first clip of a
-    colliding pair is the one worth keeping. Order is preserved; nothing is
-    re-sorted. Degenerate entries are dropped too — they would only reach
-    ffmpeg and fail there.
+    Collisions are resolved on ``predicted_score``, not on array position. The
+    detail prompt does ask for best-first order, but an instruction is not a
+    guarantee and the candidate payload it reads is chronological, so position
+    is exactly the wrong thing to stake the choice on — it would discard the
+    stronger clip whenever the model answered in transcript order. The score is
+    in the schema; use it.
+
+    Output keeps the model's original order: whatever ranking it did apply is
+    still the best information available for numbering the delivered clips.
+    Degenerate entries are dropped too — they would only reach ffmpeg and fail
+    there.
     """
-    kept = []
-    for clip in shorts or []:
+    candidates = []
+    for position, clip in enumerate(shorts or []):
         try:
             start = float(clip.get("start"))
             end = float(clip.get("end"))
@@ -275,12 +311,23 @@ def drop_overlapping_clips(shorts, max_overlap=MAX_CLIP_OVERLAP_SECONDS):
             continue
         if not end > start:
             continue
+        try:
+            score = float(clip.get("predicted_score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        candidates.append((position, start, end, score, clip))
+
+    # Strongest first, ties broken by the model's own order.
+    kept = []
+    for position, start, end, _score, clip in sorted(
+            candidates, key=lambda c: (-c[3], c[0])):
         collides = any(
-            min(end, float(k["end"])) - max(start, float(k["start"])) > max_overlap
-            for k in kept)
+            min(end, k_end) - max(start, k_start) > max_overlap
+            for _p, k_start, k_end, _s, _c in kept)
         if not collides:
-            kept.append(clip)
-    return kept
+            kept.append((position, start, end, _score, clip))
+
+    return [clip for _p, _s, _e, _sc, clip in sorted(kept, key=lambda c: c[0])]
 
 
 # How far the snapper may walk to reach speech when a bound lands in silence.
@@ -290,16 +337,43 @@ def drop_overlapping_clips(shorts, max_overlap=MAX_CLIP_OVERLAP_SECONDS):
 MAX_SILENCE_SKIP = 10.0
 
 
-def _snap_start_to_speech(start, starts, search_window, max_silence_skip):
+def _falls_inside_a_word(time, intervals, open_edge):
+    """True when ``time`` lands inside a spoken word rather than in a gap.
+
+    ``intervals`` is the PAIRED (start, end) list, sorted by start — not two
+    independently sorted lists, whose indices only line up as long as no word
+    overlaps its neighbour.
+
+    This, not a distance threshold, is what decides how a bound gets snapped.
+    Inside a word the model pointed at speech and the nearest boundary is the
+    right answer; in a gap it pointed at nothing and the direction of travel
+    matters (see the callers). Distance cannot tell those apart: a bound 0.8s
+    into a 2s pause is "near" a word and still in dead air.
+
+    ``open_edge`` names the edge that counts as OUTSIDE, and the asymmetry is
+    load-bearing. A clip end landing exactly on a word's start means "stop
+    before this word", not "one instant inside it" — and that is the common
+    case, not a corner one, because the detail prompt asks for `end` at the
+    marker of the next sentence. Symmetrically a start landing on a word's end
+    means "begin after this word".
+    """
+    index = bisect.bisect_right(intervals, (time, float("inf"))) - 1
+    if index < 0:
+        return False
+    word_start, word_end = intervals[index]
+    if open_edge == "start":
+        return word_start < time <= word_end
+    return word_start <= time < word_end
+
+
+def _snap_start_to_speech(start, starts, intervals, max_silence_skip):
     """Word start the clip should open on, or None to leave the bound alone."""
-    nearby = [s for s in starts if abs(s - start) <= search_window]
-    if nearby:
-        return min(nearby, key=lambda s: abs(s - start))
-    # Nothing within reach means the bound landed in a silence — which is
-    # exactly the case that needs repairing, and exactly the one the search
-    # window used to give up on. Walk FORWARD: the nearest word overall may be
-    # the tail of the previous sentence, on the wrong side of the gap, and
-    # opening on dead air is what kills the first two seconds.
+    if _falls_inside_a_word(start, intervals, open_edge="end"):
+        return min(starts, key=lambda s: abs(s - start))
+    # In a gap: walk FORWARD. The nearest word overall may be the tail of the
+    # previous sentence, on the wrong side of the pause — and since the detail
+    # prompt now takes `start` from a sentence marker, snapping back would pull
+    # in the end of the sentence before the one the model chose.
     index = bisect.bisect_left(starts, start)
     if index >= len(starts):
         return None
@@ -307,13 +381,15 @@ def _snap_start_to_speech(start, starts, search_window, max_silence_skip):
     return word_start if word_start - start <= max_silence_skip else None
 
 
-def _snap_end_to_speech(end, ends, search_window, max_silence_skip):
+def _snap_end_to_speech(end, ends, intervals, max_silence_skip):
     """Word end the clip should close on, or None to leave the bound alone."""
-    nearby = [e for e in ends if abs(e - end) <= search_window]
-    if nearby:
-        return min(nearby, key=lambda e: abs(e - end))
+    if _falls_inside_a_word(end, intervals, open_edge="start"):
+        return min(ends, key=lambda e: abs(e - end))
     # Mirror of the start: walk BACKWARD so the clip never trails off into
-    # silence it was never meant to include.
+    # silence, and never swallows the first word of the next phrase. That last
+    # one is not hypothetical: the detail prompt asks for `end` at the marker
+    # of the sentence AFTER the last one wanted, so the nearest word end is
+    # frequently the first word of a sentence the clip must not contain.
     index = bisect.bisect_right(ends, end)
     if index == 0:
         return None
@@ -323,13 +399,20 @@ def _snap_end_to_speech(end, ends, search_window, max_silence_skip):
 
 def snap_clip_to_words(start, end, words, video_duration,
                        min_duration=15.0, max_duration=60.0,
-                       search_window=1.5, max_lead=0.35, max_tail=0.45,
+                       max_lead=0.35, max_tail=0.45,
                        max_silence_skip=MAX_SILENCE_SKIP):
     """
     Snap Gemini-proposed clip boundaries onto real word boundaries plus a bit
     of the surrounding silence. LLMs are bad at millisecond arithmetic; the
     word-level timestamps are ground truth, so cuts land in pauses instead of
     mid-word.
+
+    A ``search_window`` parameter used to gate this: nearest word within 1.5s,
+    raw value otherwise. Both halves were wrong. The threshold said nothing
+    about whether the bound was in speech or in a hole — 0.8s into a 2s pause
+    counts as "near" — and the raw fallback fired precisely in the silence case
+    it was supposed to fix. What matters is _falls_inside_a_word, so the
+    parameter is gone rather than kept and ignored.
 
     words: [{'w','s','e'}, ...] for the whole video, sorted by start.
     Returns (start, end), falling back to the input only when no arrangement of
@@ -339,12 +422,13 @@ def snap_clip_to_words(start, end, words, video_duration,
     if not words:
         return original
 
-    starts = sorted(float(w.get("s", 0)) for w in words)
-    ends = sorted(float(w.get("e", 0)) for w in words)
+    intervals = sorted((float(w.get("s", 0)), float(w.get("e", 0))) for w in words)
+    starts = [s for s, _ in intervals]
+    ends = sorted(e for _, e in intervals)
 
     # START: onto a word start, then lead back into the silence before it.
     new_start = float(start)
-    word_start = _snap_start_to_speech(new_start, starts, search_window, max_silence_skip)
+    word_start = _snap_start_to_speech(new_start, starts, intervals, max_silence_skip)
     if word_start is not None:
         prev_ends = [e for e in ends if e <= word_start]
         lead = min(max_lead, max(0.0, word_start - max(prev_ends)) / 2) if prev_ends else max_lead
@@ -352,7 +436,7 @@ def snap_clip_to_words(start, end, words, video_duration,
 
     # END: onto a word end, then trail into the silence after it.
     new_end = float(end)
-    word_end = _snap_end_to_speech(new_end, ends, search_window, max_silence_skip)
+    word_end = _snap_end_to_speech(new_end, ends, intervals, max_silence_skip)
     if word_end is not None:
         next_starts = [s for s in starts if s >= word_end]
         tail = min(max_tail, max(0.0, min(next_starts) - word_end) / 2) if next_starts else max_tail

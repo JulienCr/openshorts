@@ -25,7 +25,7 @@ import gemini_worker
 import layout_picker
 from clip_selection import (build_transcript_windows, clip_count_targets,
                             drop_overlapping_clips, merge_overlapping_windows,
-                            shortlist_size, snap_clip_to_words,
+                            reconcile_scores, shortlist_size, snap_clip_to_words,
                             transcript_segments, window_text_with_anchors)
 from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
@@ -1237,6 +1237,13 @@ def get_viral_clips(transcript_result, video_duration):
             if cost:
                 costs.append(cost)
             scored.extend(parsed.get("windows") or [])
+
+        # A window the model silently omitted would be excluded from the
+        # ranking altogether — the same loss the batch cap used to cause,
+        # through a different door. Unscored windows sink to the bottom instead.
+        scored, unscored = reconcile_scores(scored, windows)
+        if unscored:
+            print(f"   ⚠️ {len(unscored)} window(s) came back unscored; ranked last.")
 
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.

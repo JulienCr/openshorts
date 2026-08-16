@@ -303,7 +303,10 @@ COPY RULES — ALL text fields (descriptions, title, hook) MUST be written in TR
 - Descriptions (TikTok + Instagram): 1-2 punchy sentences that tease the payoff
   without spoiling it, then 3-5 topically relevant hashtags. No generic hashtag spam.
 - `video_title_for_youtube_short`: max 100 chars, curiosity-driven, no fake claims.
-- `predicted_score`: honest 0-100 estimate of viral potential.
+- `predicted_score`: honest 0-100 estimate of viral potential. Use the whole
+  range — if every clip scores the same, you have not ranked them.
+- ORDER the `shorts` array by predicted performance, best first. Do NOT return
+  them in transcript order.
 
 TRANSCRIPT_LANGUAGE: {language}
 VIDEO_DURATION_SECONDS: {video_duration}
