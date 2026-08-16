@@ -671,7 +671,9 @@ function App() {
           body: JSON.stringify({
             local_paths: data.payload,
             acknowledged: !!data.acknowledged,
-            output_format: data.outputFormat || 'auto',
+            // Omitted, not 'auto': the server reads an absent value as "use the
+            // default style" and an explicit one — 'auto' included — as a choice.
+            ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
           }),
         });
         if (!d.jobs?.length) throw new Error('No file in the batch could be queued.');
@@ -687,7 +689,7 @@ function App() {
         body = JSON.stringify({
           url: data.payload,
           acknowledged: !!data.acknowledged,
-          output_format: data.outputFormat || 'auto',
+          ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
           force_low_quality: forceLowQuality,
         });
       } else if (data.type === 'local') {
@@ -697,14 +699,14 @@ function App() {
         body = JSON.stringify({
           local_path: data.payload,
           acknowledged: !!data.acknowledged,
-          output_format: data.outputFormat || 'auto',
+          ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
           force_low_quality: forceLowQuality,
         });
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
         formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
-        formData.append('output_format', data.outputFormat || 'auto');
+        if (data.outputFormat) formData.append('output_format', data.outputFormat);
         body = formData;
       }
 

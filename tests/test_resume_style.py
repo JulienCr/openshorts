@@ -30,15 +30,54 @@ class TestResumeJobEnv:
         assert "SPLIT_LAYOUT" not in env
         assert "PUNCH_IN" not in env
 
-    def test_style_preset_is_resolved_again(self, tmp_path, monkeypatch):
-        # The preset is a server default, so re-reading the file gives the same
-        # answer — no need to carry it in the manifest.
+    def test_style_falls_back_to_the_file_when_the_job_carried_none(self, tmp_path, monkeypatch):
         preset = tmp_path / "style.json"
         preset.write_text(json.dumps({"captions": {"font_name": "Anton"}}))
         monkeypatch.setenv("OPENSHORTS_STYLE_FILE", str(preset))
 
         env = app_module._resume_job_env({})
         assert json.loads(env["OPENSHORTS_STYLE"])["captions"]["font_name"] == "Anton"
+
+    def test_the_jobs_own_style_survives_the_restart(self, tmp_path, monkeypatch):
+        # A job submitted with an inline style (the CLI's --style, the MCP
+        # tool's `style`) must resume with THAT style, not with whatever the
+        # server file says now. Otherwise the clips rendered after a redeploy
+        # stop matching the ones rendered before it — and editing style.json
+        # while a job is queued causes the same split.
+        preset = tmp_path / "style.json"
+        preset.write_text(json.dumps({"captions": {"font_name": "Anton"}}))
+        monkeypatch.setenv("OPENSHORTS_STYLE_FILE", str(preset))
+
+        env = app_module._resume_job_env(
+            {"style": {"captions": {"font_name": "Impact"}}})
+        assert json.loads(env["OPENSHORTS_STYLE"])["captions"]["font_name"] == "Impact"
+
+    def test_the_manifest_carries_the_jobs_style(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(app_module, "OUTPUT_DIR", str(tmp_path))
+        (tmp_path / "job-1").mkdir()
+
+        app_module._write_resume_manifest(
+            "job-1", ["python", "main.py"], 2, None, None, watermark=False,
+            style={"captions": {"font_name": "Impact"}})
+
+        manifest = json.loads((tmp_path / "job-1" / app_module._RESUME_FILE).read_text())
+        assert manifest["style"]["captions"]["font_name"] == "Impact"
+
+    def test_register_job_puts_the_resolved_style_in_the_manifest(self, tmp_path, monkeypatch):
+        # End of the chain: whatever _build_job_env resolved is what a resumed
+        # job gets back, without the endpoints having to resolve it twice.
+        monkeypatch.setattr(app_module, "OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setenv("OPENSHORTS_STYLE_FILE", str(tmp_path / "absent.json"))
+        (tmp_path / "job-1").mkdir()
+        env = app_module._build_job_env(
+            "key", [], "job-1", style={"captions": {"font_name": "Impact"}})
+
+        app_module._register_job("job-1", cmd=["python"], env=env,
+                                 output_dir=str(tmp_path / "job-1"),
+                                 attestation={}, priority=2)
+
+        manifest = json.loads((tmp_path / "job-1" / app_module._RESUME_FILE).read_text())
+        assert manifest["style"]["captions"]["font_name"] == "Impact"
 
     def test_watermark_still_replays(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OPENSHORTS_STYLE_FILE", str(tmp_path / "none.json"))

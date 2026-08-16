@@ -1,9 +1,11 @@
 """Tests for subtitle word merging, SRT generation and style sanitizing."""
 import json
+import os
 
 from subtitles import (
     AUTO_CAPTION_STYLE,
     build_burn_command,
+    generate_auto_captions,
     merge_continuation_words,
     generate_srt,
     hex_to_ass_color,
@@ -115,6 +117,61 @@ class TestBuildBurnCommand:
         cmd = self._cmd(overlay_png="hook.png", overlay_xy=(0, 0), overlay_until=None)
         graph = cmd[cmd.index("-filter_complex") + 1]
         assert "enable=" not in graph
+
+
+class TestGenerateAutoCaptions:
+    """Which generator the pipeline's automatic captions go through.
+
+    AUTO_CAPTION_STYLE has always carried style="karaoke" and nothing ever read
+    it — harmless while the value was unreachable. The default-style panel makes
+    "classic" selectable, so ignoring the key now means the panel promises a
+    look it does not deliver.
+    """
+
+    def _transcript(self):
+        return {"segments": [{"start": 0, "end": 2, "text": "a b", "words": [
+            {"word": " hook", "start": 0.0, "end": 0.5},
+            {"word": " word", "start": 0.5, "end": 1.0},
+        ]}]}
+
+    def _style(self, **over):
+        return {**AUTO_CAPTION_STYLE, **over}
+
+    def test_karaoke_writes_an_ass_file(self, tmp_path):
+        path = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1,
+                                      self._style(style="karaoke"))
+        assert path.endswith(".ass")
+
+    def test_classic_writes_an_srt_file(self, tmp_path):
+        # burn_subtitles keys its filter off the extension: .ass carries its own
+        # styles, anything else gets force_style. Writing karaoke content to a
+        # .srt name would not degrade gracefully, it would render the tags.
+        path = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1,
+                                      self._style(style="classic"))
+        assert path.endswith(".srt")
+
+    def test_classic_output_carries_no_karaoke_tags(self, tmp_path):
+        path = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1,
+                                      self._style(style="classic"))
+        body = open(path, encoding="utf-8-sig").read()
+        assert "\\c&H" not in body
+
+    def test_no_words_in_range_returns_none(self, tmp_path):
+        assert generate_auto_captions(self._transcript(), 90, 99, str(tmp_path), 1,
+                                      self._style()) is None
+
+    def test_names_are_unique_per_call(self, tmp_path):
+        # Clips render in parallel threads (CLIP_WORKERS); a bare timestamp
+        # would let one clip burn another's captions.
+        a = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1, self._style())
+        b = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1, self._style())
+        assert a != b
+
+    def test_name_never_carries_the_clip_title(self, tmp_path):
+        # The path is interpolated into an ffmpeg filter string, where an
+        # apostrophe closes the quote. Titles carry them constantly.
+        path = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1, self._style())
+        assert os.path.basename(path).startswith("autosubs_1_")
 
 
 class TestResolveCaptionStyle:
@@ -421,23 +478,31 @@ class TestFilterQuoting:
     filename. The fix is to keep apostrophes out of filter paths entirely.
     """
 
-    def test_generated_subtitle_paths_carry_no_apostrophe(self):
-        # Both generators must name their own file, never derive it from a
-        # video title. This is the property that actually prevents the bug.
-        import re
-        src = open("main.py").read()
-        m = re.search(r'ass_path = os\.path\.join\(\s*output_dir,\s*f"([^"]+)"', src)
-        assert m, "auto-caption .ass path not found"
-        assert "{stem}" not in m.group(1), (
-            f"auto-caption .ass name derives from the clip stem: {m.group(1)}")
+    # These two used to grep main.py for the f-string that built the path. The
+    # construction now lives in generate_auto_captions, so they call it instead
+    # — which tests the property itself rather than the shape of the source that
+    # happens to produce it.
 
-    def test_auto_caption_ass_name_is_unique_per_clip(self):
+    def _transcript(self):
+        return {"segments": [{"start": 0, "end": 2, "text": "a", "words": [
+            {"word": " word", "start": 0.0, "end": 0.5},
+        ]}]}
+
+    def test_generated_subtitle_paths_carry_no_apostrophe(self, tmp_path):
+        # The generator must name its own file, never derive it from a video
+        # title. This is the property that actually prevents the bug.
+        path = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1,
+                                      AUTO_CAPTION_STYLE)
+        assert "'" not in os.path.basename(path)
+
+    def test_auto_caption_name_is_unique_per_clip(self, tmp_path):
         # Clips render in parallel; a bare timestamp collides and lets one clip
         # burn another's captions.
-        import re
-        src = open("main.py").read()
-        m = re.search(r'ass_path = os\.path\.join\(\s*output_dir,\s*f"([^"]+)"', src)
-        assert "uuid" in m.group(1), f"not unique per clip: {m.group(1)}"
+        first = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 7,
+                                       AUTO_CAPTION_STYLE)
+        second = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 7,
+                                        AUTO_CAPTION_STYLE)
+        assert first != second, "same generation_id must not collide"
 
     def test_colon_is_escaped(self):
         from subtitles import _escape_ffmpeg_filter_value

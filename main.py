@@ -860,19 +860,12 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, hook_text=Non
         # Unique per clip, not just per second: clips render in parallel
         # (CLIP_WORKERS), so a bare timestamp would collide and let one clip
         # burn another's captions.
-        ass_path = os.path.join(
-            output_dir, f"autosubs_{generation_id}_{uuid.uuid4().hex[:8]}.ass")
         out_path = os.path.join(
             output_dir, _subs.captioned_output_name(stem, generation_id))
 
-        if not _subs.generate_ass(
-                transcript, clip_start, clip_end, ass_path,
-                max_chars=style["max_chars"], max_duration=style["max_duration"],
-                alignment=style["alignment"], fontsize=style["font_size"],
-                font_name=style["font_name"], font_color=style["font_color"],
-                border_color=style["border_color"], border_width=style["border_width"],
-                highlight_color=style["highlight_color"], effect=style["effect"],
-                base_opacity=style["base_opacity"], uppercase=style["uppercase"]):
+        ass_path = _subs.generate_auto_captions(
+            transcript, clip_start, clip_end, output_dir, generation_id, style)
+        if not ass_path:
             print("   ℹ️ No words in range — clip ships without captions.")
             return None
 

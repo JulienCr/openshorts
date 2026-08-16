@@ -555,19 +555,23 @@ def _resume_job_env(manifest) -> dict:
     everything here is either re-read from the server or replayed from a plain
     value the caller chose.
 
-    Layouts have to be replayed explicitly: they are per-job env overrides, and
-    a rebuilt environment does not have them. Without this a job interrupted by
-    a redeploy silently finished without SPLIT, screencast or punch-in — worst
-    on a thirty-file batch, which would deliver two halves that do not match.
+    Layouts and the style have to be replayed explicitly: they are per-job env
+    overrides, and a rebuilt environment does not have them. Without this a job
+    interrupted by a redeploy silently finished without SPLIT, screencast or
+    punch-in — worst on a thirty-file batch, which would deliver two halves that
+    do not match.
 
-    The style preset is re-resolved from disk instead of being carried: it is a
-    server default, so reading it again gives the same answer.
+    The style is taken from the manifest rather than re-read from disk. Re-reading
+    looks equivalent and is not: a job submitted with an inline style (the CLI's
+    --style, the MCP tool's `style`) would come back wearing the server default
+    instead, and editing style.json while a job sits in the queue would split
+    that job's own clips the same way.
     """
     env = os.environ.copy()
 
     chosen = layout_env(manifest.get("layouts") or [])
     env.update(chosen)
-    env.update(style_preset.style_env(style_preset.load_style()))
+    env.update(style_preset.style_env(effective_preset(manifest.get("style"))))
 
     if manifest.get("watermark"):
         env["WATERMARK"] = "1"
@@ -580,7 +584,7 @@ def _resume_job_env(manifest) -> dict:
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
                            webhook_url=None, webhook_secret=None, base_url=None,
                            source_path=None, name=None, batch_id=None,
-                           layouts=None):
+                           layouts=None, style=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         with open(path, "w") as f:
@@ -588,8 +592,11 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
                 "cmd": cmd, "priority": priority,
                 # Per-job env overrides, so they must be replayed by name: the
                 # resumed environment is rebuilt from os.environ and has no
-                # memory of what this job was asked to do.
+                # memory of what this job was asked to do. The style is the
+                # job's own — a caller can submit one inline — so re-reading the
+                # server file on resume would silently restyle it.
                 "layouts": list(layouts or []),
+                "style": style or {},
                 # A local_path job that resumes without these loses its preview
                 # (/api/source has nothing to serve), its staged copy, and its
                 # place in the batch strip — a redeploy halfway through thirty
@@ -1797,8 +1804,15 @@ def resolve_layouts(requested, preset=None):
 
 
 def resolve_output_format(requested, preset=None):
-    """Aspect for this job: the caller's, else the preset's, else auto."""
-    if requested in OUTPUT_FORMATS:
+    """Aspect for this job: the caller's, else the preset's, else auto.
+
+    ``auto`` counts as an explicit choice, not as silence. It is a documented
+    value — the MCP tool lists it in its enum — and it means "let the pipeline
+    decide". Folding it in with "omitted" made a caller who asks for auto
+    inherit the server's square or horizontal instead, with no way to ask for
+    pipeline-driven formatting at all.
+    """
+    if requested in OUTPUT_FORMATS or requested == "auto":
         return requested
     configured = effective_preset(preset).get("output_format")
     return configured if configured in OUTPUT_FORMATS else "auto"
@@ -1809,10 +1823,17 @@ def resolve_force_low_quality(requested, preset=None):
 
     Worth having in the preset: thirty queued recordings must not each stop on
     a confirmation nobody is sitting there to click.
+
+    Takes the RAW request value, because an explicit ``false`` has to be
+    distinguishable from an absent one. Coercing to bool first made the two
+    identical, so a preset that waived the warning could never be re-armed for
+    a single job — the opposite of "the request beats the file".
     """
-    if str(requested).lower() in ("1", "true", "yes"):
-        return True
-    return bool(effective_preset(preset).get("force_low_quality"))
+    if requested is None or requested == "":
+        return bool(effective_preset(preset).get("force_low_quality"))
+    if isinstance(requested, bool):
+        return requested
+    return str(requested).lower() in ("1", "true", "yes")
 
 
 def _build_job_env(api_key: str, layouts, job_id: str, style=None) -> dict:
@@ -1901,15 +1922,22 @@ def _register_job(job_id: str, *, cmd, env, output_dir, attestation, priority,
 
     # Resume manifest: enough to re-run this job if the container dies mid-flight
     # (a redeploy). No secrets — the env is rebuilt from os.environ on resume.
+    # Read back what _build_job_env resolved, so the endpoints do not have to
+    # resolve any of it a second time just to record it.
     try:
         job_layouts = json.loads(env.get(LAYOUTS_ENV) or "[]")
     except ValueError:
         job_layouts = []
+    try:
+        job_style = json.loads(env.get(style_preset.STYLE_ENV) or "{}")
+    except ValueError:
+        job_style = {}
     _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
                            watermark=jobs[job_id]['watermark'],
                            webhook_url=webhook_url, webhook_secret=webhook_secret,
                            base_url=base_url, source_path=source_path,
-                           name=name, batch_id=batch_id, layouts=job_layouts)
+                           name=name, batch_id=batch_id, layouts=job_layouts,
+                           style=job_style)
 
     _enqueue_job(job_id, priority)
 
@@ -1933,7 +1961,10 @@ async def process_endpoint(
         raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
-    force_low = str(force_low_quality).lower() in ("1", "true", "yes")
+    # Kept RAW until the resolver: coercing here would erase the difference
+    # between "the caller said false" and "the caller said nothing", and the
+    # preset has to lose to the first while winning the second.
+    force_low_raw = force_low_quality
 
     # Handle JSON body manually for URL payload
     content_type = request.headers.get("content-type", "")
@@ -1942,7 +1973,7 @@ async def process_endpoint(
         url = body.get("url")
         local_path = body.get("local_path")
         ack_flag = bool(body.get("acknowledged"))
-        force_low = bool(body.get("force_low_quality"))
+        force_low_raw = body.get("force_low_quality")
         output_format = body.get("output_format")
         layouts = body.get("layouts")
         webhook_url = body.get("webhook_url")
@@ -1959,7 +1990,7 @@ async def process_endpoint(
     # at all and still get this server's look. An explicit value in the request
     # always wins; the preset is a default, not a cage.
     output_format = resolve_output_format(output_format, preset)
-    force_low = resolve_force_low_quality(force_low, preset)
+    force_low = resolve_force_low_quality(force_low_raw, preset)
 
     # Accepts a JSON list or a comma-separated form field. Layouts themselves
     # fall back to the preset inside _build_job_env, where the batch lane picks

@@ -482,6 +482,53 @@ def _sanitize_font_name(name):
     return cleaned or "Verdana"
 
 
+def generate_auto_captions(transcript, clip_start, clip_end, output_dir,
+                           generation_id, style):
+    """Write the pipeline's automatic caption file for ``style``.
+
+    Returns its path, or None when no words fall in the clip's range.
+
+    Honouring ``style["style"]`` is what makes the default-style panel's
+    "Classic" choice mean anything. AUTO_CAPTION_STYLE has always carried
+    ``style: "karaoke"`` and nothing ever read it — harmless while the value was
+    unreachable, a broken promise now that it is selectable.
+
+    The extension is the branch, not a cosmetic: ``burn_subtitles`` keys its
+    filter off it (``.ass`` carries its own styles; anything else gets
+    force_style), so the two must be chosen together.
+
+    The name never carries the clip's title. It is interpolated into an ffmpeg
+    filter string, where an apostrophe closes the quote — and titles carry them
+    constantly ("Earth's", "Don't"). The uuid also makes it unique per clip
+    rather than per second: clips render in parallel (CLIP_WORKERS), so a bare
+    timestamp would let one clip burn another's captions.
+    """
+    import uuid
+
+    karaoke = style.get("style") != "classic"
+    path = os.path.join(
+        output_dir,
+        f"autosubs_{int(generation_id)}_{uuid.uuid4().hex[:8]}."
+        f"{'ass' if karaoke else 'srt'}")
+
+    if karaoke:
+        ok = generate_ass(
+            transcript, clip_start, clip_end, path,
+            max_chars=style["max_chars"], max_duration=style["max_duration"],
+            alignment=style["alignment"], fontsize=style["font_size"],
+            font_name=style["font_name"], font_color=style["font_color"],
+            border_color=style["border_color"], border_width=style["border_width"],
+            highlight_color=style["highlight_color"], effect=style["effect"],
+            base_opacity=style["base_opacity"], uppercase=style["uppercase"])
+    else:
+        # Classic carries no per-word markup; the look comes from the
+        # force_style burn_subtitles builds for a non-.ass file.
+        ok = generate_srt(transcript, clip_start, clip_end, path,
+                          max_chars=style["max_chars"],
+                          max_duration=style["max_duration"])
+    return path if ok else None
+
+
 def captioned_output_name(stem, generation_id):
     """The name of the derived, styled copy of a clip.
 

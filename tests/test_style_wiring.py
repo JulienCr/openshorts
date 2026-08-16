@@ -126,6 +126,45 @@ class TestProcessDefaults:
         assert app_module.resolve_force_low_quality("true") is True
 
 
+class TestOmittedIsNotTheSameAsExplicit:
+    """"The request beats the file" only holds if an explicit value is
+    distinguishable from an absent one. Collapsing the two makes some settings
+    impossible to ask for, which is worse than not having the preset at all."""
+
+    def test_explicit_auto_format_beats_a_concrete_preset(self, preset_file):
+        # "auto" is a documented value (the MCP tool lists it in its enum), so a
+        # caller asking for it must get pipeline-driven formatting rather than
+        # silently inheriting the server's square/horizontal choice.
+        preset_file.write_text(json.dumps({"output_format": "square"}))
+        assert app_module.resolve_output_format("auto") == "auto"
+
+    def test_omitted_format_still_takes_the_preset(self, preset_file):
+        preset_file.write_text(json.dumps({"output_format": "square"}))
+        assert app_module.resolve_output_format(None) == "square"
+
+    def test_empty_string_format_counts_as_omitted(self, preset_file):
+        # An untouched multipart form field arrives as "", not as absent.
+        preset_file.write_text(json.dumps({"output_format": "square"}))
+        assert app_module.resolve_output_format("") == "square"
+
+    def test_explicit_false_quality_beats_a_true_preset(self, preset_file):
+        # Without this a caller can never re-enable the low-resolution
+        # confirmation for one job once the preset waives it.
+        preset_file.write_text(json.dumps({"force_low_quality": True}))
+        assert app_module.resolve_force_low_quality(False) is False
+
+    def test_explicit_false_string_beats_a_true_preset(self, preset_file):
+        preset_file.write_text(json.dumps({"force_low_quality": True}))
+        assert app_module.resolve_force_low_quality("false") is False
+
+    def test_omitted_quality_still_takes_the_preset(self, preset_file):
+        preset_file.write_text(json.dumps({"force_low_quality": True}))
+        assert app_module.resolve_force_low_quality(None) is True
+
+    def test_explicit_true_wins_over_a_silent_preset(self, preset_file):
+        assert app_module.resolve_force_low_quality(True) is True
+
+
 class TestStyleEndpoint:
     def test_get_returns_the_current_preset(self, preset_file):
         preset_file.write_text(json.dumps({"output_format": "square"}))

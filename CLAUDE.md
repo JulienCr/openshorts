@@ -302,10 +302,13 @@ Re-deriving a clip (an effect, a caption re-style) drops the automatic hook.
 callers is `/api/hook`, and replaying would stack the preset's card on top of the
 one the user just wrote.
 
-**Resume.** The manifest now carries `layouts`, and `_resume_job_env` re-reads
-the style file. Before that, a job interrupted by a redeploy came back without
-SPLIT, screencast or punch-in — invisible, and worst on a thirty-file batch,
-which delivered two halves that did not match.
+**Resume.** The manifest carries the job's `layouts` **and its resolved style**,
+and `_resume_job_env` replays both. Before that, a job interrupted by a redeploy
+came back without SPLIT, screencast or punch-in — invisible, and worst on a
+thirty-file batch, which delivered two halves that did not match. The style is
+carried rather than re-read for the same reason: a job submitted with an inline
+style would otherwise resume wearing the server default, and editing
+`style.json` while a job sits in the queue would split that job's own clips.
 
 ## Environment Variables
 
