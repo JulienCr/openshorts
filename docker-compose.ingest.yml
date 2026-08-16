@@ -1,0 +1,31 @@
+# Local-path ingest: process multi-GB sources where they already sit, instead
+# of uploading them through the browser.
+#
+#   REPLAY_DIR=/path/to/recordings INBOX_DIR=/path/to/dropbox \
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#                  -f docker-compose.ingest.yml up -d
+#
+# Then pick a file in the dashboard's "On Server" tab, or POST /api/process
+# with local_path=<name>, resolved relative to LOCAL_INGEST_DIR. A 3-hour live
+# recording is 6-12GB, an order of magnitude past MAX_FILE_SIZE_MB, and
+# uploading it would copy the whole file a second time only to be refused with
+# a 413.
+#
+# Several source folders are mounted as siblings under one root rather than
+# configured as a list: the listing walks subdirectories, so they all show up
+# (prefixed by the folder name) while LOCAL_INGEST_DIR stays a single directory
+# and containment stays a single realpath comparison. Add a line here to add a
+# source; nothing in app.py has to know.
+services:
+  backend:
+    volumes:
+      # Read-only deliberately: the pipeline only ever reads its source, and ro
+      # turns "we checked the code doesn't delete it" into a kernel guarantee.
+      # `:?` fails the command loudly when a variable is unset rather than
+      # silently mounting some default directory as an ingest root.
+      - ${REPLAY_DIR:?set REPLAY_DIR to the folder holding your recordings}:/ingest/replays:ro
+      - ${INBOX_DIR:?set INBOX_DIR to the folder you drop new sources into}:/ingest/inbox:ro
+    environment:
+      # Presence of this is what enables the feature at all (app.py refuses the
+      # local_path parameter when it is empty, and whenever billing is on).
+      - LOCAL_INGEST_DIR=/ingest

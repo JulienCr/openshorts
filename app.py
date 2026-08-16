@@ -7,6 +7,7 @@ import threading
 import json
 import shutil
 import glob
+import mimetypes
 import time
 import zipfile
 import math
@@ -46,7 +47,8 @@ MAX_FILE_SIZE_MB = 2048  # 2GB limit
 # where covers, sounds and hashtags actually get chosen. The UI must say so —
 # a user who expects a published post and finds a draft will read it as a bug.
 TIKTOK_POST_MODE = os.environ.get("TIKTOK_POST_MODE", "MEDIA_UPLOAD").strip()
-JOB_RETENTION_SECONDS = int(os.environ.get("JOB_RETENTION_SECONDS", "3600"))  # job/file retention (issue #46)
+# JOB_RETENTION_SECONDS is defined further down, once BILLING_ENABLED is known:
+# its default differs between the two editions (issue #46).
 # Ceiling for the working directory once it lives on a persistent volume: the
 # age-based sweep alone can't stop a burst of long videos from filling the disk.
 # 0 disables the cap.
@@ -58,12 +60,27 @@ UPLOADS_MAX_GB = int(os.environ.get("UPLOADS_MAX_GB", "15"))
 QUALITY_GATE_MIN_HEIGHT = int(os.environ.get("QUALITY_GATE_MIN_HEIGHT", "720"))
 QUALITY_PROBE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quality_probe.py")
 DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in ("1", "true", "yes")
+# Self-host only: directory whose video files may be processed in place, named
+# by path instead of uploaded. Multi-GB sources (a 3-hour live recording runs
+# 6-12 GB) cannot realistically go through a multipart upload — that would copy
+# the whole file a second time just to reach MAX_FILE_SIZE_MB and be refused.
+# Unset (the default, and the only sane value for a public deployment) disables
+# the feature outright. See _resolve_local_ingest for the rest of the fencing.
+LOCAL_INGEST_DIR = os.environ.get("LOCAL_INGEST_DIR", "").strip()
 
 # ---- Cloud billing (paid / managed-keys) integration --------------------------
 # All paid-mode code lives in the optional `cloud/` package and is imported ONLY
 # when BILLING_ENABLED is set. With the flag off, the app behaves exactly as the
 # self-hosted BYOK app does today (no extra dependencies required).
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+
+# Age sweep over OUTPUT_DIR; 0 or less disables it (same rule as OUTPUT_MAX_GB).
+# The cloud shares one disk between tenants and archives every clip to R2, so an
+# hour of local retention is right there. Self-host has neither: OUTPUT_DIR *is*
+# the library that /api/projects reads, so sweeping it by age deleted the user's
+# whole history an hour after each render, with nowhere to restore it from.
+JOB_RETENTION_SECONDS = int(os.environ.get(
+    "JOB_RETENTION_SECONDS", "3600" if BILLING_ENABLED else "0"))
 # Force full pipeline logs to the client even under billing (local debugging).
 DEBUG_LOGS = os.environ.get("DEBUG_LOGS", "").lower() in ("1", "true", "yes")
 
@@ -457,6 +474,16 @@ def _recover_jobs_from_disk():
                 data = json.load(f)
             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
             clips = data.get('shorts', [])
+            # The metadata is written when Gemini finishes, BEFORE any clip is
+            # cut, so its presence does not mean the job finished. Publishing it
+            # as 'completed' anyway gave the user a list of clips whose every
+            # video 404s — and, because the job was then in `jobs`, it also made
+            # _resume_interrupted_jobs skip the one job that needed resuming.
+            if clips and not any(
+                os.path.exists(os.path.join(job_path,
+                                            _canonical_clip_file(job_path, base_name, i)))
+                for i in range(len(clips))):
+                continue
             for i, clip in enumerate(clips):
                 if not clip.get('video_url'):
                     clip['video_url'] = (
@@ -550,8 +577,13 @@ def _resume_interrupted_jobs() -> set:
         manifest_path = os.path.join(job_path, _RESUME_FILE)
         if not os.path.isfile(manifest_path):
             continue
-        # Already finished generating clips → recovered as completed elsewhere.
-        if glob.glob(os.path.join(job_path, "*_metadata.json")):
+        # Already finished → recovered as completed elsewhere. The test is
+        # whether a clip actually exists on disk, NOT whether the metadata does:
+        # metadata is written when Gemini finishes, well before the first clip
+        # is cut, so testing it here dropped the manifest of exactly the jobs
+        # that were interrupted mid-extraction — the case this whole mechanism
+        # exists for.
+        if job_id in jobs:
             _clear_resume_manifest(job_id)
             continue
         try:
@@ -591,10 +623,19 @@ def _resume_interrupted_jobs() -> set:
         except Exception:
             pass
 
+        # Interrupted after the analysis but before the clips: hand main.py
+        # --resume so it reuses that metadata instead of re-transcribing and
+        # re-prompting Gemini. Beyond the minutes saved, Gemini can pick a
+        # different set of moments on a second pass, which would leave the
+        # finished clips not matching the ones already listed for this job.
+        cmd = list(m.get("cmd") or [])
+        if glob.glob(os.path.join(job_path, "*_metadata.json")) and "--resume" not in cmd:
+            cmd.append("--resume")
+
         jobs[job_id] = {
             'status': 'queued',
             'logs': [f"♻️ Resuming your video after a server update (attempt {attempts})."],
-            'cmd': m.get("cmd"),
+            'cmd': cmd,
             'env': env,
             'output_dir': job_path,
             'user_id': None if user_id is None else user_id,
@@ -697,20 +738,26 @@ async def cleanup_jobs():
             await asyncio.sleep(300) # Check every 5 minutes
             now = time.time()
             
-            # Simple directory cleanup based on modification time
-            # Check OUTPUT_DIR
-            for job_id in os.listdir(OUTPUT_DIR):
-                # Not a job: the thumbnails dir backs a StaticFiles mount, so
-                # deleting it would 500 every /thumbnails request until reboot.
-                if job_id == os.path.basename(THUMBNAILS_DIR):
-                    continue
-                job_path = os.path.join(OUTPUT_DIR, job_id)
-                if os.path.isdir(job_path):
-                    if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
-                        print(f"🧹 Purging old job: {job_id}")
-                        shutil.rmtree(job_path, ignore_errors=True)
-                        if job_id in jobs:
-                            del jobs[job_id]
+            # Simple directory cleanup based on modification time.
+            # 0 or less disables the age sweep, matching the rule OUTPUT_MAX_GB
+            # already uses. Without an off switch, a self-host install loses its
+            # entire library an hour after each render — and the library reads
+            # from this very directory, so there is nowhere else to restore it
+            # from. (Previously 0 meant "purge everything immediately", which is
+            # the opposite of what setting it to zero looks like it does.)
+            if JOB_RETENTION_SECONDS > 0:
+                for job_id in os.listdir(OUTPUT_DIR):
+                    # Not a job: the thumbnails dir backs a StaticFiles mount, so
+                    # deleting it would 500 every /thumbnails request until reboot.
+                    if job_id == os.path.basename(THUMBNAILS_DIR):
+                        continue
+                    job_path = os.path.join(OUTPUT_DIR, job_id)
+                    if os.path.isdir(job_path):
+                        if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
+                            print(f"🧹 Purging old job: {job_id}")
+                            shutil.rmtree(job_path, ignore_errors=True)
+                            if job_id in jobs:
+                                del jobs[job_id]
 
             # Hard disk cap. The time-based sweep above bounds the *age* of what
             # we keep, not its size: a burst of long videos can fill the volume
@@ -1368,7 +1415,76 @@ async def get_config():
         "youtubeUrlEnabled": not DISABLE_YOUTUBE_URL,
         "billingEnabled": BILLING_ENABLED,
         "googleAuthEnabled": bool(BILLING_ENABLED and cloud.settings.google_auth_enabled),
+        "localIngestEnabled": local_ingest_enabled(),
     }
+
+
+# Extensions offered for local ingest. Deliberately narrower than what ffmpeg
+# can open: this list only decides what the picker shows, and a directory of
+# recordings should not surface stray .srt/.json siblings.
+LOCAL_INGEST_EXTENSIONS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".mpg", ".mpeg")
+# Bound on the recursive walk. A <select> stops being usable well before this,
+# and it keeps a mistakenly broad LOCAL_INGEST_DIR from stat-ing a whole disk.
+LOCAL_INGEST_MAX_ENTRIES = int(os.environ.get("LOCAL_INGEST_MAX_ENTRIES", "500"))
+
+
+def local_ingest_enabled() -> bool:
+    return bool(LOCAL_INGEST_DIR) and not BILLING_ENABLED
+
+
+@app.get("/api/local-files")
+async def list_local_files():
+    """Video files the browser may pick for local_path ingest.
+
+    Walks subdirectories and returns paths relative to LOCAL_INGEST_DIR, never
+    absolute ones: _resolve_local_ingest joins them back onto the root anyway,
+    so exposing the server's layout would buy the caller nothing. Entries go
+    through the same realpath containment as ingest, so the picker can never
+    offer a file that the subsequent POST would refuse.
+    """
+    if not local_ingest_enabled():
+        raise HTTPException(status_code=403,
+                            detail="Local path ingest is not enabled on this server.")
+
+    root = os.path.realpath(LOCAL_INGEST_DIR)
+    if not os.path.isdir(root):
+        raise HTTPException(status_code=500,
+                            detail="Configured ingest directory does not exist.")
+
+    entries = []
+    truncated = False
+    # followlinks=False keeps a symlinked directory from walking us out of the
+    # tree (or into a loop); symlinked *files* are still caught per-entry below.
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # Hidden trees are noise here, and Drive-backed folders in particular
+        # carry partial-download scratch dirs that would show as broken videos.
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith((".", "$")))
+        for name in filenames:
+            if not name.lower().endswith(LOCAL_INGEST_EXTENSIONS) or name.startswith("."):
+                continue
+            if len(entries) >= LOCAL_INGEST_MAX_ENTRIES:
+                truncated = True
+                break
+            full = os.path.join(dirpath, name)
+            resolved = os.path.realpath(full)
+            if os.path.commonpath([resolved, root]) != root:
+                continue
+            try:
+                if not os.path.isfile(resolved):
+                    continue
+                stat = os.stat(resolved)
+            except OSError:
+                continue
+            entries.append({"name": os.path.relpath(full, root),
+                            "size_mb": round(stat.st_size / 1024 ** 2),
+                            "mtime": stat.st_mtime})
+        if truncated:
+            break
+
+    entries.sort(key=lambda e: e["mtime"], reverse=True)
+    # Surfaced rather than silently dropped: a picker that quietly stops at N
+    # looks like the missing files simply are not there.
+    return {"files": entries, "truncated": truncated}
 
 async def _probe_youtube_quality(url: str) -> dict:
     """Run quality_probe.py in a worker thread; {} on any failure (fail-open)."""
@@ -1436,11 +1552,45 @@ def layout_env(requested):
     return env
 
 
+def _resolve_local_ingest(raw_path: str) -> str:
+    """Resolve a caller-supplied path to a real file inside LOCAL_INGEST_DIR.
+
+    Ingesting by path means a request names a file on the server's filesystem,
+    so it is fenced three ways: off unless the operator sets LOCAL_INGEST_DIR,
+    refused outright whenever billing is on (a paying tenant must never be able
+    to read the operator's disk), and confined to that one directory.
+
+    The containment check compares realpaths, which is what makes it hold
+    against both ``../`` traversal and a symlink *inside* the directory that
+    points outside it — checking the raw string would pass both.
+    """
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=403,
+                            detail="Local path ingest is disabled on this deployment.")
+    if not LOCAL_INGEST_DIR:
+        raise HTTPException(status_code=403,
+                            detail="Local path ingest is not configured on this server.")
+
+    root = os.path.realpath(LOCAL_INGEST_DIR)
+    # A relative path is read as relative to the ingest dir, so callers can pass
+    # just a filename and never learn the server's layout.
+    candidate = raw_path if os.path.isabs(raw_path) else os.path.join(root, raw_path)
+    resolved = os.path.realpath(candidate)
+
+    if resolved != root and os.path.commonpath([resolved, root]) != root:
+        raise HTTPException(status_code=400,
+                            detail="Path is outside the configured ingest directory.")
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail=f"No such file: {raw_path}")
+    return resolved
+
+
 @app.post("/api/process")
 async def process_endpoint(
     request: Request,
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
+    local_path: Optional[str] = Form(None),
     acknowledged: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
     layouts: Optional[str] = Form(None),
@@ -1460,6 +1610,7 @@ async def process_endpoint(
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("url")
+        local_path = body.get("local_path")
         ack_flag = bool(body.get("acknowledged"))
         force_low = bool(body.get("force_low_quality"))
         output_format = body.get("output_format")
@@ -1477,8 +1628,8 @@ async def process_endpoint(
     elif not isinstance(layouts, list):
         layouts = []
 
-    if not url and not file:
-        raise HTTPException(status_code=400, detail="Must provide URL or File")
+    if not url and not file and not local_path:
+        raise HTTPException(status_code=400, detail="Must provide URL, File or local_path")
 
     # Completion callback: reject unsafe targets NOW (clear 400) — delivery
     # re-validates anyway, but failing at submit is the debuggable behavior.
@@ -1524,7 +1675,7 @@ async def process_endpoint(
         "ip": client_ip,
         "user_agent": user_agent,
         "timestamp": time.time(),
-        "source": "url" if url else "file",
+        "source": "url" if url else ("local_path" if local_path else "file"),
     }
 
     job_id = str(uuid.uuid4())
@@ -1547,6 +1698,12 @@ async def process_endpoint(
     input_path = None
     if url:
         cmd.extend(["-u", url])
+    elif local_path:
+        # Processed where it lies — no copy into UPLOAD_DIR, which also keeps
+        # it out of reach of _enforce_uploads_size_cap: that sweep only lists
+        # UPLOAD_DIR, so it can never delete a source the user still owns.
+        input_path = _resolve_local_ingest(local_path)
+        cmd.extend(["-i", input_path])
     else:
         # Save uploaded file with size limit check.
         # basename() strips any path components from the client-supplied
@@ -1601,6 +1758,9 @@ async def process_endpoint(
         'webhook_url': webhook_url,
         'webhook_secret': webhook_secret,
         'base_url': api_base,
+        # Only for local_path jobs: nothing was copied into UPLOAD_DIR, so the
+        # preview endpoint has no upload to glob for and needs the real path.
+        'source_path': input_path if local_path else None,
     }
 
     # Persist the owner so recovered jobs keep their multi-tenant guard after a
@@ -1650,9 +1810,209 @@ async def get_source_video(job_id: str):
         f for f in glob.glob(os.path.join(UPLOAD_DIR, f"{job_id}_*"))
         if not os.path.basename(f).startswith("thumb_")
     ]
-    if not matches:
-        raise HTTPException(status_code=404, detail="Source not found")
-    return FileResponse(matches[0], media_type="video/mp4")
+    if matches:
+        return FileResponse(matches[0], media_type="video/mp4")
+
+    # A local_path job copied nothing into UPLOAD_DIR, so fall back to the
+    # source it reads in place. Containment is re-asserted rather than trusted
+    # from the job record: this endpoint is unauthenticated by design, so it
+    # must not become a way to read a path that ingest itself would refuse.
+    source = (jobs.get(job_id) or {}).get('source_path')
+    if source and local_ingest_enabled():
+        root = os.path.realpath(LOCAL_INGEST_DIR)
+        resolved = os.path.realpath(source)
+        if os.path.commonpath([resolved, root]) == root and os.path.isfile(resolved):
+            media_type = mimetypes.guess_type(resolved)[0] or "video/mp4"
+            return FileResponse(resolved, media_type=media_type)
+
+    raise HTTPException(status_code=404, detail="Source not found")
+
+
+# ---- Self-host project library ----------------------------------------------
+# The cloud build serves /api/projects, /api/history and the restore/state
+# routes from cloud/videos.py, backed by R2 and a signed-in account. Self-host
+# had none of them, so a finished job was unreachable the moment the tab closed
+# — and the retention sweep deleted it an hour later. Nothing about running
+# locally justifies that: the clips are already on disk, and the metadata that
+# _recover_jobs_from_disk reads is enough to rebuild the whole project.
+#
+# Registered only when billing is off. These routes have no per-user scoping, so
+# on a shared deployment they would hand every visitor everyone else's clips —
+# there, cloud/videos.py stays authoritative.
+_PROJECT_STATE_FILE = ".project_state.json"
+
+
+def _local_project(job_id):
+    """Everything on disk for one job, or None if it has no finished clips.
+
+    A job dir with metadata but no clip file is an interrupted run, not a
+    project — see _recover_jobs_from_disk for the same distinction.
+    """
+    job_path = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(job_path):
+        return None
+    json_files = glob.glob(os.path.join(job_path, "*_metadata.json"))
+    if not json_files:
+        return None
+    try:
+        with open(json_files[0]) as f:
+            data = json.load(f)
+    except Exception:
+        return None
+
+    base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+    shorts = data.get('shorts') or []
+    clips, total = [], 0
+    for i, clip in enumerate(shorts):
+        filename = _canonical_clip_file(job_path, base_name, i)
+        full = os.path.join(job_path, filename)
+        if not os.path.exists(full):
+            continue
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = 0
+        total += size
+        clip['video_url'] = f"/videos/{job_id}/{filename}"
+        clips.append({
+            "index": i,
+            "title": clip.get('video_title_for_youtube_short') or clip.get('title'),
+            "filename": filename,
+            "size_bytes": size,
+        })
+    if not clips:
+        return None
+
+    try:
+        created = os.path.getmtime(json_files[0])
+    except OSError:
+        created = 0.0
+    state = {}
+    try:
+        with open(os.path.join(job_path, _PROJECT_STATE_FILE)) as f:
+            state = json.load(f)
+    except Exception:
+        pass
+
+    return {
+        "job_id": job_id,
+        "title": base_name,
+        "created_ts": created,
+        "created_at": datetime.fromtimestamp(created, timezone.utc).isoformat(),
+        "size_bytes": total,
+        "clips": clips,
+        "shorts": shorts,
+        "cost_analysis": data.get('cost_analysis'),
+        "state": state,
+    }
+
+
+def _scan_local_projects(limit=200):
+    try:
+        entries = os.listdir(OUTPUT_DIR)
+    except FileNotFoundError:
+        return []
+    thumbs = os.path.basename(THUMBNAILS_DIR)
+    found = [p for p in (_local_project(j) for j in entries if j != thumbs) if p]
+    found.sort(key=lambda p: p["created_ts"], reverse=True)
+    return found[:limit]
+
+
+def _require_local_library():
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+if not BILLING_ENABLED:
+    @app.get("/api/projects")
+    async def list_local_projects():
+        """Re-openable projects, read straight from OUTPUT_DIR."""
+        _require_local_library()
+        return {"projects": [{
+            "job_id": p["job_id"],
+            "title": p["title"],
+            "clip_count": len(p["clips"]),
+            "size_bytes": p["size_bytes"],
+            "created_at": p["created_at"],
+            "updated_at": p["created_at"],
+        } for p in _scan_local_projects()]}
+
+    @app.get("/api/history")
+    async def local_history():
+        """Every clip of every project, newest first — the library grid.
+
+        view_url/download_url are the local /videos mount rather than signed R2
+        links; the download one goes through /api/clip/.../download so the
+        browser saves the file instead of navigating to it.
+        """
+        _require_local_library()
+        items = []
+        for p in _scan_local_projects():
+            for c in p["clips"]:
+                items.append({
+                    "id": f"{p['job_id']}:{c['index']}",
+                    "job_id": p["job_id"],
+                    "clip_index": c["index"],
+                    "title": c["title"],
+                    "created_at": p["created_at"],
+                    "size_bytes": c["size_bytes"],
+                    "view_url": f"/videos/{p['job_id']}/{c['filename']}",
+                    "download_url": f"/api/clip/{p['job_id']}/{c['index']}/download",
+                })
+        return {"videos": items}
+
+    @app.post("/api/projects/{job_id}/restore")
+    async def restore_local_project(job_id: str):
+        """Put a project back in memory so every edit endpoint works on it.
+
+        The result payload is built exactly like the one run_job_wrapper
+        produces, so the Clip Generator cannot tell a restored project from a
+        freshly finished one.
+        """
+        _require_local_library()
+        p = _local_project(job_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Project not found")
+        result = {"clips": p["shorts"], "cost_analysis": p["cost_analysis"]}
+        jobs[job_id] = {
+            "status": "completed",
+            "logs": ["♻️ Project restored from your library."],
+            "output_dir": os.path.join(OUTPUT_DIR, job_id),
+            "user_id": None,
+            "result": result,
+        }
+        return {"job_id": job_id, "result": result, "project_state": p["state"] or None}
+
+    @app.put("/api/projects/{job_id}/state")
+    async def save_local_project_state(job_id: str, request: Request):
+        """Persist the browser-only Remotion layer state next to the clips."""
+        _require_local_library()
+        job_path = os.path.join(OUTPUT_DIR, job_id)
+        if not os.path.isdir(job_path):
+            raise HTTPException(status_code=404, detail="Project not found")
+        if int(request.headers.get("content-length") or 0) > 262144:
+            raise HTTPException(status_code=413, detail="State too large")
+        body = await request.json()
+        try:
+            with open(os.path.join(job_path, _PROJECT_STATE_FILE), "w") as f:
+                json.dump({"clips": body.get("clips") or []}, f)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Could not save state: {e}")
+        return {"ok": True}
+
+    @app.get("/api/clip/{job_id}/{clip_index}/download")
+    async def download_local_clip(job_id: str, clip_index: int):
+        """One clip, as an attachment named after its title."""
+        _require_local_library()
+        p = _local_project(job_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Project not found")
+        match = next((c for c in p["clips"] if c["index"] == clip_index), None)
+        if not match:
+            raise HTTPException(status_code=404, detail="Clip not found")
+        safe = (match["title"] or "short").strip().replace("/", "-")[:60] + ".mp4"
+        return FileResponse(os.path.join(OUTPUT_DIR, job_id, match["filename"]),
+                            media_type="video/mp4", filename=safe)
 
 
 @app.get("/api/jobs/{job_id}/download-all")

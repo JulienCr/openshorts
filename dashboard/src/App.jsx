@@ -615,6 +615,16 @@ function App() {
           output_format: data.outputFormat || 'auto',
           force_low_quality: forceLowQuality,
         });
+      } else if (data.type === 'local') {
+        // A name inside the server's LOCAL_INGEST_DIR, not a browser File —
+        // nothing is uploaded, so this goes as JSON like the URL path.
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify({
+          local_path: data.payload,
+          acknowledged: !!data.acknowledged,
+          output_format: data.outputFormat || 'auto',
+          force_low_quality: forceLowQuality,
+        });
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
@@ -637,6 +647,13 @@ function App() {
       }
 
       setJobId(resData.job_id);
+
+      // A server-side source has no blob URL to preview, so point the live
+      // preview at the backend once the job id exists — otherwise the panel
+      // spins for the whole run and reads as stuck.
+      if (data.type === 'local') {
+        setProcessingMedia({ type: 'server', payload: `/api/source/${resData.job_id}` });
+      }
 
     } catch (e) {
       if (e instanceof QuotaError) {
@@ -679,7 +696,10 @@ function App() {
       { id: 'ai-agent', ord: '03', icon: Bot, label: 'AI Agent', byok: true },
       { id: 'ugc-gallery', ord: '04', icon: LayoutGrid, label: 'UGC Gallery' },
       { id: 'thumbnails', ord: '05', icon: Image, label: 'YouTube Studio' },
-      ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History' }] : []),
+      // Self-host has a library too — it just lives in OUTPUT_DIR instead of
+      // R2, and needs no account. Only the cloud build has someone to sign in.
+      ...(billingEnabled ? (isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History' }] : [])
+        : [{ id: 'history', ord: '06', icon: History, label: 'History' }]),
       { id: 'settings', ord: '07', icon: Settings, label: 'Settings' },
     ];
 
@@ -1236,7 +1256,7 @@ function App() {
           {activeTab === 'history' && (
             <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
               <div className="max-w-6xl mx-auto p-6 md:p-8">
-                <HistoryTab onReopenProject={restoreProject} />
+                <HistoryTab onReopenProject={restoreProject} managed={billingEnabled} />
               </div>
             </div>
           )}

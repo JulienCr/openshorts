@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Link2, Upload, FileVideo, X, Info, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Link2, Upload, FileVideo, X, Info, Loader2, HardDrive, RefreshCw } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 const SUPPORTED_PLATFORMS = [
@@ -9,8 +9,16 @@ const SUPPORTED_PLATFORMS = [
 
 export default function MediaInput({ onProcess, isProcessing }) {
     const [youtubeUrlEnabled, setYoutubeUrlEnabled] = useState(true);
+    // Off unless the server sets LOCAL_INGEST_DIR (self-host only), so the tab
+    // never shows up on a deployment that would just answer 403.
+    const [localIngestEnabled, setLocalIngestEnabled] = useState(false);
+    const [localFiles, setLocalFiles] = useState([]);
+    const [localTruncated, setLocalTruncated] = useState(false);
+    const [localName, setLocalName] = useState('');
+    const [localError, setLocalError] = useState('');
+    const [loadingLocal, setLoadingLocal] = useState(false);
     // File upload is the primary path; the link is secondary.
-    const [mode, setMode] = useState('file'); // 'file' | 'url'
+    const [mode, setMode] = useState('file'); // 'file' | 'url' | 'local'
     const [url, setUrl] = useState('');
     const [file, setFile] = useState(null);
     const [acknowledged, setAcknowledged] = useState(false);
@@ -36,9 +44,31 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     setYoutubeUrlEnabled(false);
                     setMode('file');
                 }
+                if (cfg && cfg.localIngestEnabled) setLocalIngestEnabled(true);
             })
             .catch(() => {});
     }, []);
+
+    const loadLocalFiles = useCallback(() => {
+        setLoadingLocal(true);
+        setLocalError('');
+        fetch(getApiUrl('/api/local-files'))
+            .then((r) => (r.ok ? r.json() : Promise.reject(new Error('unreachable'))))
+            .then((d) => {
+                setLocalFiles(d.files || []);
+                setLocalTruncated(!!d.truncated);
+            })
+            .catch(() => setLocalError("Could not read the server's video folder."))
+            .finally(() => setLoadingLocal(false));
+    }, []);
+
+    // Re-read on every entry into the tab, not once on mount: the whole point
+    // of this path is to drop a file on the server and process it, so a list
+    // fetched at page load is stale exactly when it matters. The refresh button
+    // covers dropping a file while the tab is already open.
+    useEffect(() => {
+        if (localIngestEnabled && mode === 'local') loadLocalFiles();
+    }, [localIngestEnabled, mode, loadLocalFiles]);
 
     // A link pasted in the landing hero: preload it here so the user picks up
     // where they left off. Not auto-submitted — the rights attestation below
@@ -62,6 +92,8 @@ export default function MediaInput({ onProcess, isProcessing }) {
             onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat });
         } else if (mode === 'file' && file) {
             onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat });
+        } else if (mode === 'local' && localName) {
+            onProcess({ type: 'local', payload: localName, acknowledged: true, outputFormat });
         }
     };
 
@@ -96,6 +128,18 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     >
                         <Link2 size={16} className={`hidden sm:block ${mode === 'url' ? 'text-brass' : ''}`} />
                         Video URL
+                    </button>
+                )}
+                {localIngestEnabled && (
+                    <button
+                        onClick={() => setMode('local')}
+                        className={`flex items-center gap-2 pb-3 px-1 -mb-px border-b-2 text-sm lowercase whitespace-nowrap transition-colors ${mode === 'local'
+                            ? 'text-ink border-brass'
+                            : 'text-muted border-transparent hover:text-ink2'
+                            }`}
+                    >
+                        <HardDrive size={16} className={`hidden sm:block ${mode === 'local' ? 'text-brass' : ''}`} />
+                        On Server
                     </button>
                 )}
             </div>
@@ -139,6 +183,63 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             </div>
                         </div>
                     </div>
+                ) : mode === 'local' ? (
+                    <div className="space-y-3">
+                        {/* Select and refresh stay mounted whatever the folder
+                            holds — hiding them on the empty state would strand
+                            the user right after dropping their first file. */}
+                        <div className="flex items-center gap-2">
+                            <select
+                                value={localName}
+                                onChange={(e) => setLocalName(e.target.value)}
+                                className="input-field flex-1"
+                                disabled={loadingLocal || localFiles.length === 0}
+                                required
+                            >
+                                <option value="">
+                                    {localFiles.length ? 'Pick a file already on the server…' : 'Nothing to pick yet'}
+                                </option>
+                                {localFiles.map((f) => (
+                                    <option key={f.name} value={f.name}>
+                                        {f.name} — {f.size_mb >= 1024
+                                            ? `${(f.size_mb / 1024).toFixed(1)} GB`
+                                            : `${f.size_mb} MB`}
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                type="button"
+                                onClick={loadLocalFiles}
+                                disabled={loadingLocal}
+                                title="Re-read the server folder"
+                                aria-label="Re-read the server folder"
+                                className="p-2.5 rounded-input border border-rule2 text-muted hover:text-ink hover:border-brass disabled:opacity-50 transition-colors"
+                            >
+                                <RefreshCw size={16} className={loadingLocal ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
+
+                        {loadingLocal ? (
+                            <p className="readout">Reading the server folder…</p>
+                        ) : localError ? (
+                            <p className="text-sm text-muted">{localError}</p>
+                        ) : localFiles.length === 0 ? (
+                            <p className="text-sm text-muted">
+                                No video files in the server folder yet — drop one in and hit refresh.
+                            </p>
+                        ) : (
+                            <>
+                                <p className="readout">
+                                    Read straight from the server's disk — nothing is uploaded, so the size limit does not apply.
+                                </p>
+                                {localTruncated && (
+                                    <p className="readout text-brass">
+                                        Only the first {localFiles.length} files are listed — narrow the server folder to see the rest.
+                                    </p>
+                                )}
+                            </>
+                        )}
+                    </div>
                 ) : (
                     <div
                         className={`border-2 border-dashed rounded-card p-6 sm:p-8 text-center transition-colors ${file ? 'border-brass' : 'border-rule2 hover:border-brass'
@@ -168,7 +269,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                 />
                                 <Upload className="mx-auto mb-3 text-muted" size={18} />
                                 <p className="text-ink2 lowercase">Click to upload or drag and drop</p>
-                                <p className="readout mt-2">MP4, MOV up to 500MB</p>
+                                <p className="readout mt-2">MP4, MOV up to 2GB</p>
                             </label>
                         )}
                     </div>
@@ -224,7 +325,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
 
                 <button
                     type="submit"
-                    disabled={isProcessing || !acknowledged || (mode === 'url' && !url) || (mode === 'file' && !file)}
+                    disabled={isProcessing || !acknowledged || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'local' && !localName)}
                     className="w-full btn-primary mt-4"
                 >
                     {isProcessing ? (
