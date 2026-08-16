@@ -2261,11 +2261,24 @@ async def put_style(req: StyleRequest):
     # Anything that isn't a JSON object is refused by the request schema above,
     # which matters: load_style() discards a non-object, so writing one would
     # look like a save and behave like a delete.
+    #
+    # Written to a sibling and swapped in with os.replace, never truncated in
+    # place. load_style() runs on every submission, so an in-place write is
+    # observable: a job arriving mid-save reads half a file, falls back to the
+    # built-in defaults and renders with the wrong look — silently. A crash
+    # would leave the preset permanently truncated. The sibling keeps the swap
+    # on one filesystem, which is what makes os.replace atomic.
     path = style_preset.style_file_path()
+    tmp_path = f"{path}.tmp"
     try:
-        with open(path, "w") as f:
+        with open(tmp_path, "w") as f:
             json.dump(req.style, f, indent=2)
+        os.replace(tmp_path, path)
     except OSError as e:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=500,
                             detail=f"Could not write {path}: {e}")
     print(f"[style] default style saved to {path} ({sorted(req.style)})")

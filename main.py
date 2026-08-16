@@ -824,17 +824,22 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, hook_text=Non
     the untouched original stays on disk and re-styling from the modal replaces
     the captions instead of burning a second layer over them.
 
-    Returns the captioned path, or None when captions were skipped (silent
-    video, no words in range, AUTO_CAPTIONS=0, or any failure — a caption
-    problem must never cost the user the clip they already paid for).
+    Returns the derived path, or None when there was nothing to burn at all —
+    no captions AND no hook — or on any failure, because a styling problem must
+    never cost the user the clip they already paid for.
+
+    Captions and the hook are decided INDEPENDENTLY. Returning early on
+    AUTO_CAPTIONS=0 or an empty word range used to skip the hook too, so
+    `hook.enabled` promised something the pipeline would not deliver on exactly
+    the clips that need a hook most (a silent or wordless one).
     """
-    if os.environ.get("AUTO_CAPTIONS", "1").strip() == "0":
-        return None
-    if not transcript or not transcript.get('segments'):
-        return None  # silent video: nothing to caption
     try:
         import subtitles as _subs
+        import hooks as _hooks
         style = _subs.resolve_caption_style()
+        captions_wanted = (
+            os.environ.get("AUTO_CAPTIONS", "1").strip() != "0"
+            and bool(transcript and transcript.get('segments')))
         output_dir = os.path.dirname(clip_path)
         stem = os.path.basename(clip_path)
         generation_id = int(time.time())
@@ -864,26 +869,30 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, hook_text=Non
             output_dir, _subs.captioned_output_name(stem, generation_id))
 
         ass_path = _subs.generate_auto_captions(
-            transcript, clip_start, clip_end, output_dir, generation_id, style)
-        if not ass_path:
-            print("   ℹ️ No words in range — clip ships without captions.")
-            return None
+            transcript, clip_start, clip_end, output_dir, generation_id,
+            style) if captions_wanted else None
 
-        import hooks as _hooks
         with _hooks.auto_hook_overlay(clip_path, hook_text, generation_id) as overlay:
+            if not ass_path and not overlay:
+                # Nothing to burn. Skip the re-encode entirely rather than
+                # writing a byte-shuffled copy of the clip.
+                if captions_wanted:
+                    print("   ℹ️ No words in range — clip ships without captions.")
+                return None
             _subs.burn_subtitles(
                 clip_path, ass_path, out_path,
                 alignment=style["alignment"], fontsize=style["font_size"],
                 font_name=style["font_name"], font_color=style["font_color"],
                 border_color=style["border_color"], border_width=style["border_width"],
                 **overlay)
-            hooked = bool(overlay)
-        print(f"   💬 Captions burned: {os.path.basename(out_path)}"
-              + (" (+ hook)" if hooked else ""))
+            burned = ", ".join(
+                part for part, on in (("captions", bool(ass_path)),
+                                      ("hook", bool(overlay))) if on)
+        print(f"   💬 Burned {burned}: {os.path.basename(out_path)}")
         return out_path
     except Exception as e:
-        print(f"   ⚠️ Auto-captions failed ({type(e).__name__}: {e}) — "
-              f"delivering the clip without them.")
+        print(f"   ⚠️ Auto-styling failed ({type(e).__name__}: {e}) — "
+              f"delivering the clip without it.")
         return None
 
 

@@ -185,6 +185,21 @@ class TestMergedBurn:
 
         assert sorted(_streams(out)) == ["audio", "video"]
 
+    def test_hook_burns_on_a_clip_with_no_captions(self, tmp_path):
+        # AUTO_CAPTIONS=0 and a wordless clip are both legitimate, and both used
+        # to skip the hook entirely. Goes through burn_subtitles, not just the
+        # filter builder: the path escaping runs before the filter is chosen and
+        # blew up on a None subtitle file while the unit test stayed green.
+        clip = _make_clip(tmp_path / "clip.mp4", silent=False)
+        out = tmp_path / "out.mp4"
+
+        subtitles.burn_subtitles(
+            clip, None, str(out),
+            overlay_png=self._png(tmp_path), overlay_xy=(10, 20), overlay_until=0.5)
+
+        assert os.path.exists(out)
+        assert sorted(_streams(out)) == ["audio", "video"]
+
     def test_captions_only_path_is_unchanged(self, tmp_path):
         # No overlay: the single-input form the pipeline has always used.
         clip = _make_clip(tmp_path / "clip.mp4", silent=False)

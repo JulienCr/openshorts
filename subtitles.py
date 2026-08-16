@@ -195,10 +195,14 @@ def _collect_word_blocks(transcript, clip_start, clip_end, max_chars=20, max_dur
     return blocks
 
 
-def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, max_duration=2.0):
+def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20,
+                 max_duration=2.0, uppercase=False):
     """
     Generates an SRT file from the transcript for a specific time range.
     Groups words into short lines suitable for vertical video.
+
+    ``uppercase`` mirrors the karaoke generator's option. SRT carries no
+    per-word markup, so the only place to apply it is the emitted text.
     """
     blocks = _collect_word_blocks(transcript, clip_start, clip_end, max_chars, max_duration)
     if not blocks:
@@ -207,6 +211,8 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
     srt_content = ""
     for index, block in enumerate(blocks, 1):
         text = " ".join(w['word'] for w in block).strip()
+        if uppercase:
+            text = text.upper()
         srt_content += format_srt_block(index, block[0]['start'], block[-1]['end'], text)
 
     # Write UTF-8 with BOM so Windows/FFmpeg subtitle readers reliably detect Unicode text.
@@ -525,7 +531,8 @@ def generate_auto_captions(transcript, clip_start, clip_end, output_dir,
         # force_style burn_subtitles builds for a non-.ass file.
         ok = generate_srt(transcript, clip_start, clip_end, path,
                           max_chars=style["max_chars"],
-                          max_duration=style["max_duration"])
+                          max_duration=style["max_duration"],
+                          uppercase=style["uppercase"])
     return path if ok else None
 
 
@@ -587,6 +594,30 @@ def build_burn_command(video_path, output_path, vf, overlay_png=None,
     ]
 
 
+def _burn_filter(srt_path, style_string, safe_srt_path=None, safe_fonts_dir=None):
+    """The video filter for a burn: the subtitle renderer, or a pass-through.
+
+    ``srt_path=None`` yields ``null`` — the clip goes through untouched. That is
+    what lets the automatic hook be burned on a clip with no captions, which
+    happens legitimately (AUTO_CAPTIONS=0, or a clip whose range holds no
+    words). Gating the hook behind captions made `hook.enabled` promise
+    something the pipeline would not do.
+
+    The first option is named explicitly (filename=) rather than positional:
+    ffmpeg 8's filtergraph parser rejects a quoted positional value that is
+    followed by more :name=value options ("No option name near ..."), while the
+    named form parses on every version back to 4.x.
+    """
+    if not srt_path:
+        return "null"
+    if str(srt_path).lower().endswith('.ass'):
+        # ASS files (karaoke style) carry their own styles; force_style would
+        # override the per-word color tags.
+        return f"ass=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
+    return (f"subtitles=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
+            f":charenc=UTF-8:force_style='{style_string}'")
+
+
 def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
@@ -622,7 +653,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     border_width = _clamp_number(border_width, 0, 10, 2)
 
     # Path handling for FFmpeg filter syntax
-    safe_srt_path = _escape_ffmpeg_filter_value(srt_path)
+    safe_srt_path = _escape_ffmpeg_filter_value(srt_path) if srt_path else None
 
     # Convert colors to ASS format and build style
     primary_colour = hex_to_ass_color(font_color, 1.0)
@@ -659,17 +690,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
     safe_fonts_dir = _escape_ffmpeg_filter_value(fonts_dir)
 
-    # The first option is named explicitly (filename=) rather than positional:
-    # ffmpeg 8's filtergraph parser rejects a quoted positional value that is
-    # followed by more :name=value options ("No option name near ..."), while
-    # the named form parses on every version back to 4.x.
-    if str(srt_path).lower().endswith('.ass'):
-        # ASS files (karaoke style) carry their own styles; force_style would
-        # override the per-word color tags.
-        vf = f"ass=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
-    else:
-        vf = (f"subtitles=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
-              f":charenc=UTF-8:force_style='{style_string}'")
+    vf = _burn_filter(srt_path, style_string, safe_srt_path, safe_fonts_dir)
 
     cmd = build_burn_command(video_path, output_path, vf,
                              overlay_png=overlay_png, overlay_xy=overlay_xy,

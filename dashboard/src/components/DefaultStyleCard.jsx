@@ -37,6 +37,11 @@ export default function DefaultStyleCard() {
     const [loaded, setLoaded] = useState(false);
     const [editable, setEditable] = useState(true);
     const [path, setPath] = useState('');
+    // Everything the file holds that this card does not model — force_low_quality
+    // today, whatever gets added tomorrow. Saving rebuilt the preset from the
+    // four fields below, so any such key was deleted the next time someone
+    // touched a colour. The card owns four sections; it does not own the file.
+    const [untouched, setUntouched] = useState({});
     const [captions, setCaptions] = useState(DEFAULT_CAPTION_STYLE);
     const [hook, setHook] = useState(DEFAULT_HOOK);
     const [layouts, setLayouts] = useState([]);
@@ -52,6 +57,8 @@ export default function DefaultStyleCard() {
                 setHook({ ...DEFAULT_HOOK, ...(style.hook || {}) });
                 setLayouts(Array.isArray(style.layouts) ? style.layouts : []);
                 setOutputFormat(style.output_format || 'auto');
+                const { captions: _c, hook: _h, layouts: _l, output_format: _o, ...rest } = style;
+                setUntouched(rest);
                 setEditable(d.editable !== false);
                 setPath(d.path || '');
             })
@@ -77,6 +84,7 @@ export default function DefaultStyleCard() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     style: {
+                        ...untouched,
                         captions,
                         hook,
                         layouts,
@@ -89,7 +97,7 @@ export default function DefaultStyleCard() {
             alert(e?.detail || 'Could not save the default style.');
         }
         setSaving(false);
-    }, [captions, hook, layouts, outputFormat]);
+    }, [captions, hook, layouts, outputFormat, untouched]);
 
     const reset = edit(() => {
         setCaptions(DEFAULT_CAPTION_STYLE);

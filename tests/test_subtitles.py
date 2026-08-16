@@ -511,3 +511,47 @@ class TestFilterQuoting:
     def test_plain_path_untouched(self):
         from subtitles import _escape_ffmpeg_filter_value
         assert _escape_ffmpeg_filter_value("/out/subs_0_123.ass") == "/out/subs_0_123.ass"
+
+
+class TestClassicUppercase:
+    """The settings card exposes UPPERCASE for every caption look, Classic
+    included. The karaoke generator applies it; the SRT one never did, so the
+    saved field resolved correctly and changed nothing on screen."""
+
+    def _transcript(self):
+        return {"segments": [{"start": 0, "end": 2, "text": "a", "words": [
+            {"word": " this", "start": 0.0, "end": 0.5},
+            {"word": " is", "start": 0.5, "end": 1.0},
+        ]}]}
+
+    def test_classic_honours_uppercase(self, tmp_path):
+        style = {**AUTO_CAPTION_STYLE, "style": "classic", "uppercase": True}
+        path = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1, style)
+        assert "THIS IS" in open(path, encoding="utf-8-sig").read()
+
+    def test_classic_leaves_case_alone_when_not_asked(self, tmp_path):
+        style = {**AUTO_CAPTION_STYLE, "style": "classic", "uppercase": False}
+        path = generate_auto_captions(self._transcript(), 0, 2, str(tmp_path), 1, style)
+        assert "this is" in open(path, encoding="utf-8-sig").read()
+
+
+class TestBurnWithoutCaptions:
+    """The automatic hook must not depend on captions existing.
+
+    AUTO_CAPTIONS=0 is a documented switch, and a clip can legitimately carry no
+    words in range. Both used to return before the hook was ever considered, so
+    `hook.enabled` promised something the pipeline would not do.
+    """
+
+    def test_no_subtitle_file_gives_a_pass_through_filter(self):
+        cmd = build_burn_command("clip.mp4", "out.mp4", "null",
+                                 overlay_png="hook.png", overlay_xy=(1, 2))
+        graph = cmd[cmd.index("-filter_complex") + 1]
+        assert graph.startswith("[0:v]null[")
+
+    def test_burn_subtitles_accepts_no_subtitle_file(self):
+        # The vf is what changes; the rest of the command must not.
+        from subtitles import _burn_filter
+        assert _burn_filter(None, "") == "null"
+        assert _burn_filter("/tmp/s.ass", "", "/tmp/s.ass", "/fonts").startswith("ass=")
+        assert _burn_filter("/tmp/s.srt", "X", "/tmp/s.srt", "/fonts").startswith("subtitles=")

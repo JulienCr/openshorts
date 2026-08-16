@@ -690,7 +690,10 @@ function App() {
           url: data.payload,
           acknowledged: !!data.acknowledged,
           ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
-          force_low_quality: forceLowQuality,
+          // Sent only on the confirmation retry. Sending false up front makes
+          // it an explicit override, so a default style that waives the
+          // low-resolution gate could never apply to a dashboard job.
+          ...(forceLowQuality ? { force_low_quality: true } : {}),
         });
       } else if (data.type === 'local') {
         // A name inside the server's LOCAL_INGEST_DIR, not a browser File —
@@ -700,7 +703,10 @@ function App() {
           local_path: data.payload,
           acknowledged: !!data.acknowledged,
           ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
-          force_low_quality: forceLowQuality,
+          // Sent only on the confirmation retry. Sending false up front makes
+          // it an explicit override, so a default style that waives the
+          // low-resolution gate could never apply to a dashboard job.
+          ...(forceLowQuality ? { force_low_quality: true } : {}),
         });
       } else {
         const formData = new FormData();

@@ -203,3 +203,29 @@ class TestStyleEndpoint:
         monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
         resp = _client_call("put", "/api/style", json={"style": {}})
         assert resp.status_code == 403
+
+
+class TestStyleFileIsWrittenAtomically:
+    """load_style() runs on every submission, so a save landing mid-submit must
+    not be observable. Truncating the file in place lets a job read partial JSON,
+    fall back to the built-in defaults and render with the wrong look — and a
+    crash mid-write leaves the preset permanently broken."""
+
+    def test_a_failed_write_leaves_the_previous_style_intact(self, preset_file, monkeypatch):
+        preset_file.write_text(json.dumps({"output_format": "square"}))
+
+        def boom(*a, **kw):
+            raise OSError("disk full")
+        monkeypatch.setattr(app_module.json, "dump", boom)
+
+        _client_call("put", "/api/style", json={"style": {"output_format": "vertical"}})
+
+        assert json.loads(preset_file.read_text())["output_format"] == "square"
+
+    def test_no_scratch_file_is_left_behind(self, preset_file, tmp_path):
+        _client_call("put", "/api/style", json={"style": {"output_format": "square"}})
+        assert [p.name for p in tmp_path.iterdir()] == ["style.json"]
+
+    def test_the_saved_file_is_always_complete(self, preset_file):
+        _client_call("put", "/api/style", json={"style": {"captions": {"font_name": "Anton"}}})
+        assert json.loads(preset_file.read_text())["captions"]["font_name"] == "Anton"
