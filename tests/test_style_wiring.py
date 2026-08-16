@@ -233,27 +233,68 @@ class TestStyleFileIsWrittenAtomically:
 
 class TestStyleWriteIsNotDriveBy:
     """PUT /api/style persists a server-wide setting, and self-host runs with
-    allow_origins=["*"]. Without an origin check any page the operator happens
-    to visit can silently restyle every future job — /api/process at least only
-    creates one job, this changes all of them."""
+    allow_origins=["*"] and no auth. Without a check, any page the operator
+    happens to visit can silently restyle every future job — /api/process at
+    least only creates one job they can see; this changes all of them.
 
-    def test_a_foreign_origin_is_refused(self, preset_file):
+    The signal is Sec-Fetch-Site, not Origin-vs-Host. The documented dashboard
+    reaches the API through Vite's proxy with changeOrigin: true, so the browser
+    sends Origin: http://localhost:5175 while FastAPI sees a base_url of
+    http://backend:8000. Those netlocs can never match, and comparing them
+    rejected every save from the setup the README tells people to run.
+    Sec-Fetch-Site is computed by the browser and survives the rewrite.
+    """
+
+    def test_a_cross_site_write_is_refused(self, preset_file):
         resp = _client_call("put", "/api/style", json={"style": {"output_format": "square"}},
-                            headers={"Origin": "https://evil.example"})
+                            headers={"Sec-Fetch-Site": "cross-site"})
         assert resp.status_code == 403
         assert not preset_file.exists()
 
-    def test_the_dashboards_own_origin_is_allowed(self, preset_file):
+    def test_the_dashboard_behind_the_vite_proxy_is_allowed(self, preset_file):
+        # The regression this guards: browser Origin and server base_url differ
+        # by design here, and the save must still go through.
         resp = _client_call("put", "/api/style", json={"style": {"output_format": "square"}},
-                            headers={"Origin": "http://t"})
+                            headers={"Origin": "http://localhost:5175",
+                                     "Sec-Fetch-Site": "same-origin"})
+        assert resp.status_code == 200
+
+    def test_same_site_is_allowed(self, preset_file):
+        resp = _client_call("put", "/api/style", json={"style": {}},
+                            headers={"Sec-Fetch-Site": "same-site"})
+        assert resp.status_code == 200
+
+    def test_typed_in_the_address_bar_is_allowed(self, preset_file):
+        resp = _client_call("put", "/api/style", json={"style": {}},
+                            headers={"Sec-Fetch-Site": "none"})
         assert resp.status_code == 200
 
     def test_a_non_browser_client_is_allowed(self, preset_file):
-        # curl and the CLI send no Origin. They are not the CSRF case: anyone
-        # who can call the API directly does not need the operator's browser.
+        # curl, the CLI and the MCP adapter send neither header. They are not
+        # the CSRF case: anyone who can call the API directly does not need the
+        # operator's browser to do it.
         resp = _client_call("put", "/api/style", json={"style": {"output_format": "square"}})
         assert resp.status_code == 200
 
     def test_reading_the_style_stays_open(self, preset_file):
-        resp = _client_call("get", "/api/style", headers={"Origin": "https://evil.example"})
+        resp = _client_call("get", "/api/style", headers={"Sec-Fetch-Site": "cross-site"})
         assert resp.status_code == 200
+
+
+class TestPresetQualityGateIsTyped:
+    """force_low_quality is the one preset field that stayed a raw bool() call
+    while captions and hook got typed. "false" is a truthy string, so a mistyped
+    preset silently waived the quality warning it reads as declining."""
+
+    def test_a_string_false_does_not_waive_the_gate(self, preset_file):
+        preset_file.write_text(json.dumps({"force_low_quality": "false"}))
+        assert app_module.resolve_force_low_quality(None) is False
+
+    def test_a_string_true_does_not_waive_it_either(self, preset_file):
+        # Consistent with every other field: a string is never read as a bool.
+        preset_file.write_text(json.dumps({"force_low_quality": "true"}))
+        assert app_module.resolve_force_low_quality(None) is False
+
+    def test_a_real_boolean_still_works(self, preset_file):
+        preset_file.write_text(json.dumps({"force_low_quality": True}))
+        assert app_module.resolve_force_low_quality(None) is True

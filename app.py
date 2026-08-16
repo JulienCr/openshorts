@@ -14,7 +14,6 @@ import math
 import itertools
 import asyncio
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 from contextlib import asynccontextmanager
@@ -1831,7 +1830,11 @@ def resolve_force_low_quality(requested, preset=None):
     a single job — the opposite of "the request beats the file".
     """
     if requested is None or requested == "":
-        return bool(effective_preset(preset).get("force_low_quality"))
+        # Typed like every other preset field: "false" is a truthy string, so a
+        # bare bool() turned a mistyped preset into a silent waiver of the very
+        # warning it reads as declining.
+        return style_preset.coerce_like(
+            effective_preset(preset).get("force_low_quality"), False)
     if isinstance(requested, bool):
         return requested
     return str(requested).lower() in ("1", "true", "yes")
@@ -2245,8 +2248,8 @@ async def get_style():
             "path": style_preset.style_file_path()}
 
 
-def _assert_same_origin(request: Request):
-    """Refuse a cross-origin write.
+def _assert_not_cross_site(request: Request):
+    """Refuse a cross-site write to the server-wide style.
 
     Self-host runs with allow_origins=["*"] and no authentication, so without
     this any page the operator happens to visit could PUT a new style.json and
@@ -2254,17 +2257,25 @@ def _assert_same_origin(request: Request):
     too, but it only creates one job the operator can see; this changes all of
     them, persistently, with nothing on screen.
 
-    A missing Origin is allowed on purpose: curl, the CLI and the MCP adapter
-    send none, and they are not the case being defended against — anyone who
-    can call the API directly does not need the operator's browser to do it.
+    The signal is Sec-Fetch-Site, NOT a comparison of Origin against this
+    request's host. The documented dashboard reaches the API through Vite's
+    proxy with ``changeOrigin: true``, so the browser sends
+    ``Origin: http://localhost:5175`` while FastAPI sees a base_url of
+    ``http://backend:8000``. Those can never match, and comparing them rejected
+    every save from the setup the README tells people to run. Under
+    changeOrigin the server genuinely cannot recover the browser-facing origin,
+    so no amount of care with Origin fixes it. Sec-Fetch-Site is computed by
+    the browser and passes through the proxy untouched.
+
+    An absent header is allowed, and that is the deliberate limit of this
+    check: curl, the CLI and the MCP adapter send none, and a browser old
+    enough to omit it gets no protection. Defending the modern-browser case
+    without breaking the documented setup is the trade being made here.
     """
-    origin = request.headers.get("origin")
-    if not origin:
-        return
-    if urlparse(origin).netloc != urlparse(str(request.base_url)).netloc:
+    if request.headers.get("sec-fetch-site") == "cross-site":
         raise HTTPException(
             status_code=403,
-            detail="Cross-origin writes to the default style are refused.")
+            detail="Cross-site writes to the default style are refused.")
 
 
 @app.put("/api/style")
@@ -2275,7 +2286,7 @@ async def put_style(req: StyleRequest, request: Request):
     share the instance — whoever saved last would restyle everybody's clips —
     so the cloud build serves this read-only and keeps the built-in look.
     """
-    _assert_same_origin(request)
+    _assert_not_cross_site(request)
     if BILLING_ENABLED:
         raise HTTPException(
             status_code=403,
