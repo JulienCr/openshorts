@@ -80,14 +80,29 @@ class TestSettings:
         monkeypatch.setenv("BRAND_Y_RATIO", "not-a-number")
         assert settings().y_ratio == branding.DEFAULT_Y_RATIO
 
-    @pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "Infinity"])
-    def test_non_finite_ratios_fall_back(self, monkeypatch, raw):
-        """float() accepts nan/inf, and they only blow up later, in plan_marks'
-        int(vw * ratio) — past every guard, so the clip loses its captions."""
+    @pytest.mark.parametrize("raw", [
+        "nan", "inf", "-inf", "Infinity",   # float() accepts all of these
+        "1e308",                            # finite, but int(vh * it) overflows
+        "-0.5", "2", "1e9",                 # finite and in range for float(), not for a ratio
+    ])
+    def test_out_of_domain_ratios_fall_back(self, monkeypatch, raw):
+        """Every setting here is a fraction, so the domain is [0, 1].
+
+        Syntax checks alone were not enough, twice: nan/inf parse fine, and so
+        does 1e308, which then overflows in plan_marks' int(vh * ratio) — past
+        every guard, so the clip silently loses its captions.
+        """
+        monkeypatch.setenv("BRAND_Y_RATIO", raw)
         monkeypatch.setenv("BRAND_LOGO_WIDTH_RATIO", raw)
+        assert settings().y_ratio == branding.DEFAULT_Y_RATIO
         assert settings().logo_width_ratio == branding.DEFAULT_LOGO_WIDTH_RATIO
-        # And the geometry it feeds still works.
+        # And the geometry it feeds still produces a usable plan.
         assert plan_marks(1080, 1920, [LOGO])[0].width > 0
+
+    @pytest.mark.parametrize("raw", ["0", "0.5", "1"])
+    def test_the_domain_bounds_are_inclusive(self, monkeypatch, raw):
+        monkeypatch.setenv("BRAND_OPACITY", raw)
+        assert settings().opacity == float(raw)
 
     def test_module_never_froze_a_flag_at_import(self):
         """Regression guard: an ENABLED constant would reintroduce the bug."""

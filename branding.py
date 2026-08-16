@@ -115,12 +115,15 @@ _warned_missing = False
 
 
 def _env_float(name, default):
-    """A malformed ratio must not take the whole job down with a ValueError.
+    """A malformed ratio must not take the whole job down.
 
-    ``float()`` happily returns nan and inf, which parse fine here and then blow
-    up much later in ``plan_marks`` on ``int(vw * ratio)`` — past every guard,
-    so a --skip-analysis run would fail after rendering its output and a normal
-    clip would lose its captions. isfinite is what makes the fallback real.
+    Everything this parses is a fraction of the frame or an alpha, so the domain
+    really is [0, 1] and anything outside it is a typo. Checking the domain —
+    rather than just the syntax — is what makes the fail-soft promise true:
+    ``float()`` accepts "nan" and "inf", and even a finite "1e308" survives an
+    isfinite check and then overflows in ``plan_marks`` on ``int(vh * ratio)``.
+    Each of those blows up past every guard, so a --skip-analysis run fails after
+    rendering its output and a normal clip silently loses its captions.
     """
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
@@ -130,8 +133,9 @@ def _env_float(name, default):
     except ValueError:
         print(f"   ⚠️ {name}={raw!r} is not a number; using {default}.")
         return default
-    if not math.isfinite(value):
-        print(f"   ⚠️ {name}={raw!r} is not a finite number; using {default}.")
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        print(f"   ⚠️ {name}={raw!r} is not a fraction between 0 and 1; "
+              f"using {default}.")
         return default
     return value
 
