@@ -22,6 +22,11 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const [url, setUrl] = useState('');
     const [file, setFile] = useState(null);
     const [acknowledged, setAcknowledged] = useState(false);
+    // Cloud only: the attestation is the record of consent the terms promise.
+    // Self-hosting, you process your own files, so the box measures nothing and
+    // is one click per job. Defaults to true so a failed /api/config keeps
+    // today's behaviour instead of dropping the guard silently.
+    const [requireRights, setRequireRights] = useState(true);
     const [outputFormat, setOutputFormat] = useState('vertical'); // vertical | horizontal | square
     const [showInfo, setShowInfo] = useState(false);
     const infoRef = useRef(null);
@@ -45,6 +50,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     setMode('file');
                 }
                 if (cfg && cfg.localIngestEnabled) setLocalIngestEnabled(true);
+                // `=== false`, not `!cfg.billingEnabled`: a server too old to
+                // send the key keeps the box rather than losing it by accident.
+                if (cfg && cfg.billingEnabled === false) setRequireRights(false);
             })
             .catch(() => {});
     }, []);
@@ -71,8 +79,8 @@ export default function MediaInput({ onProcess, isProcessing }) {
     }, [localIngestEnabled, mode, loadLocalFiles]);
 
     // A link pasted in the landing hero: preload it here so the user picks up
-    // where they left off. Not auto-submitted — the rights attestation below
-    // has to be ticked by the user.
+    // where they left off. Never auto-submitted — the user still presses the
+    // button (and, where the attestation is shown, ticks it first).
     useEffect(() => {
         let pending = null;
         try {
@@ -85,9 +93,12 @@ export default function MediaInput({ onProcess, isProcessing }) {
         }
     }, []);
 
+    // Nothing to attest to when the box is not shown.
+    const rightsOk = !requireRights || acknowledged;
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (!acknowledged) return;
+        if (!rightsOk) return;
         if (mode === 'url' && url) {
             onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat });
         } else if (mode === 'file' && file) {
@@ -311,21 +322,23 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     </div>
                 </div>
 
-                <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
-                    <input
-                        type="checkbox"
-                        checked={acknowledged}
-                        onChange={(e) => setAcknowledged(e.target.checked)}
-                        className="mt-0.5 accent-[var(--color-accent)] cursor-pointer"
-                    />
-                    <span>
-                        I confirm I own this content or have the rights to process it. I am responsible for any content I submit. See our <a href="/#legal" target="_blank" rel="noopener noreferrer" className="text-ink2 underline underline-offset-2 hover:text-brass transition-colors" onClick={(e) => e.stopPropagation()}>Terms & Privacy</a>.
-                    </span>
-                </label>
+                {requireRights && (
+                    <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={acknowledged}
+                            onChange={(e) => setAcknowledged(e.target.checked)}
+                            className="mt-0.5 accent-[var(--color-accent)] cursor-pointer"
+                        />
+                        <span>
+                            I confirm I own this content or have the rights to process it. I am responsible for any content I submit. See our <a href="/#legal" target="_blank" rel="noopener noreferrer" className="text-ink2 underline underline-offset-2 hover:text-brass transition-colors" onClick={(e) => e.stopPropagation()}>Terms & Privacy</a>.
+                        </span>
+                    </label>
+                )}
 
                 <button
                     type="submit"
-                    disabled={isProcessing || !acknowledged || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'local' && !localName)}
+                    disabled={isProcessing || !rightsOk || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'local' && !localName)}
                     className="w-full btn-primary mt-4"
                 >
                     {isProcessing ? (
