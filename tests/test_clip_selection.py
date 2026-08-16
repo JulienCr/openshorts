@@ -394,6 +394,27 @@ class TestSnapClipToWords:
         # Read as silence it walks back to 16.0 and cuts mid-word.
         assert end > 20.0, f"cut at {end}, inside the word running to 20.0"
 
+    def _nested(self):
+        return [_word("looong", 10.0, 20.0), _word("in", 15.0, 16.0),
+                _word("after", 40.0, 41.0)]
+
+    def test_end_never_lands_on_a_boundary_buried_in_another_word(self):
+        """Knowing the bound is speech says nothing about the boundary picked
+        for it: at end=17 the NEAREST end is 16.0, which sits inside the word
+        still running to 20.0 — the mid-word cut this all exists to prevent.
+        """
+        _start, end = snap_clip_to_words(0.5, 17.0, self._nested(), 100.0,
+                                         min_duration=1.0, max_duration=60.0)
+        assert end > 20.0, f"cut at {end}, inside the word running to 20.0"
+
+    def test_start_never_lands_on_a_boundary_buried_in_another_word(self):
+        """Symmetric: at start=17 the nearest start is the nested word's 15.0,
+        so the padded cut lands at 14.65, midway through the word from 10.0.
+        """
+        start, _end = snap_clip_to_words(17.0, 40.5, self._nested(), 100.0,
+                                         min_duration=1.0, max_duration=60.0)
+        assert start <= 10.0, f"cut at {start}, inside the word from 10.0 to 20.0"
+
     def test_failed_repair_keeps_the_bound_that_did_snap(self):
         """The old code returned the raw input the moment the duration repair
         failed, throwing away a start that had snapped correctly because the

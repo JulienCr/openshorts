@@ -373,6 +373,26 @@ def _running_max_ends(intervals):
     return running
 
 
+def _is_mid_word(time, starts, max_ends):
+    """True when ``time`` sits strictly inside some word — both edges open.
+
+    A word's own start and end are legal places to cut; anything between them
+    is not. This filters the CANDIDATE boundaries, which the containment test
+    alone does not: recognising that a bound is speech says nothing about the
+    boundary then chosen for it, and over ``[(10, 20), (15, 16)]`` at t=17 the
+    nearest end is 16, which lands inside the word still running to 20 — the
+    mid-word cut the whole function exists to avoid.
+    """
+    index = bisect.bisect_left(starts, time) - 1
+    return index >= 0 and max_ends[index] > time
+
+
+def _nearest_cuttable(time, boundaries, starts, max_ends):
+    """The boundary closest to ``time`` that is not buried inside a word."""
+    cuttable = [b for b in boundaries if not _is_mid_word(b, starts, max_ends)]
+    return min(cuttable or boundaries, key=lambda b: abs(b - time))
+
+
 def _falls_inside_a_word(time, starts, max_ends, open_edge):
     """True when ``time`` lands inside a spoken word rather than in a gap.
 
@@ -403,7 +423,7 @@ def _falls_inside_a_word(time, starts, max_ends, open_edge):
 def _snap_start_to_speech(start, starts, max_ends, max_silence_skip):
     """Word start the clip should open on, or None to leave the bound alone."""
     if _falls_inside_a_word(start, starts, max_ends, open_edge="end"):
-        return min(starts, key=lambda s: abs(s - start))
+        return _nearest_cuttable(start, starts, starts, max_ends)
     # In a gap: walk FORWARD. The nearest word overall may be the tail of the
     # previous sentence, on the wrong side of the pause — and since the detail
     # prompt now takes `start` from a sentence marker, snapping back would pull
@@ -418,7 +438,7 @@ def _snap_start_to_speech(start, starts, max_ends, max_silence_skip):
 def _snap_end_to_speech(end, ends, starts, max_ends, max_silence_skip):
     """Word end the clip should close on, or None to leave the bound alone."""
     if _falls_inside_a_word(end, starts, max_ends, open_edge="start"):
-        return min(ends, key=lambda e: abs(e - end))
+        return _nearest_cuttable(end, ends, starts, max_ends)
     # Mirror of the start: walk BACKWARD so the clip never trails off into
     # silence, and never swallows the first word of the next phrase. That last
     # one is not hypothetical: the detail prompt asks for `end` at the marker
