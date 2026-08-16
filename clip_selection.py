@@ -258,8 +258,18 @@ def merge_overlapping_windows(windows, segments):
     return merged
 
 
-def window_text_with_anchors(window, segments, precision=1):
+def window_text_with_anchors(window, segments, precision=3):
     """The window's prose with an absolute ``[SECONDS]`` marker per segment.
+
+    Markers are truncated toward zero, never rounded, and that is the whole
+    point of the arithmetic below. A rounded marker can land AFTER the segment's
+    true start — 30.56 emitted as [30.6] — and the model then returns an `end`
+    that sits inside the first word of the sentence it meant to exclude, so
+    _snap_end_to_speech reads it as speech and extends to that word's end. The
+    magnitude does not matter, only the sign: a marker 0.4ms late trips the same
+    predicate as one 40ms late. Truncating guarantees marker <= true start, so a
+    bound taken from a marker always reads as the gap it is. Rounding to more
+    decimals shrinks the error without removing it.
 
     The detail pass has to answer in absolute seconds and used to receive prose
     plus the window's own start/end — so it interpolated a position inside 90s
@@ -275,8 +285,9 @@ def window_text_with_anchors(window, segments, precision=1):
     seg_to = window.get("seg_to")
     if seg_from is None or seg_to is None or seg_to < seg_from:
         return str(window.get("text", "") or "")
+    scale = 10 ** precision
     return " ".join(
-        f"[{start:.{precision}f}] {text}"
+        f"[{int(start * scale) / scale:.{precision}f}] {text}"
         for start, _end, text in segments[seg_from:seg_to + 1])
 
 

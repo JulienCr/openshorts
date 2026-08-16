@@ -91,7 +91,33 @@ class TestWindowTextWithAnchors:
     def test_one_marker_per_segment(self):
         segments = [(12.34, 15.0, "hello"), (15.0, 20.0, "world")]
         window = {"seg_from": 0, "seg_to": 1, "text": "hello world"}
-        assert window_text_with_anchors(window, segments) == "[12.3] hello [15.0] world"
+        assert window_text_with_anchors(window, segments) == "[12.340] hello [15.000] world"
+
+    def test_markers_never_land_after_the_true_start(self):
+        """A rounded marker lands INSIDE the first word of the sentence it
+        marks — 30.56 emitted as [30.6] — and the model's `end` then reads as
+        speech, so the clip keeps the word it meant to exclude. Truncating is
+        what guarantees the marker is never late; more decimals only shrink the
+        error.
+        """
+        segments = [(30.56, 31.2, "next"), (99.9999, 100.5, "later")]
+        window = {"seg_from": 0, "seg_to": 1, "text": "next later"}
+        rendered = window_text_with_anchors(window, segments)
+        for marker, true_start in zip(re.findall(r"\[([\d.]+)\]", rendered),
+                                      (30.56, 99.9999)):
+            assert float(marker) <= true_start, f"{marker} is after {true_start}"
+
+    def test_a_marker_is_read_as_a_gap_not_as_speech(self):
+        """End to end: the marker this function emits, handed straight back by
+        the model, must not extend the clip into the word it points at.
+        """
+        segments = [(30.56, 31.2, "next")]
+        window = {"seg_from": 0, "seg_to": 0, "text": "next"}
+        marker = float(re.findall(r"\[([\d.]+)\]", window_text_with_anchors(window, segments))[0])
+        words = [_word("last", 28.0, 29.0), _word("next", 30.56, 31.2)]
+        _start, end = snap_clip_to_words(10.0, marker, words, 100.0,
+                                         min_duration=1.0, max_duration=60.0)
+        assert end < 30.56, f"clip ran to {end}, swallowing the word at 30.56"
 
     def test_falls_back_to_plain_text_without_a_span(self):
         window = {"seg_from": None, "seg_to": None, "text": "whole transcript"}

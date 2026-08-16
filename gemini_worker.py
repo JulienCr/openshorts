@@ -255,7 +255,7 @@ You are a senior short-form video editor and viral copywriter.
 Choose the BEST short clips from these shortlisted candidate windows.
 
 READING THE TRANSCRIPT — each window's text is interleaved with markers like
-[123.4]. Each one is the EXACT absolute time, in seconds from the start of the
+[123.400]. Each one is the EXACT absolute time, in seconds from the start of the
 source video, at which the sentence that follows it begins. They are measured,
 not estimated. Use them:
 - Take `start` from the marker of the sentence the clip should open on.

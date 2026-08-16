@@ -134,7 +134,12 @@ Four things there are load-bearing and were each paid for with a bug:
   interpolated a position inside 90s of text and was routinely wrong — which is
   most of what `snap_clip_to_words` was repairing. Per-word timings were the
   other option and cost ~40x more (~65k input tokens on a 24-window shortlist)
-  while burying the prose the model is meant to be judging.
+  while burying the prose the model is meant to be judging. The markers are
+  **truncated, never rounded**: a marker rounded up lands inside the first word
+  of the sentence it marks, the model returns that as `end`, and the snapper
+  then reads it as speech and keeps the word the clip was meant to exclude.
+  Only the sign of the error matters — 0.4ms late trips the same predicate as
+  40ms late — so more decimals shrink it without removing it.
 
 `snap_clip_to_words` walks to the nearest speech when a bound lands in a
 silence, forward for the start and backward for the end, capped at
