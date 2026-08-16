@@ -33,7 +33,11 @@ git sync-upstream    # fetch amont, merge dans main, push sur fork
 
 `sync-upstream` refuse de tourner ailleurs que sur `main`, pour ne pas rapatrier
 l'amont dans une branche de feature par accident. Si le merge conflitte, il s'arrête
-avant le push et laisse la résolution à la main.
+avant le push.
+
+En pratique je ne lance pas ces commandes moi-même : je demande à Claude de récupérer
+l'amont, et il fait le merge **et** la résolution des conflits. Pas de routine
+planifiée, rien ne bouge sur `main` sans que je l'aie demandé.
 
 Les branches de feature partent de `main` et y reviennent par merge, comme dans
 n'importe quel dépôt.
