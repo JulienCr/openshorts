@@ -5,6 +5,7 @@ from reframe_v2 import (
     concat_list_content,
     dedupe_sendcmd_lines,
     delivery_size,
+    demote_short_track,
     full_width_content_height,
     general_filtergraph,
     general_render_cmd,
@@ -287,3 +288,55 @@ class TestClearStaleVariants:
 
     def test_is_a_no_op_on_a_clean_directory(self, tmp_path):
         assert clear_stale_variants(str(tmp_path), "Talk_clip_1.mp4") == []
+
+
+class TestDemoteShortTrack:
+    """A scene too short to track calmly is rendered static instead.
+
+    Measured on three real multicam recordings: on-screen crop motion
+    72.2 -> 47.3 px/s and the worst cut-to-cut jump 517 -> 125px, for 2.3s of
+    tracking given up out of 93.1s.
+    """
+
+    def test_a_short_tracked_scene_becomes_static(self):
+        # 30 frames at 60fps = 0.5s.
+        out = demote_short_track(['TRACK'], [(0, 30)], 60.0, 1.5)
+        assert out == ['GENERAL']
+
+    def test_a_long_tracked_scene_is_left_alone(self):
+        out = demote_short_track(['TRACK'], [(0, 600)], 60.0, 1.5)
+        assert out == ['TRACK']
+
+    def test_the_threshold_is_seconds_not_frames(self):
+        # The same 60-frame scene is 1s at 60fps and 2s at 30fps. A frame
+        # count would have demoted both or neither.
+        assert demote_short_track(['TRACK'], [(0, 60)], 60.0, 1.5) == ['GENERAL']
+        assert demote_short_track(['TRACK'], [(0, 60)], 30.0, 1.5) == ['TRACK']
+
+    def test_only_track_is_demoted(self):
+        # SPLIT/SCREENCAST/INSET are decided later and carry their own
+        # minimum-duration rules; overriding them here would fight those.
+        strategies = ['GENERAL', 'SPLIT', 'SCREENCAST', 'WIDE', 'INSET']
+        scenes = [(0, 10)] * len(strategies)
+        assert demote_short_track(strategies, scenes, 60.0, 1.5) == strategies
+
+    def test_it_never_upgrades(self):
+        out = demote_short_track(['GENERAL'], [(0, 6000)], 60.0, 1.5)
+        assert out == ['GENERAL']
+
+    def test_zero_disables_the_rule(self):
+        assert demote_short_track(['TRACK'], [(0, 1)], 60.0, 0) == ['TRACK']
+
+    def test_a_run_of_short_scenes_all_go_static(self):
+        # The shape that actually hurts: sub-second cuts arriving in a burst,
+        # each with its own snap, throwing the frame left-right-left.
+        scenes = [(0, 30), (30, 90), (90, 132), (132, 732)]
+        strategies = ['TRACK'] * 4
+        out = demote_short_track(strategies, scenes, 60.0, 1.5)
+        assert out == ['GENERAL', 'GENERAL', 'GENERAL', 'TRACK']
+
+    def test_missing_boundaries_are_survived(self):
+        # analyze_scenes_strategy and the boundary list are built separately;
+        # a mismatch must not raise mid-render.
+        assert demote_short_track(['TRACK', 'TRACK'], [(0, 600)], 60.0, 1.5) \
+            == ['TRACK', 'TRACK']

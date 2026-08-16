@@ -114,6 +114,16 @@ class SmoothedCameraman:
 
             # SIMPLIFIED LOGIC:
             # 1. Is the target outside the safe zone?
+            #
+            # Stopping at the deadzone EDGE rather than on the subject looks
+            # like a hunting bug, and a two-threshold (Schmitt) version that
+            # settles on the target was written and measured: it made things
+            # worse on real footage — 54.5 -> 79.1 px/s of in-scene travel,
+            # 0 scenes calmer, 4 busier. Reversals did not move at all
+            # (0.21/s either way), which says the camera was not hunting in
+            # the first place. Left as it is on purpose; see the commit that
+            # demotes short TRACK scenes for where the motion actually comes
+            # from.
             if abs(diff) > self.safe_zone_radius:
                 # 2. If yes, move towards it slowly (Linear Speed)
                 # Determine direction

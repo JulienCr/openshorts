@@ -194,6 +194,48 @@ def variant_filename(clip_filename, variant):
     return f"{stem}_{variant}{dot}{ext}"
 
 
+# A tracked scene shorter than this is rendered static instead.
+#
+# Below it there is no time to establish a subject: the scene costs a snap on
+# entry plus whatever pan follows, and short scenes arrive in RUNS, so the frame
+# gets thrown left, right, left across a couple of seconds. Measured on three
+# real multicam podcast recordings, one stretch ran four TRACK scenes of 0.5s,
+# 1.0s, 0.7s and 10.0s with cut jumps of +297, -511 and -517px on top of 360,
+# 150, 135 and 564px of panning.
+#
+# 1.5s is where the corpus stops changing: 1.5, 2.0 and 3.0 all score
+# identically because no TRACK scene falls between them, so 1.5 buys the whole
+# improvement at the smallest cost in footage. 0 disables the rule.
+MIN_TRACK_SECONDS = float(os.environ.get("MIN_TRACK_SECONDS", "1.5"))
+
+
+def demote_short_track(strategies, scene_boundaries, fps,
+                       min_seconds=None):
+    """Send TRACK scenes shorter than ``min_seconds`` to GENERAL.
+
+    GENERAL is static, so a scene too short to be tracked calmly is better not
+    tracked at all. Measured over 93.1s of TRACK footage across three real
+    recordings: on-screen crop motion 72.2 -> 47.3 px/s (-34%) and the worst
+    cut-to-cut jump 517 -> 125px (-76%), for 2.3s of tracking given up.
+
+    Only ever downgrades, and only TRACK. SPLIT/SCREENCAST/INSET are decided
+    later and have their own minimum-duration rules.
+    """
+    if min_seconds is None:
+        min_seconds = MIN_TRACK_SECONDS
+    if not min_seconds:
+        return list(strategies)
+    out = []
+    for i, strategy in enumerate(strategies):
+        if strategy == 'TRACK' and i < len(scene_boundaries):
+            start_f, end_f = scene_boundaries[i]
+            if (end_f - start_f) / float(fps) < min_seconds:
+                out.append('GENERAL')
+                continue
+        out.append(strategy)
+    return out
+
+
 def clear_stale_variants(output_dir, clip_filename):
     """Drop a previous run's variant files for this clip index.
 
@@ -404,6 +446,14 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
 
     scene_boundaries = [(s.get_frames(), e.get_frames()) for s, e in scenes]
     strategies = m.analyze_scenes_strategy(input_video, scenes)
+
+    # Before anything downstream reads them: a scene too short to track calmly
+    # is rendered static. Runs of sub-second cuts are where the frame lurches.
+    before = sum(1 for s in strategies if s == 'TRACK')
+    strategies = demote_short_track(strategies, scene_boundaries, fps)
+    demoted = before - sum(1 for s in strategies if s == 'TRACK')
+    if demoted:
+        print(f"   🧊 {demoted} scene(s) too short to track — rendered static")
 
     # SPLIT is an upgrade applied on top of the TRACK/GENERAL verdict, keyed by
     # the scene's START FRAME rather than its index: scene_frame_ranges() drops

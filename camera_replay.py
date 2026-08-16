@@ -17,12 +17,18 @@ Split from scripts/replay_camera.py because everything here is pure: no ffmpeg,
 no cv2, no mediapipe. It runs in CI, and the metrics are unit-tested rather than
 trusted.
 
-Metrics, both counted INSIDE a scene only:
+Two metrics, and picking the wrong one costs you the answer:
 
-  reversals/s  direction changes of the crop. A cut is *supposed* to reframe,
-               so scoring the snap at a scene boundary would measure the
-               feature instead of the bug.
-  travel px/s  total distance the crop travelled.
+  scene_metrics   reversals/s and travel px/s, counted INSIDE a scene only.
+                  bdd9e5d's definition: a cut is *supposed* to reframe, so
+                  scoring the boundary snap would measure the feature.
+  screen_motion   every pixel the crop moves, boundary jumps INCLUDED.
+
+On this repo's multicam podcast material the first one says nothing is wrong
+and the second says the frame moves 72 px/s with 517px lurches at the cuts.
+Both are honestly computed; they disagree because consecutive shots of the same
+room are not a reframe. Reach for screen_motion when the complaint is about how
+the clip looks, and scene_metrics when it is about the camera operator.
 
 Reported per scene as well as in aggregate, because bdd9e5d found its change
 made 7 of 84 scenes measurably BUSIER while improving the mean, and a mean on
@@ -39,6 +45,15 @@ def load_trace(path):
 def save_trace(trace, path):
     with open(path, "w") as f:
         json.dump(trace, f)
+
+
+def demote_short_track(strategies, scenes, fps, min_seconds):
+    """The SHIPPED rule, re-exported so the harness cannot score a copy of it.
+
+    A harness that measures its own reimplementation is measuring nothing.
+    """
+    from reframe_v2 import demote_short_track as shipped
+    return shipped(strategies, scenes, fps, min_seconds)
 
 
 def replay(trace, cameraman, tracker, detect_stride=4, phase_on_scene=False):
@@ -133,6 +148,48 @@ def scene_metrics(xs, scenes, fps):
             "travel_per_s": travel / seconds,
         })
     return out
+
+
+def screen_motion(xs, scenes, fps):
+    """Every pixel the crop moves on screen, per second of TRACK footage.
+
+    The counterpart to scene_metrics, and on multicam material the one that
+    matches what a viewer complains about. scene_metrics deliberately drops the
+    boundary snap because "a cut is supposed to reframe" — true of the footage
+    bdd9e5d was tuned on, and false here: consecutive shots of the same room
+    are not a reframe, they are the same two people from a different camera,
+    and a crop that leaps 500px between them reads as the frame lurching.
+
+    Measured on a real recording, four TRACK scenes lasting 0.5s, 1.0s, 0.7s
+    and 10.0s produced cut jumps of +297, -511 and -517px on top of 360, 150,
+    135 and 564px of panning. scene_metrics scored that as unremarkable.
+
+    Returns (motion_per_s, cut_jumps, longest_pan).
+    """
+    track = [(a, b) for a, b in scenes
+             if any(x is not None for x in xs[a:b])]
+    if not track:
+        return 0.0, [], 0
+
+    seconds = sum((b - a) for a, b in track) / float(fps)
+    total = 0.0
+    jumps = []
+    longest = 0
+    prev_end = None
+    for a, b in track:
+        span = [x for x in xs[a:b] if x is not None]
+        if not span:
+            continue
+        if prev_end is not None:
+            jump = span[0] - prev_end
+            total += abs(jump)
+            jumps.append(jump)
+        for i in range(1, len(span)):
+            total += abs(span[i] - span[i - 1])
+        longest = max(longest, max(span) - min(span))
+        prev_end = span[-1]
+
+    return (total / seconds if seconds else 0.0), jumps, longest
 
 
 def summarise(xs, scenes, fps):

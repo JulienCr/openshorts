@@ -73,8 +73,13 @@ def record(clip_path, out_path, detect_stride=None):
             if len(buf) < frame_bytes:
                 break
             frame = np.frombuffer(buf, dtype=np.uint8).reshape((small_h, small_w, 3))
-            # Record on EVERY multiple of 1 the caller might replay with, so a
-            # trace can be replayed at a different stride than it was taken.
+            # Record at the RECORDING stride, which should be 1 for any trace
+            # used to compare detection phasing: a trace holding only frames
+            # 0,4,8..., replayed with the stride phased onto a scene starting
+            # at frame 6, consults frames 6,10,14... — none of which hold a
+            # detection. The camera then receives no target at all and the
+            # travel metric collapses, which reads as a spectacular win and is
+            # an artefact of the trace, not a property of the change.
             if frame_number % stride == 0:
                 cands = m.detect_face_candidates(frame)
                 for c in cands:
@@ -110,27 +115,45 @@ def _variants():
     state leaks between runs.
     """
     return {
-        "shipping": {},
-        "confirm=1": {"jump_confirm_frames": 1},
-        "confirm=5": {"jump_confirm_frames": 5},
+        "no demotion (old)": {"min_track": 0.0},
+        "min_track=1.0s": {"min_track": 1.0},
+        "min_track=1.5s (ships)": {"min_track": 1.5},
+        "min_track=3.0s": {"min_track": 3.0},
     }
 
 
-def _score_one(trace, name, overrides, phase_on_scene):
+def _score_one(trace, name, overrides, phase_on_scene, replay_stride):
     import camera
 
     cam = camera.SmoothedCameraman(
         trace["width"], trace["height"], trace["width"], trace["height"],
         aspect_ratio=9 / 16)
+    flags = {"phase_on_scene": phase_on_scene}
+    # Copy: _variants() hands the same dict to every trace, and popping from it
+    # would leave all but the first clip scored with default settings.
+    overrides = dict(overrides)
+    min_track = overrides.pop("min_track", None)
     for key, value in overrides.items():
-        setattr(cam, key, value)
+        if key in flags:
+            flags[key] = value
+        else:
+            setattr(cam, key, value)
+    if min_track is not None:
+        trace = dict(trace)
+        trace["strategies"] = camera_replay.demote_short_track(
+            trace["strategies"], [tuple(s) for s in trace["scenes"]],
+            trace["fps"], min_track)
     tracker = camera.SpeakerTracker(cooldown_frames=30)
 
     xs = camera_replay.replay(copy.deepcopy(trace), cam, tracker,
-                              detect_stride=trace.get("detect_stride", 4),
-                              phase_on_scene=phase_on_scene)
-    return camera_replay.summarise(xs, [tuple(s) for s in trace["scenes"]],
-                                   trace["fps"])
+                              detect_stride=replay_stride, **flags)
+    scenes = [tuple(s) for s in trace["scenes"]]
+    summary = camera_replay.summarise(xs, scenes, trace["fps"])
+    motion, jumps, longest = camera_replay.screen_motion(xs, scenes, trace["fps"])
+    summary["screen_px_per_s"] = motion
+    summary["cut_jumps"] = jumps
+    summary["longest_pan"] = longest
+    return summary
 
 
 def _pool(summaries):
@@ -140,6 +163,9 @@ def _pool(summaries):
     starting at frame 0, and letting them collide would silently drop half the
     corpus from the per-scene verdict.
     """
+    jumps = [j for s in summaries for j in s.get("cut_jumps", [])]
+    longest = max((s.get("longest_pan", 0) for s in summaries), default=0)
+    motion_num = sum(s.get("screen_px_per_s", 0.0) * s["seconds"] for s in summaries)
     per_scene = []
     for i, s in enumerate(summaries):
         for scene in s["per_scene"]:
@@ -155,11 +181,14 @@ def _pool(summaries):
         "seconds": seconds,
         "reversals_per_s": sum(s["reversals_per_s"] * s["seconds"] for s in per_scene) / seconds,
         "travel_per_s": sum(s["travel_per_s"] * s["seconds"] for s in per_scene) / seconds,
+        "screen_px_per_s": motion_num / seconds,
+        "cut_jumps": jumps,
+        "longest_pan": longest,
         "per_scene": per_scene,
     }
 
 
-def replay(trace_paths, phase_on_scene=False):
+def replay(trace_paths, phase_on_scene=False, replay_stride=4):
     traces = [camera_replay.load_trace(p) for p in trace_paths]
     for t in traces:
         print(f"  {t.get('clip', '?'):<24} {t['frames']:>6} frames @ "
@@ -168,18 +197,24 @@ def replay(trace_paths, phase_on_scene=False):
 
     results = {}
     for name, overrides in _variants().items():
-        results[name] = _pool([_score_one(t, name, overrides, phase_on_scene)
+        results[name] = _pool([_score_one(t, name, overrides, phase_on_scene,
+                                          replay_stride)
                                for t in traces])
 
-    print()
-    for name, summary in results.items():
-        print(camera_replay.format_report(name, summary))
+    print(f"\n{'variant':<24} {'in-scene':>18}   {'on screen (incl. cuts)':>34}")
+    print(f"{'':<24} {'rev/s':>8} {'px/s':>9}   {'px/s':>8} {'cuts':>6} "
+          f"{'worst jump':>11} {'longest pan':>12}")
+    for name, s in results.items():
+        worst = max((abs(j) for j in s.get("cut_jumps", [])), default=0)
+        print(f"{name:<24} {s['reversals_per_s']:>8.2f} {s['travel_per_s']:>9.1f}   "
+              f"{s.get('screen_px_per_s', 0):>8.1f} {len(s.get('cut_jumps', [])):>6} "
+              f"{worst:>11} {s.get('longest_pan', 0):>12}")
 
-    baseline = results.get("shipping")
+    baseline = results.get("no demotion (old)")
     if baseline:
-        print("\nper-scene verdict vs shipping (travel):")
+        print("\nper-scene verdict vs the old controller (travel):")
         for name, summary in results.items():
-            if name == "shipping":
+            if name == "no demotion (old)":
                 continue
             c = camera_replay.compare(baseline, summary)
             line = (f"  {name:<20} calmer {c['calmer']}  "
@@ -199,10 +234,15 @@ def main():
     rec = sub.add_parser("record", help="decode a clip and dump its detections")
     rec.add_argument("clip")
     rec.add_argument("-o", "--out", required=True)
-    rec.add_argument("--detect-stride", type=int, default=None)
+    rec.add_argument("--detect-stride", type=int, default=1,
+                     help="Record every Nth frame. Keep at 1: a sparser trace "
+                          "cannot honestly score a change to WHICH frames the "
+                          "decision loop consults.")
 
     rep = sub.add_parser("replay", help="score cameraman variants on traces")
     rep.add_argument("trace", nargs="+")
+    rep.add_argument("--replay-stride", type=int, default=4,
+                     help="Stride the decision loop uses (main.DETECT_STRIDE).")
     rep.add_argument("--phase-on-scene", action="store_true",
                      help="number detection frames from each scene start, so a "
                           "scene's opening frame is always a detection frame")
@@ -211,7 +251,7 @@ def main():
     if args.cmd == "record":
         record(args.clip, args.out, args.detect_stride)
     else:
-        replay(args.trace, args.phase_on_scene)
+        replay(args.trace, args.phase_on_scene, args.replay_stride)
 
 
 if __name__ == "__main__":
