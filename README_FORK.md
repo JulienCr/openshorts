@@ -72,9 +72,13 @@ git push fork <branche>                  # viser le remote plutôt que se fier a
 ## Branches qui ne sont pas de moi
 
 GitHub recopie toutes les branches du projet original au moment du fork.
-`feat/clip-editor` (victorcavero14) et `feat/paid-mode` (juancarlos.cavero) viennent
-de là, pas de moi. Vérifier avant d'intégrer une branche du fork :
+`feat/clip-editor` (victorcavero14), `feat/paid-mode` (juancarlos.cavero) et
+`gpu-migration` sont arrivées comme ça. Elles ont été supprimées du fork le
+16 août 2026 : elles pointaient sur le même commit que celles de l'amont, qui les
+garde. Le fork ne porte donc plus que `main`.
+
+Avant d'intégrer une branche, regarder qui l'a écrite :
 
 ```bash
-git log --format='%an' origin/main..fork/<branche> | sort -u
+git log --format='%an' main..origin/<branche> | sort -u
 ```
