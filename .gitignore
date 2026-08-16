@@ -15,6 +15,7 @@ __pycache__/
 # Temporary files / runtime dirs
 temp_*
 uploads/
+stage/
 downloads/
 videos/
 output/

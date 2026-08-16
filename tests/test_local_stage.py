@@ -1,0 +1,229 @@
+"""Tests for local_stage: filesystem detection and the staging cache.
+
+Stdlib only, no server import — the CI job installs neither FastAPI nor uvicorn.
+"""
+
+import os
+import time
+
+import pytest
+
+import local_stage
+
+
+# A real excerpt: the number of optional fields before " - " varies from line to
+# line, and drvfs mountpoints carry octal escapes for spaces.
+MOUNTINFO = [
+    "25 30 0:24 / / rw,relatime shared:1 - ext4 /dev/sdd rw,discard",
+    "132 82 0:70 / /mnt/c rw,noatime - 9p C:\\134 rw,aname=drvfs;path=C:\\",
+    # The kernel escapes space/tab/newline/backslash only, so "é" arrives raw…
+    "140 82 0:71 / /mnt/j/Drive\\040partagés rw - 9p J:\\134 rw",
+    # …but an escaped byte pair must still decode to one character, not two.
+    "141 82 0:72 / /mnt/k/partag\\303\\251 rw - 9p K:\\134 rw",
+    "150 25 0:80 / /ingest rw - ext4 /dev/sdd rw",
+    "151 25 0:81 / /ingestion rw - 9p X:\\134 rw",
+    "malformed line without a separator",
+]
+
+
+def test_parse_mountinfo_handles_variable_optional_fields():
+    mounts = dict(local_stage.parse_mountinfo(MOUNTINFO))
+    # "shared:1" present on / and absent on /mnt/c: indexing by position would
+    # read the fstype off by one on exactly one of them.
+    assert mounts["/"] == "ext4"
+    assert mounts["/mnt/c"] == "9p"
+
+
+def test_parse_mountinfo_unescapes_octal():
+    mounts = dict(local_stage.parse_mountinfo(MOUNTINFO))
+    # A space in the mountpoint is real on this deployment (REPLAY_DIR is
+    # "/mnt/j/Drive partagés/..."). Leaving it escaped makes every prefix match
+    # fail, and a failed match silently reads as "fast storage".
+    assert "/mnt/j/Drive partagés" in mounts
+    # One escape is one byte: unescaping per character would yield "partagÃ©".
+    assert "/mnt/k/partagé" in mounts
+
+
+def test_parse_mountinfo_skips_malformed_lines():
+    assert all(mp for mp, _fs in local_stage.parse_mountinfo(MOUNTINFO))
+
+
+def test_fstype_for_matches_the_longest_mountpoint(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_stage, "_mounts",
+                        lambda: local_stage.parse_mountinfo(MOUNTINFO))
+    monkeypatch.setattr(os.path, "realpath", lambda p: p)
+    assert local_stage.fstype_for("/ingest/replays/a.mkv") == "ext4"
+    assert local_stage.fstype_for("/mnt/c/foo") == "9p"
+    assert local_stage.fstype_for("/etc/hosts") == "ext4"  # falls back to /
+
+
+def test_fstype_for_does_not_match_a_partial_component(monkeypatch):
+    monkeypatch.setattr(local_stage, "_mounts",
+                        lambda: local_stage.parse_mountinfo(MOUNTINFO))
+    monkeypatch.setattr(os.path, "realpath", lambda p: p)
+    # /ingestion must resolve to its own mount, not to /ingest.
+    assert local_stage.fstype_for("/ingestion/a.mkv") == "9p"
+
+
+def test_fstype_for_returns_empty_without_proc(monkeypatch):
+    monkeypatch.setattr(local_stage, "_mounts", list)
+    assert local_stage.fstype_for("/anything") == ""
+
+
+# --- is_slow ------------------------------------------------------------------
+
+@pytest.fixture
+def fs(monkeypatch):
+    """Let a test declare the fstype of any path."""
+    table = {}
+    monkeypatch.setattr(local_stage, "fstype_for", lambda p: table.get(p, "ext4"))
+    return table
+
+
+def test_is_slow_uses_an_allowlist(monkeypatch, fs):
+    monkeypatch.setattr(local_stage, "MODE", "auto")
+    monkeypatch.setattr(local_stage, "_stage_root", lambda: "/stage")
+    fs["/src.mkv"] = "9p"
+    assert local_stage.is_slow("/src.mkv")
+    fs["/src.mkv"] = "xfs"
+    assert not local_stage.is_slow("/src.mkv")
+    # An fstype nobody listed is assumed slow: one wasted copy, never a missed one.
+    fs["/src.mkv"] = "somethingnew"
+    assert local_stage.is_slow("/src.mkv")
+
+
+def test_is_slow_honours_the_override(monkeypatch, fs):
+    monkeypatch.setattr(local_stage, "_stage_root", lambda: "/stage")
+    fs["/src.mkv"] = "ext4"
+    monkeypatch.setattr(local_stage, "MODE", "always")
+    assert local_stage.is_slow("/src.mkv")
+    fs["/src.mkv"] = "9p"
+    monkeypatch.setattr(local_stage, "MODE", "never")
+    assert not local_stage.is_slow("/src.mkv")
+
+
+def test_is_slow_refuses_when_the_destination_is_slow_too(monkeypatch, fs):
+    monkeypatch.setattr(local_stage, "MODE", "auto")
+    monkeypatch.setattr(local_stage, "_stage_root", lambda: "/stage")
+    fs["/src.mkv"] = "9p"
+    fs["/stage"] = "9p"   # repo cloned on /mnt/d: copying pays the wire twice
+    assert not local_stage.is_slow("/src.mkv")
+
+
+# --- cache --------------------------------------------------------------------
+
+@pytest.fixture
+def stage(monkeypatch, tmp_path):
+    """A cache rooted in tmp_path, with generous limits unless a test says otherwise."""
+    root = tmp_path / "stage"
+    monkeypatch.setattr(local_stage, "STAGE_DIR", str(root))
+    monkeypatch.setattr(local_stage, "TTL_SECONDS", 12 * 3600)
+    monkeypatch.setattr(local_stage, "MAX_GB", 100.0)
+    monkeypatch.setattr(local_stage, "MIN_FREE_GB", 0.0)
+    monkeypatch.setattr(local_stage, "_refs", {})
+    return root
+
+
+def _source(tmp_path, name="2025-08-10-retour-avignon.mkv", data=b"video-bytes"):
+    p = tmp_path / "src" / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+    return str(p)
+
+
+def test_key_changes_when_the_source_changes(tmp_path):
+    src = _source(tmp_path)
+    first = local_stage._key_for(src)
+    os.utime(src, (0, 0))
+    assert local_stage._key_for(src) != first
+
+
+def test_staging_preserves_the_original_basename(stage, tmp_path):
+    src = _source(tmp_path)
+    staged = local_stage.acquire(src)
+    # main.py derives the project title from the filename, so a hashed name would
+    # rename every project of a batch to gibberish in the library.
+    assert os.path.basename(staged) == "2025-08-10-retour-avignon.mkv"
+    assert os.path.dirname(os.path.dirname(staged)) == str(stage)
+    assert open(staged, "rb").read() == b"video-bytes"
+
+
+def test_second_acquire_reuses_the_copy(stage, tmp_path):
+    src = _source(tmp_path)
+    staged = local_stage.acquire(src)
+    marker = os.stat(staged).st_mtime_ns
+    again = local_stage.acquire(src)
+    assert again == staged
+    assert os.stat(staged).st_mtime_ns == marker   # not recopied
+
+
+def test_a_failed_copy_leaves_nothing_to_mistake_for_a_hit(stage, tmp_path, monkeypatch):
+    src = _source(tmp_path, data=b"x" * 4096)
+
+    def boom(*_a, **_kw):
+        raise OSError("link died mid-copy")
+
+    monkeypatch.setattr(local_stage, "_copy", boom)
+    assert local_stage.acquire(src) == src          # falls back, does not raise
+    assert local_stage.staged_path_for(src) is None
+    assert not any(p.name.endswith(".part") for p in stage.iterdir())
+
+
+def test_out_of_space_falls_back_instead_of_failing(stage, tmp_path, monkeypatch):
+    src = _source(tmp_path)
+    monkeypatch.setattr(local_stage, "_room_for", lambda *_a, **_kw: False)
+    assert local_stage.acquire(src) == src
+    assert local_stage._refs == {}                  # no reference leaked
+
+
+# --- sweep --------------------------------------------------------------------
+
+def test_sweep_expires_entries_past_the_ttl(stage, tmp_path):
+    src = _source(tmp_path)
+    staged = local_stage.acquire(src)
+    local_stage.release(staged)
+    local_stage.sweep(now=time.time() + 13 * 3600, log=lambda _m: None)
+    assert local_stage.staged_path_for(src) is None
+
+
+def test_sweep_keeps_entries_within_the_ttl(stage, tmp_path):
+    src = _source(tmp_path)
+    staged = local_stage.acquire(src)
+    local_stage.release(staged)
+    local_stage.sweep(now=time.time() + 3600, log=lambda _m: None)
+    assert local_stage.staged_path_for(src) == staged
+
+
+def test_ttl_zero_disables_the_sweep(stage, tmp_path, monkeypatch):
+    # The uploads sweep in app.py makes the opposite choice: `now - mtime > 0` is
+    # true for everything, so a retention of zero — which reads as "off" — wipes
+    # the directory on the next pass. This asserts we did not copy that.
+    monkeypatch.setattr(local_stage, "TTL_SECONDS", 0)
+    src = _source(tmp_path)
+    staged = local_stage.acquire(src)
+    local_stage.release(staged)
+    local_stage.sweep(now=time.time() + 10 ** 6, log=lambda _m: None)
+    assert os.path.isfile(staged)
+
+
+def test_sweep_never_drops_an_entry_in_use(stage, tmp_path):
+    src = _source(tmp_path)
+    staged = local_stage.acquire(src)          # acquired, never released
+    local_stage.sweep(now=time.time() + 13 * 3600, log=lambda _m: None)
+    # A long render on a reused source outlives 12 h; age must not outrank use.
+    assert os.path.isfile(staged)
+
+
+def test_eviction_skips_referenced_entries(stage, tmp_path, monkeypatch):
+    held = local_stage.acquire(_source(tmp_path, "held.mkv", b"a" * 1024))
+    free = local_stage.acquire(_source(tmp_path, "free.mkv", b"b" * 1024))
+    local_stage.release(free)
+    local_stage._evict(need_bytes=10 ** 9, log=lambda _m: None)
+    assert os.path.isfile(held)
+    assert not os.path.isfile(free)
+
+
+def test_release_drops_the_reference(stage, tmp_path):
+    staged = local_stage.acquire(_source(tmp_path))
+    local_stage.release(staged)
+    assert local_stage._refs == {}

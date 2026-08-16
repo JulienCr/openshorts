@@ -27,6 +27,10 @@ dashboard/node_modules/
 *.swp
 *.swo
 
+# Staged copies of slow sources — 8GB files, and a killed copy leaves a
+# foo.mkv.part that matches none of the extension rules below.
+stage/
+
 # Video files (will be mounted via volume)
 *.mp4
 *.avi
