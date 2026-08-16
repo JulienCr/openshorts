@@ -28,10 +28,15 @@ services:
       # letter, the drive was not mounted yet at container start, Docker created
       # the missing directory on the host root, and the ingest tab quietly listed
       # nothing from it for days. `create_host_path: false` is the other half:
-      # the container now refuses to start instead of mounting an empty
-      # placeholder. With `restart: unless-stopped` that turns into a repair
-      # loop — it keeps retrying and comes up as soon as the mount is there,
-      # because binds are re-resolved on every `docker start`.
+      # Compose now fails loudly instead of mounting an empty placeholder.
+      #
+      # It does NOT recover on its own, and `restart: unless-stopped` does not
+      # help. Measured both ways: with the source missing, `up -d` fails at
+      # container *creation* and `ps -a` lists nothing, so there is no container
+      # for a restart policy to act on; and a container created earlier, whose
+      # source later went away, stays `exited` after a failed start with no
+      # daemon retry. Bringing the backend back up once the drive appears is the
+      # job of ON_MOUNT_CMD in scripts/ensure-ingest-mounts.sh.
       - type: bind
         source: ${REPLAY_DIR:?set REPLAY_DIR to the folder holding your recordings}
         target: /ingest/replays

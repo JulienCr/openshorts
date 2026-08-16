@@ -2197,7 +2197,7 @@ def _require_local_library():
 
 if not BILLING_ENABLED:
     @app.get("/api/jobs")
-    async def list_jobs(batch_id: Optional[str] = None):
+    async def list_jobs(batch_id: Optional[str] = None, ids: Optional[str] = None):
         """Live state of several jobs at once — what the batch strip polls.
 
         Pure read of the in-memory record, no disk at all: this is polled every
@@ -2206,25 +2206,46 @@ if not BILLING_ENABLED:
         partial result run_job already refreshes every 2s, so the strip shows real
         progress rather than a binary.
 
+        `ids` is what the UI uses, and `batch_id` is for callers that only have
+        the batch. They are not equivalent across a restart: a job that had
+        already finished is rebuilt by _recover_jobs_from_disk, which reads the
+        metadata on disk and knows nothing of a batch — its resume manifest, the
+        one place batch_id was written, is deleted the moment a job reaches a
+        terminal state. Filtering by batch_id would therefore drop exactly the
+        finished jobs, and a roster row with no answer would sit at "queued"
+        forever. Asking by id survives that, and an id nothing knows about is
+        answered as "unknown" rather than omitted, so the caller can stop waiting
+        on it instead of guessing from a hole in the list.
+
         Registered self-host only, like the rest of the local library: it has no
         per-user scoping, so on a shared deployment it would hand every visitor
         everyone else's jobs.
         """
         _require_local_library()
-        out = []
-        for job_id, job in list(jobs.items()):
-            if batch_id is not None and job.get('batch_id') != batch_id:
-                continue
+
+        def _row(job_id, job):
             logs = job.get('logs') or []
-            out.append({
+            return {
                 "job_id": job_id,
                 "name": job.get('name'),
                 "status": job.get('status'),
                 "batch_id": job.get('batch_id'),
                 "clip_count": len(((job.get('result') or {}).get('clips')) or []),
                 "last_log": logs[-1][:120] if logs else None,
-            })
-        return {"jobs": out}
+            }
+
+        if ids is not None:
+            out = []
+            for job_id in [i for i in ids.split(",") if i][:100]:
+                job = jobs.get(job_id)
+                out.append(_row(job_id, job) if job else {
+                    "job_id": job_id, "name": None, "status": "unknown",
+                    "batch_id": None, "clip_count": 0, "last_log": None,
+                })
+            return {"jobs": out}
+
+        return {"jobs": [_row(jid, j) for jid, j in list(jobs.items())
+                         if batch_id is None or j.get('batch_id') == batch_id]}
 
     @app.get("/api/projects")
     async def list_local_projects():

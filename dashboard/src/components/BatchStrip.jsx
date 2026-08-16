@@ -2,7 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, X, Loader2 } from 'lucide-react';
 import { apiJson } from '../lib/api';
 
-const TERMINAL = new Set(['completed', 'failed']);
+// 'unknown' is terminal for polling: the server has no record of that job, and
+// no amount of waiting will produce one. It happens for real — a job that was
+// already finished when the backend restarted is rebuilt from its metadata on
+// disk, which carries no batch, and one purged by the output size cap is gone
+// outright. Treating it as pending is what would pin a row at "queued" forever.
+const TERMINAL = new Set(['completed', 'failed', 'unknown']);
 
 /**
  * Progress of a multi-file submission, above the single-job view.
@@ -25,7 +30,11 @@ export default function BatchStrip({ batch, activeJobId, onOpen, onDismiss }) {
 
         const tick = async () => {
             try {
-                const d = await apiJson(`/api/jobs?batch_id=${encodeURIComponent(batch.id)}`);
+                // By id, not by batch_id: the server loses the batch of a job
+                // that finished before a restart, so filtering on it would drop
+                // precisely the rows that are done. Asking for our own roster
+                // gets an answer for every one of them.
+                const d = await apiJson(`/api/jobs?ids=${encodeURIComponent(ids.join(','))}`);
                 if (cancelled) return;
                 const byId = {};
                 (d.jobs || []).forEach((j) => { byId[j.job_id] = j; });
@@ -34,7 +43,7 @@ export default function BatchStrip({ batch, activeJobId, onOpen, onDismiss }) {
                 // polling all night is the kind of thing nobody notices and
                 // everybody pays for.
                 const settled = ids.length > 0 && ids.every(
-                    (id) => !byId[id] || TERMINAL.has(byId[id].status));
+                    (id) => byId[id] && TERMINAL.has(byId[id].status));
                 if (!settled) timer = setTimeout(tick, 3000);
             } catch (_) {
                 if (!cancelled) timer = setTimeout(tick, 10000);
@@ -46,15 +55,19 @@ export default function BatchStrip({ batch, activeJobId, onOpen, onDismiss }) {
 
     if (!batch?.jobs?.length) return null;
 
-    const rows = batch.jobs.map((j) => ({ ...j, ...(live[j.job_id] || {}) }));
+    // `name` comes last from the roster: a job recovered after a restart has no
+    // name on the server, and spreading that null over the one we submitted with
+    // would blank the only label the row has.
+    const rows = batch.jobs.map((j) => ({ ...j, ...(live[j.job_id] || {}), name: j.name }));
     const done = rows.filter((r) => r.status === 'completed').length;
     const failed = rows.filter((r) => r.status === 'failed').length;
     const running = rows.filter((r) => r.status === 'processing').length;
     const allSettled = rows.every((r) => TERMINAL.has(r.status));
 
     const badge = (s) => (s === 'completed' ? 'badge-ok'
-        : s === 'failed' ? 'badge-danger'
+        : s === 'failed' || s === 'unknown' ? 'badge-danger'
             : s === 'processing' ? 'badge-brass' : 'badge-warn');
+    const label = (s) => (s === 'unknown' ? 'gone' : s || 'queued');
 
     return (
         <div className="card p-3 sm:p-4 mb-4 animate-fade">
@@ -96,7 +109,7 @@ export default function BatchStrip({ batch, activeJobId, onOpen, onDismiss }) {
                             className={`w-full flex items-center gap-3 px-2 py-2 text-left transition-colors
                                 ${r.job_id === activeJobId ? 'bg-paper3' : 'hover:bg-paper3'}`}
                         >
-                            <span className={`${badge(r.status)} shrink-0`}>{r.status || 'queued'}</span>
+                            <span className={`${badge(r.status)} shrink-0`}>{label(r.status)}</span>
                             <span className="flex-1 min-w-0">
                                 <span className="block truncate text-sm text-ink2">{r.name}</span>
                                 {r.last_log && (

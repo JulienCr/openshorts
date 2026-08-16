@@ -14,6 +14,15 @@
 # Configure with INGEST_MOUNTS, one spec per line:
 #     <source> <mountpoint> <fstype> [mount options]
 # e.g. INGEST_MOUNTS="J: /mnt/j drvfs uid=1000,gid=1000,metadata,noatime"
+#
+# ON_MOUNT_CMD runs once after any mount succeeds — set it to the compose command
+# that brings the backend up. This is NOT optional garnish: with
+# `create_host_path: false`, a missing bind source makes Docker fail at *container
+# creation*, so no container exists and `restart: unless-stopped` has nothing to
+# restart. Measured: `docker compose up -d` errors out and `docker compose ps -a`
+# lists nothing; and an already-created container whose source went away stays
+# `exited` after a failed start, with no daemon retry. Mounting the drive without
+# this leaves the backend down until a human re-runs Compose.
 set -uo pipefail
 
 if [ -z "${INGEST_MOUNTS:-}" ]; then
@@ -22,6 +31,7 @@ if [ -z "${INGEST_MOUNTS:-}" ]; then
 fi
 
 status=0
+mounted_any=0
 while read -r src mountpoint fstype options; do
     [ -z "${src:-}" ] && continue
 
@@ -42,11 +52,24 @@ while read -r src mountpoint fstype options; do
 
     if mount -t "$fstype" "$src" "$mountpoint" ${options:+-o "$options"}; then
         echo "Mounted $src on $mountpoint ($fstype)."
+        mounted_any=1
     else
         # Not an error worth failing the unit over: the drive is simply not up
         # yet, and the timer will come back in a minute.
         echo "Still waiting for $src (not mountable yet)." >&2
     fi
 done <<< "$INGEST_MOUNTS"
+
+if [ "$mounted_any" = "1" ] && [ -n "${ON_MOUNT_CMD:-}" ]; then
+    echo "Mount appeared — running: $ON_MOUNT_CMD"
+    # `up -d` and not `start`: a bind mount is resolved when the container is
+    # created, so a container created against the old (absent or empty) path
+    # would keep seeing it. Compose recreates it when the mount config differs
+    # and is a no-op when it does not.
+    if ! sh -c "$ON_MOUNT_CMD"; then
+        echo "ON_MOUNT_CMD failed — the backend is still down." >&2
+        status=1
+    fi
+fi
 
 exit "$status"

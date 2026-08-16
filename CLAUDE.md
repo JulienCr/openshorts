@@ -243,11 +243,17 @@ Two things there are load-bearing and easy to undo by accident:
 
 **A missing mount is the failure mode to design against.** Docker creates a bind
 source that does not exist, so an unmounted drive silently becomes an empty
-folder and the tab just looks short. `create_host_path: false` makes the
-container refuse to start instead, `scripts/ensure-ingest-mounts.sh` (systemd
-timer) mounts drives that appear after boot, and `/api/local-files` returns a
-per-source `{name, fstype, entries}` so the UI can say "this folder is empty"
-rather than implying it is complete.
+folder and the tab just looks short. `create_host_path: false` makes Compose fail
+loudly instead, `scripts/ensure-ingest-mounts.sh` (systemd timer) mounts drives
+that appear after boot **and re-runs Compose through `ON_MOUNT_CMD`**, and
+`/api/local-files` returns a per-source `{name, fstype, entries}` so the UI can
+say "this folder is empty" rather than implying it is complete.
+
+`ON_MOUNT_CMD` is load-bearing, not garnish: `restart: unless-stopped` does *not*
+recover from a missing bind source. With the source absent, Docker fails at
+container **creation**, so `ps -a` lists nothing and there is no container for a
+restart policy to act on; and a container created earlier whose source went away
+stays `exited` after a failed start, with no daemon retry. Both measured.
 
 ## Environment Variables
 

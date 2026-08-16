@@ -23,6 +23,8 @@ sudo mkdir -p /etc/openshorts
 sudo tee /etc/openshorts/ingest-mounts.conf >/dev/null <<'EOF'
 # <source> <mountpoint> <fstype> [mount options]
 INGEST_MOUNTS="J: /mnt/j drvfs uid=1000,gid=1000,metadata,noatime"
+# Run once after any mount succeeds. Adjust the path and the compose files.
+ON_MOUNT_CMD="cd /home/julien/dev/openshorts && docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.ingest.yml up -d backend"
 EOF
 
 sudo systemctl daemon-reload
@@ -36,18 +38,21 @@ systemctl list-timers openshorts-ingest-mount.timer
 journalctl -u openshorts-ingest-mount.service -n 20
 ```
 
-## What still needs a container restart
+## Why ON_MOUNT_CMD is required, not optional
 
-A Docker bind mount is resolved when the container starts, and Docker's mounts
-are private, so a drive mounted *after* the container came up does not appear
-inside it. With `create_host_path: false` in `docker-compose.ingest.yml` and
-`restart: unless-stopped`, that resolves itself: the backend refuses to start
-while the mount is missing and comes up on a later retry, re-resolving the bind.
+A Docker bind mount is resolved when the container is created, and Docker's
+mounts are private, so a drive mounted *after* the container came up does not
+appear inside it. Compose has to be re-run.
 
-If your setup does not restart the container on its own, add the recreate to the
-script:
+`restart: unless-stopped` does **not** cover this, which is worth stating plainly
+because it looks like it should. Measured both ways:
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
-               -f docker-compose.ingest.yml up -d --force-recreate backend
-```
+- **Source missing at `up`** — Docker fails at container *creation*:
+  `invalid mount config for type "bind": bind source path does not exist`, and
+  `docker compose ps -a` then lists nothing. There is no container, so there is
+  no restart policy in effect.
+- **Container created earlier, source removed since** — `docker start` fails with
+  the same error and the container stays `exited`. The daemon does not retry it.
+
+So without `ON_MOUNT_CMD` the timer would mount the drive, log success, and leave
+the backend down until someone re-ran Compose by hand.
