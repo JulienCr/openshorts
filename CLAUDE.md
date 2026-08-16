@@ -198,7 +198,56 @@ se desactiva porque el modelo diga `none`.
   `PUBLIC_API_URL` env sets the absolute-URL base when behind a proxy.
 
 ### Concurrency Model
-Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
+
+Async job queue with semaphore-based concurrency control, `MAX_CONCURRENT_JOBS`
+(default 5). Retention is `JOB_RETENTION_SECONDS`: one hour in cloud mode, **0 —
+never — when self-hosting**, because `output/` *is* the project library and there
+is nowhere else to restore it from. `OUTPUT_MAX_GB` is the real bound there.
+
+There are **two lanes**, each a queue + a semaphore + a dispatcher. Batch jobs
+(`/api/process/batch`) go in the second one, capped by `LOCAL_BATCH_CONCURRENCY`
+(default 1), so thirty queued recordings never make a hand-launched file wait.
+The lane is chosen by priority in `_enqueue_job` — which is also what puts a
+resumed batch job back where it belongs, since the manifest already replays its
+priority.
+
+The one rule to keep: **the global semaphore is always acquired last.** A second
+semaphore taken inside `run_job_wrapper` would look equivalent and is not — the
+dispatcher hands out a global slot *before* the job runs, so queued batch jobs
+would each sit on a slot while blocked on the batch cap, and an interactive job
+dequeued later would find nothing free. A `PriorityQueue` does not preempt.
+
+### Ingesting files that are already on the server
+
+`LOCAL_INGEST_DIR` (see `docker-compose.ingest.yml`) enables the dashboard's "On
+Server" tab and the `local_path` / `local_paths` parameters. Self-host only —
+`local_ingest_enabled()` is false whenever billing is on, so a paying tenant can
+never read the operator's disk. Sources are mounted read-only as siblings under
+one root, so adding one is a compose line and `app.py` learns nothing.
+
+`local_stage.py` copies a source to local disk first **when its filesystem is
+slow**, decided by reading the fstype from `/proc/self/mountinfo` against an
+allowlist (a Docker bind mount reports the underlying superblock, so
+`/ingest/replays` on a WSL drive shows up as `9p`). That is not one read being
+optimised: the pipeline re-reads the source for ffprobe, the audio extraction,
+the scene detector, the layout picker's twelve seeks, then once per clip at
+extraction and again at reframe.
+
+Two things there are load-bearing and easy to undo by accident:
+- the copy lands at `stage/<key>/<original basename>`, **never** a hashed
+  filename — `main.py` derives the project title from the input's basename, so a
+  hash would rename every project in the library to gibberish;
+- the copy happens in `run_job`, after the concurrency slot is taken, not at
+  submit time. A batch of thirty 8GB files would otherwise try to land 240GB
+  inside an HTTP handler.
+
+**A missing mount is the failure mode to design against.** Docker creates a bind
+source that does not exist, so an unmounted drive silently becomes an empty
+folder and the tab just looks short. `create_host_path: false` makes the
+container refuse to start instead, `scripts/ensure-ingest-mounts.sh` (systemd
+timer) mounts drives that appear after boot, and `/api/local-files` returns a
+per-source `{name, fstype, entries}` so the UI can say "this folder is empty"
+rather than implying it is complete.
 
 ## Environment Variables
 
