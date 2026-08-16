@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenShorts is an AI-powered vertical video generator that transforms long YouTube videos or local uploads into viral-ready short clips (9:16 format) for TikTok, Instagram Reels, and YouTube Shorts. Uses Google Gemini 2.0 Flash for viral moment detection and title generation.
+OpenShorts is an AI-powered vertical video generator that transforms long YouTube videos or local uploads into viral-ready short clips (9:16 format) for TikTok, Instagram Reels, and YouTube Shorts. Uses Google Gemini for viral moment detection and title generation (default
+model `gemini-3.1-flash-lite`, override with `GEMINI_MODEL`).
 
 ## Development Commands
 
@@ -36,7 +37,8 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 1. **Ingest** - YouTube download (yt-dlp) or local upload
 2. **Transcription** - faster-whisper with word-level timestamps
 3. **Scene Detection** - PySceneDetect for segment boundaries
-4. **AI Analysis** - Gemini identifies 3-15 viral moments (15-60 sec each)
+4. **AI Analysis** - Gemini picks the viral moments in two passes (15-60 sec each;
+   how many is `clip_count_targets`, not a fixed 3-15 — see below)
 5. **FFmpeg Extraction** - Precise clip cutting
 6. **AI Cropping** - Vertical reframing with subject tracking
 7. **Effects/Subtitles** - Optional AI-generated FFmpeg filters
@@ -49,6 +51,8 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 | File | Purpose |
 |------|---------|
 | `main.py` | Core video processing: transcription, scene detection, clip extraction, vertical reframing |
+| `clip_selection.py` | Pure helpers behind the clip choice: windows, shortlist sizing, merging, word-snapping. Stdlib only — see below |
+| `gemini_worker.py` | Every Gemini prompt and response schema for the pipeline (score, detail, visual, layout, wide-content) |
 | `app.py` | FastAPI server with async job queue and REST endpoints |
 | `editor.py` | Gemini AI integration for dynamic video effects (FFmpeg filter generation) |
 | `hooks.py` | Hook text overlay generation with font rendering |
@@ -83,6 +87,74 @@ When editing pricing anywhere, edit `seo/data.js` too. Nothing on the site shoul
 say "OpenShorts is free" without naming the Cloud price in the same breath: both
 are true of different editions and quoting only the first one is what makes AI
 answers describe the paid product as free.
+
+### How the clips are chosen
+
+Two Gemini passes over the transcript (`main.py:get_viral_clips`), with every
+pure helper in `clip_selection.py` and every prompt in `gemini_worker.py`.
+
+`build_transcript_windows` cuts the transcript into ~90s windows aligned to
+Whisper segment boundaries, each overlapping the previous by ~30s so no moment
+is ever split in half. **Pass 1** scores them in batches of `SCORE_BATCH`
+(default 8); `shortlist_size` keeps the best 30%, floor 10, ceiling 24.
+**Pass 2** turns that shortlist into clips and writes the copy. Cuts then land
+on real word boundaries via `snap_clip_to_words`.
+
+Four things there are load-bearing and were each paid for with a bug:
+
+- **The scoring pass scores every window; it does not elect a few.** It used to
+  say "choose up to 3 windows from this batch" against batches of 8, so it
+  could never return more than 37.5% of the material and *that cap*, not the
+  score, was what reached the shortlist — a 2h source scored 79 windows,
+  returned 30, and `shortlist_size` picked 24 of them. The global sort was
+  choosing between candidates that had already been chosen. The rubric anchors
+  in the prompt (80-100 / 50-79 / 20-49 / 0-19) exist because batches are
+  scored in **separate calls**: without a shared scale, a weak batch spreads
+  40-80 and a strong one 60-95, and sorting them together compares two
+  different markers.
+- **Overlapping shortlisted windows are merged before the detail pass**
+  (`merge_overlapping_windows`), through segment indices and never through
+  string surgery on the joined text — rebuilding from `segments[seg_from:seg_to+1]`
+  of the union is what guarantees shared prose appears once. Two adjacent
+  windows both surviving the shortlist otherwise handed the model the same
+  sentences twice under an instruction to work through every window, and the
+  only thing against duplicate clips was a `DIVERSITY` line in the prompt.
+  `drop_overlapping_clips` is the guard that does not depend on the model
+  complying; its threshold is 1.0s rather than zero because `snap_clip_to_words`
+  pads each bound with up to 0.35s of lead and 0.45s of trail, so back-to-back
+  clips legitimately share ~0.8s of silence.
+- **The clip-count target is computed BEFORE merging.** Merging reshapes the
+  payload, it does not select less material, and the floor in
+  `clip_count_targets` rests on a retention measurement (users who got 1-3
+  clips returned 0.4% of the time against 16.1% for 4-9) that must not move
+  because two windows happened to be adjacent.
+- **The detail pass reads `[SECONDS]` anchors, not prose alone**
+  (`window_text_with_anchors`, one marker per Whisper segment). It has to answer
+  in absolute seconds and used to receive only the window's own start/end, so it
+  interpolated a position inside 90s of text and was routinely wrong — which is
+  most of what `snap_clip_to_words` was repairing. Per-word timings were the
+  other option and cost ~40x more (~65k input tokens on a 24-window shortlist)
+  while burying the prose the model is meant to be judging.
+
+`snap_clip_to_words` walks to the nearest speech when a bound lands in a
+silence, forward for the start and backward for the end, capped at
+`MAX_SILENCE_SKIP`. The direction is the point: never open or close on dead
+air, and the *nearest* word can be on the wrong side of the gap. Past the cap
+the model's timestamp is not slightly off inside a pause, it is wrong, and
+moving the bound that far would change what is in the clip. It also picks the
+most-snapped **valid pair** rather than discarding both bounds when the
+duration repair fails, which is what used to hand back a raw clip because one
+side could not be fixed.
+
+**Everything testable lives in `clip_selection.py` because `import main` fails
+in CI** — main.py imports cv2/torch/ultralytics/mediapipe at module scope and
+`.github/workflows/ci.yml` installs none of them (tests that need it use
+`pytest.importorskip("main")` and silently skip). New selection logic put in
+main.py is untested logic.
+
+Knobs, none of them needed in normal operation: `GEMINI_MODEL`,
+`GEMINI_THINKING_SCORE` (score stage only), `SCORE_BATCH`, `CLIP_SHORTLIST_MAX`,
+`CLIP_TARGET_MIN` / `CLIP_TARGET_MAX`.
 
 ### Cómo se elige el layout
 
