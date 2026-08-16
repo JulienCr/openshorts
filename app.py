@@ -407,6 +407,24 @@ def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     except Exception:
         return False
 
+def _newest_derived(output_dir, clean):
+    """The newest ``subtitled_<ts>_<clean>`` copy, or ``clean`` itself.
+
+    The glob anchors on the END of the name, which is what keeps delivery
+    variants in separate namespaces: the safe variant is suffixed
+    (``<base>_clip_3_safe.mp4``), so it can never be caught by the auto
+    variant's glob, nor the reverse.
+    """
+    try:
+        derived = glob.glob(os.path.join(output_dir, f"subtitled_*_{clean}"))
+    except Exception:
+        derived = []
+    if not derived:
+        return clean
+    # Highest timestamp wins — that's the most recent styling.
+    return os.path.basename(max(derived, key=os.path.getmtime))
+
+
 def _canonical_clip_file(output_dir, base_name, index):
     """The file to serve for clip ``index``, preferring a derived version.
 
@@ -417,15 +435,32 @@ def _canonical_clip_file(output_dir, base_name, index):
     the R2 upload, the download bundle — must therefore resolve to the newest
     derived file, or clips silently lose their captions on a redeploy.
     """
-    clean = f"{base_name}_clip_{index + 1}.mp4"
-    try:
-        derived = glob.glob(os.path.join(output_dir, f"subtitled_*_{clean}"))
-    except Exception:
-        derived = []
-    if not derived:
-        return clean
-    # Highest timestamp wins — that's the most recent styling.
-    return os.path.basename(max(derived, key=os.path.getmtime))
+    return _newest_derived(output_dir, f"{base_name}_clip_{index + 1}.mp4")
+
+
+def _clip_variant_entries(job_id, output_dir, base_name, index):
+    """Every framing rendered for clip ``index``, each resolved to its own file.
+
+    Returns [] when there is only one, so a job that never asked for a second
+    render does not grow a key it never had — the webhook payload, the MCP
+    summaries, the ZIP bundle and the local library all keep seeing exactly the
+    clip dict they see today.
+
+    Existence is tested on the PRISTINE name: ``_newest_derived`` returns its
+    argument unchanged when nothing derived exists, so it can never answer
+    "this variant was never rendered".
+    """
+    entries = []
+    for variant in CLIP_VARIANTS:
+        stem = f"{base_name}_clip_{index + 1}"
+        clean = f"{stem}.mp4" if variant == "auto" else f"{stem}_{variant}.mp4"
+        if not os.path.exists(os.path.join(output_dir, clean)):
+            continue
+        entries.append({
+            "id": variant,
+            "video_url": f"/videos/{job_id}/{_newest_derived(output_dir, clean)}",
+        })
+    return entries if len(entries) > 1 else []
 
 
 def _strip_burned_captions(output_dir, filename):
@@ -512,6 +547,9 @@ def _recover_jobs_from_disk():
                     clip['video_url'] = (
                         f"/videos/{job_id}/"
                         f"{_canonical_clip_file(job_path, base_name, i)}")
+                v = _clip_variant_entries(job_id, job_path, base_name, i)
+                if v:
+                    clip['variants'] = v
             owner = None
             owner_path = os.path.join(job_path, ".owner")
             if os.path.exists(owner_path):
@@ -1448,6 +1486,9 @@ async def run_job(job_id, job_data):
                                  # Checking if file is growing? For now assume if it exists and main.py moves it there, it's done.
                                  # main.py writes to temp_... then moves to final name. So presence means ready!
                                  clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
+                                 v = _clip_variant_entries(job_id, output_dir, base_name, i)
+                                 if v:
+                                     clip['variants'] = v
                                  ready_clips.append(clip)
                         
                         if ready_clips:
@@ -1487,7 +1528,10 @@ async def run_job(job_id, job_data):
                 for i, clip in enumerate(clips):
                      clip_filename = _canonical_clip_file(output_dir, base_name, i)
                      clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
-                
+                     v = _clip_variant_entries(job_id, output_dir, base_name, i)
+                     if v:
+                         clip['variants'] = v
+
                 jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
             else:
                  jobs[job_id]['status'] = 'failed'
@@ -1663,6 +1707,40 @@ LAYOUT_IMPLIES = {
 }
 
 
+# Renders delivered per clip. "auto" is the pipeline's own framing decision;
+# "safe" is the whole 16:9 frame on a blurred background with a fixed camera —
+# the version that cannot be wrong, so a bad automatic framing costs a re-pick
+# rather than a re-run. Order here is the order the dashboard offers them in.
+CLIP_VARIANTS = ("auto", "safe")
+
+
+def resolve_variants(requested, output_format="auto"):
+    """Renders to produce per clip. "auto" is always one of them.
+
+    Every other code path in this app resolves a clip to its auto file
+    (``_canonical_clip_file``, the webhook payload, the R2 archive), so
+    dropping it would leave them pointing at nothing.
+
+    Two collapses to ["auto"]:
+    - ``horizontal`` reframes nothing, so a second render would be a
+      byte-identical duplicate;
+    - cloud mode, because R2 archives exactly one object per clip index and
+      ``archive_clip_edit`` deletes the superseded one — a second variant would
+      not survive there. Better unavailable than half-broken.
+    """
+    if isinstance(requested, str):
+        requested = [p for p in requested.split(",") if p.strip()]
+    if not isinstance(requested, list):
+        requested = []
+    asked = {str(v).strip().lower() for v in requested}
+    picked = [v for v in CLIP_VARIANTS if v in asked]
+    if "auto" not in picked:
+        picked.insert(0, "auto")
+    if output_format == "horizontal" or BILLING_ENABLED:
+        return ["auto"]
+    return picked
+
+
 def layout_env(requested):
     """Env overrides for the layouts this job allows. Unknown names are ignored
     rather than rejected: a newer dashboard must not break an older API.
@@ -1795,6 +1873,7 @@ async def process_endpoint(
     acknowledged: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
     layouts: Optional[str] = Form(None),
+    variants: Optional[str] = Form(None),
     force_low_quality: Optional[str] = Form(None),
     webhook_url: Optional[str] = Form(None),
     webhook_secret: Optional[str] = Form(None)
@@ -1816,12 +1895,15 @@ async def process_endpoint(
         force_low = bool(body.get("force_low_quality"))
         output_format = body.get("output_format")
         layouts = body.get("layouts")
+        variants = body.get("variants")
         webhook_url = body.get("webhook_url")
         webhook_secret = body.get("webhook_secret")
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
         output_format = "auto"
+
+    variants = resolve_variants(variants, output_format)
 
     # Accepts a JSON list or a comma-separated form field.
     if isinstance(layouts, str):
@@ -1921,6 +2003,11 @@ async def process_endpoint(
     cmd.extend(["-o", job_output_dir])
     if output_format and output_format != "auto":
         cmd.extend(["--format", output_format])
+    # Only when it differs from the default, so a job that did not ask for a
+    # second render produces a byte-identical cmd to before this feature —
+    # which makes a resume manifest diff trivially verifiable.
+    if variants != ["auto"]:
+        cmd.extend(["--variants", ",".join(variants)])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")
 
@@ -1999,6 +2086,7 @@ async def process_batch_endpoint(request: Request):
         output_format = "auto"
     layouts = body.get("layouts")
     layouts = layouts if isinstance(layouts, list) else []
+    variants = resolve_variants(body.get("variants"), output_format)
 
     client_ip = request.client.host if request.client else "unknown"
     fwd = request.headers.get("x-forwarded-for")
@@ -2042,6 +2130,8 @@ async def process_batch_endpoint(request: Request):
         cmd = ["python", "-u", "main.py", "-i", input_path, "-o", job_output_dir]
         if output_format != "auto":
             cmd.extend(["--format", output_format])
+        if variants != ["auto"]:
+            cmd.extend(["--variants", ",".join(variants)])
 
         _register_job(job_id, cmd=cmd,
                       env=_build_job_env(api_key, layouts, job_id),
@@ -2151,6 +2241,19 @@ def _local_project(job_id):
             size = 0
         total += size
         clip['video_url'] = f"/videos/{job_id}/{filename}"
+        variant_entries = _clip_variant_entries(job_id, job_path, base_name, i)
+        if variant_entries:
+            clip['variants'] = variant_entries
+            # The second render is on disk too; a library that under-reports it
+            # would make the size cap look further away than it is.
+            for entry in variant_entries:
+                if entry["id"] == "auto":
+                    continue
+                try:
+                    total += os.path.getsize(
+                        os.path.join(job_path, os.path.basename(entry["video_url"])))
+                except OSError:
+                    pass
         clips.append({
             "index": i,
             "title": clip.get('video_title_for_youtube_short') or clip.get('title'),

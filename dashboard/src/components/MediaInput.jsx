@@ -32,6 +32,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
     // today's behaviour instead of dropping the guard silently.
     const [requireRights, setRequireRights] = useState(true);
     const [outputFormat, setOutputFormat] = useState('vertical'); // vertical | horizontal | square
+    // On by default: the automatic framing is the thing most likely to need a
+    // second opinion, and finding out after the render costs a whole re-run.
+    const [safeVariant, setSafeVariant] = useState(true);
     const [showInfo, setShowInfo] = useState(false);
     const infoRef = useRef(null);
 
@@ -129,18 +132,19 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!rightsOk) return;
+        const variants = safeVariant ? 'auto,safe' : 'auto';
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat });
+            onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat, variants });
         } else if (mode === 'file' && file) {
-            onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat });
+            onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat, variants });
         } else if (mode === 'local' && localSelected.size) {
             const names = [...localSelected];
             // One file takes the single-job path it always took, byte for byte.
             // The batch endpoint only comes into play from two, so the common
             // case gains nothing to go wrong.
             onProcess(names.length === 1
-                ? { type: 'local', payload: names[0], acknowledged: true, outputFormat }
-                : { type: 'local-batch', payload: names, acknowledged: true, outputFormat });
+                ? { type: 'local', payload: names[0], acknowledged: true, outputFormat, variants }
+                : { type: 'local-batch', payload: names, acknowledged: true, outputFormat, variants });
         }
     };
 
@@ -407,6 +411,25 @@ export default function MediaInput({ onProcess, isProcessing }) {
                         })}
                     </div>
                 </div>
+
+                {/* Second render per clip. Hidden on 16:9, where nothing is
+                    reframed and the server collapses the request anyway. */}
+                {outputFormat !== 'horizontal' && (
+                    <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={safeVariant}
+                            onChange={(e) => setSafeVariant(e.target.checked)}
+                            className="mt-0.5 accent-[color:var(--color-accent)] cursor-pointer"
+                        />
+                        <span>
+                            Also render a <strong className="text-ink">safe</strong> version of every clip —
+                            the whole frame on a blurred background, camera fixed, no subject tracking.
+                            Gives you a fallback when the automatic framing gets it wrong.
+                            <span className="block mt-0.5 opacity-70">Doubles this job's render time and disk usage.</span>
+                        </span>
+                    </label>
+                )}
 
                 {requireRights && (
                     <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">

@@ -891,6 +891,61 @@ def render_clip(input_video, final_output_video, output_format="auto"):
     return process_video_to_vertical(input_video, final_output_video, aspect_ratio=aspect)
 
 
+def render_safe_variant(clip_temp_path, output_dir, clip_filename, output_format,
+                        transcript, clip_start, clip_end):
+    """Deliver the same clip a second time, framed so it cannot be wrong.
+
+    The whole 16:9 frame, centred on a blurred background, camera fixed. Every
+    complaint the automatic framing attracts — hunting left to right, following
+    the wrong face, stacking a listener who never speaks — comes from deciding
+    something per scene. This decides nothing, so a bad auto render costs a
+    re-pick in the dashboard instead of a re-run of the job.
+
+    Rendered from the SAME 16:9 temp as the auto variant, before
+    _process_one_clip's finally deletes it: a second cut would re-encode the
+    source range again for nothing.
+
+    Failures are swallowed. A secondary delivery must never cost the clip the
+    user actually asked for — same doctrine auto_caption_clip already follows.
+    """
+    if output_format == "horizontal":
+        return None  # nothing is reframed there; a second render would be a copy
+
+    import reframe_v2
+    safe_path = os.path.join(
+        output_dir,
+        reframe_v2.variant_filename(clip_filename, reframe_v2.VARIANT_SAFE))
+    aspect = 1.0 if output_format == "square" else ASPECT_RATIO
+    try:
+        reframe_v2.render_general(clip_temp_path, safe_path, aspect)
+    except Exception as e:
+        print(f"   ⚠️ Safe variant failed ({type(e).__name__}: {e}) — "
+              f"clip delivered with the automatic framing only.")
+        return None
+    if os.environ.get("WATERMARK") == "1":
+        apply_watermark(safe_path)
+    auto_caption_clip(safe_path, transcript, clip_start, clip_end)
+    return safe_path
+
+
+def clear_stale_variants(output_dir, clip_filename):
+    """Drop a previous run's variant files for this clip index.
+
+    Variant files are resolved from the clip INDEX, and a re-analysis of the
+    same source can return a different number of clips — so a
+    `<base>_clip_7_safe.mp4` left over from a longer run would otherwise
+    surface as a variant of a clip that was never rendered with one.
+    """
+    import reframe_v2
+    for variant in reframe_v2.VARIANTS:
+        if variant == reframe_v2.VARIANT_AUTO:
+            continue
+        stale = os.path.join(
+            output_dir, reframe_v2.variant_filename(clip_filename, variant))
+        if os.path.exists(stale):
+            os.remove(stale)
+
+
 # Watermark geometry, as fractions of the clip width/height.
 #
 # Vertical placement is the whole point: the top and bottom strips of a 9:16
@@ -1393,6 +1448,8 @@ def get_visual_clips(video_path, video_duration, language="en"):
 
 
 if __name__ == '__main__':
+    import reframe_v2
+
     parser = argparse.ArgumentParser(description="AutoCrop-Vertical with Viral Clip Detection.")
     
     input_group = parser.add_mutually_exclusive_group(required=True)
@@ -1411,9 +1468,28 @@ if __name__ == '__main__':
                              "without paying for transcription a second time.")
     parser.add_argument('--format', type=str, default="auto", choices=["auto", "vertical", "horizontal", "square"],
                         help="Output aspect: vertical/auto (9:16), horizontal (keep 16:9), square (1:1).")
+    # A CLI flag rather than an env var on purpose: app.py's resume path
+    # rebuilds the environment from os.environ and only replays the manifest's
+    # cmd, so a variant asked for through _build_job_env would silently vanish
+    # the first time a job resumed after a redeploy.
+    #
+    # Validation lives in reframe_v2.parse_variants rather than argparse
+    # `choices`, which cannot express a comma-separated subset without
+    # enumerating every combination.
+    parser.add_argument('--variants', type=str, default="auto",
+                        help="Comma-separated renders per clip: 'auto' (the tracked "
+                             "TRACK/GENERAL/SPLIT pipeline) and/or 'safe' (the whole "
+                             "16:9 frame on a blurred background, fixed camera). "
+                             "'auto' is always delivered.")
 
     args = parser.parse_args()
     output_format = args.format
+    # Immutable, built once before the clip pool starts. The three clip workers
+    # only read it — unlike the layout flags, which are module globals that
+    # layout_picker.apply() mutates process-wide.
+    variants = reframe_v2.parse_variants(args.variants)
+    if reframe_v2.VARIANT_SAFE in variants:
+        print(f"🎞️  Delivering {len(variants)} renders per clip: {', '.join(variants)}")
 
     script_start_time = time.time()
     
@@ -1572,6 +1648,9 @@ if __name__ == '__main__':
                 clip_final_path = os.path.join(output_dir, clip_filename)
 
                 try:
+                    if reframe_v2.VARIANT_SAFE not in variants:
+                        clear_stale_variants(output_dir, clip_filename)
+
                     # ffmpeg cut — re-encoding for precision on strict seconds
                     cut_command = [
                         'ffmpeg', '-y',
@@ -1592,6 +1671,13 @@ if __name__ == '__main__':
                         # the canonical file stays clean for re-styling.
                         auto_caption_clip(clip_final_path, transcript, start, end)
                         print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
+                    if success and reframe_v2.VARIANT_SAFE in variants:
+                        # After the auto variant, never before: app.py's partial
+                        # result poller declares a clip ready as soon as the
+                        # canonical file exists, and the A/B toggle is only
+                        # offered once that file is on disk.
+                        render_safe_variant(clip_temp_path, output_dir, clip_filename,
+                                            output_format, transcript, start, end)
                     return success
                 finally:
                     if os.path.exists(clip_temp_path):

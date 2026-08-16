@@ -145,6 +145,119 @@ def general_filtergraph(out_w, out_h, content_h=None):
     )
 
 
+# --- delivery variants ------------------------------------------------------
+
+# A clip can be delivered more than once, in different framings. "auto" is the
+# pipeline's own verdict (TRACK/GENERAL/SPLIT per scene); "safe" is the whole
+# 16:9 frame on a blurred background with a camera that never moves.
+#
+# The point of "safe" is to be the version that cannot be wrong. Every failure
+# mode the auto framing has — hunting left-right, following the wrong face,
+# stacking a silent listener — comes from choosing something per scene. This
+# chooses nothing, so a bad auto render costs a re-pick rather than a re-run.
+VARIANT_AUTO = "auto"
+VARIANT_SAFE = "safe"
+VARIANTS = (VARIANT_AUTO, VARIANT_SAFE)
+
+
+def parse_variants(raw):
+    """Ordered, deduped, validated variant list. ``auto`` is never droppable.
+
+    Accepts a comma-separated string, a list, or None. Unknown names are
+    ignored rather than rejected, matching how ``layouts`` already behaves:
+    a typo should cost the caller the feature, not the job.
+    """
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, (list, tuple)):
+        raw = []
+    asked = {str(v).strip().lower() for v in raw}
+    picked = [v for v in VARIANTS if v in asked]
+    if VARIANT_AUTO not in picked:
+        picked.insert(0, VARIANT_AUTO)
+    return tuple(picked)
+
+
+def variant_filename(clip_filename, variant):
+    """``Talk_clip_3.mp4`` + ``safe`` -> ``Talk_clip_3_safe.mp4``.
+
+    A SUFFIX, never a prefix. ``_canonical_clip_file`` and
+    ``_strip_burned_captions`` in app.py rebuild the clean name from the
+    ``subtitled_<ts>_`` PREFIX, and the caption glob for the auto variant
+    requires the name to END in ``_<base>_clip_<n>.mp4``. Suffixing keeps the
+    two variants in disjoint namespaces for free; prefixing would put the safe
+    file inside the auto variant's glob.
+    """
+    stem, dot, ext = clip_filename.rpartition(".")
+    if variant == VARIANT_AUTO or not dot:
+        return clip_filename
+    return f"{stem}_{variant}{dot}{ext}"
+
+
+def _probe_dimensions(video_path):
+    """(width, height) of the first video stream, via ffprobe. Raises on failure.
+
+    Deliberately not ``main.get_video_resolution``: that one goes through cv2
+    and, worse, forces ``import main``, which pulls in mediapipe/torch and is
+    exactly what keeps the existing camera tests skipped in CI. ffprobe is
+    already a hard dependency of every render path here.
+    """
+    out = subprocess.check_output(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", video_path],
+        stderr=subprocess.STDOUT, timeout=60,
+    ).decode().strip().splitlines()[0].split("x")
+    return int(out[0]), int(out[1])
+
+
+def general_render_cmd(input_video, output_video, out_w, out_h, content_h):
+    """argv for the safe variant. Split out so CI can assert on it without ffmpeg."""
+    return [
+        "ffmpeg", "-y", "-loglevel", "error", "-i", input_video,
+        "-filter_complex", general_filtergraph(out_w, out_h, content_h),
+        "-map", "[v]",
+        # The ? matters: a silent source must still render. Audio is copied
+        # because the clip cut already encoded it with loudnorm applied.
+        "-map", "0:a:0?", "-c:a", "copy",
+        *video_encode_args(QUALITY_FAST), *METADATA_SCRUB,
+        "-movflags", "+faststart",
+        output_video,
+    ]
+
+
+def render_general(input_video, final_output_video, aspect_ratio):
+    """Render one clip as the safe variant: one ffmpeg pass, zero analysis.
+
+    Deliberately NOT a flag threaded through ``render()``. Three reasons:
+
+    - ``render()`` has already paid ``detect_scenes`` and
+      ``analyze_scenes_strategy`` before it reaches the segment loop, and the
+      latter is MediaPipe inference serialised behind ``main.DETECT_LOCK``.
+      This variant needs no detection at all, so going through there would
+      queue it behind the auto renders of the other clip workers for nothing.
+    - ``process_video_to_vertical`` swallows any v2 exception and silently
+      falls back to the v1 frame loop, which would not know about the flag —
+      the "safe" variant could then ship a tracked render with no signal.
+    - Reading the layout globals (``split_layout.ENABLED`` and friends) is a
+      race: ``layout_picker.apply()`` mutates them process-wide while three
+      clips render in threads.
+
+    Reading no flag at all makes "the camera never moves" a structural
+    property rather than a conditional one.
+
+    ``full_width_content_height`` (not the default 0.42 ratio) is what makes
+    this keep the WHOLE frame: the default GENERAL crops the sides and throws
+    away ~24% of the width to buy presence, which is exactly the "nothing is
+    ever cut off" guarantee this variant exists to make.
+    """
+    orig_w, orig_h = _probe_dimensions(input_video)
+    out_w, out_h = delivery_size(orig_w, orig_h, aspect_ratio)
+    content_h = full_width_content_height(orig_w, orig_h, out_w)
+    _run(general_render_cmd(input_video, final_output_video, out_w, out_h, content_h))
+    print(f"   ✅ Safe variant saved to {final_output_video}")
+    return True
+
+
 # --- analysis ---------------------------------------------------------------
 
 def _analyze_trajectory(input_video, scenes_boundaries, scene_strategies,

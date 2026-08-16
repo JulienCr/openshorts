@@ -671,6 +671,7 @@ function App() {
             local_paths: data.payload,
             acknowledged: !!data.acknowledged,
             output_format: data.outputFormat || 'auto',
+            variants: data.variants || 'auto',
           }),
         });
         if (!d.jobs?.length) throw new Error('No file in the batch could be queued.');
@@ -687,6 +688,7 @@ function App() {
           url: data.payload,
           acknowledged: !!data.acknowledged,
           output_format: data.outputFormat || 'auto',
+          variants: data.variants || 'auto',
           force_low_quality: forceLowQuality,
         });
       } else if (data.type === 'local') {
@@ -697,6 +699,7 @@ function App() {
           local_path: data.payload,
           acknowledged: !!data.acknowledged,
           output_format: data.outputFormat || 'auto',
+          variants: data.variants || 'auto',
           force_low_quality: forceLowQuality,
         });
       } else {
@@ -704,6 +707,7 @@ function App() {
         formData.append('file', data.payload);
         formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
         formData.append('output_format', data.outputFormat || 'auto');
+        formData.append('variants', data.variants || 'auto');
         body = formData;
       }
 

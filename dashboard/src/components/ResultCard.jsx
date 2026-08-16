@@ -71,14 +71,21 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
     const [videoErrored, setVideoErrored] = useState(false);
     const [resolution, setResolution] = useState(null);
 
+    // The framings this clip was rendered in. Absent (and the toggle hidden)
+    // unless the job asked for a second render.
+    const variants = Array.isArray(clip.variants) ? clip.variants : [];
+    const [previewVariant, setPreviewVariant] = useState('auto');
+
     // If the local video failed and a durable R2 URL is (now) available, use it.
     // Handles the race where the video errors before the durable URL has loaded.
+    // Only for the auto variant: the safe render is never archived to R2, so
+    // falling back would quietly show variant A while the toggle reads "safe".
     useEffect(() => {
-        if (videoErrored && durableUrl && currentVideoUrl !== durableUrl) {
+        if (previewVariant === 'auto' && videoErrored && durableUrl && currentVideoUrl !== durableUrl) {
             setCurrentVideoUrl(durableUrl);
             setVideoErrored(false);
         }
-    }, [videoErrored, durableUrl, currentVideoUrl]);
+    }, [previewVariant, videoErrored, durableUrl, currentVideoUrl]);
 
     // When an external refresh changes this clip's server file (e.g. bulk
     // subtitles applied from another card), adopt it so the card shows the
@@ -89,6 +96,9 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
         if (serverName && serverName !== serverVideoFile) {
             setServerVideoFile(serverName);
             setCurrentVideoUrl(serverUrl);
+            // The adopted file is always the auto variant; leaving the control
+            // on "safe" would label a player that is showing A.
+            setPreviewVariant('auto');
             if (videoRef.current) videoRef.current.load();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -616,7 +626,10 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
                         // Local /videos/ file gone (e.g. cleaned up after a reload) →
                         // fall back to the durable R2 copy for managed users. If the
                         // durable URL hasn't loaded yet, the effect above retries.
-                        if (durableUrl && currentVideoUrl !== durableUrl) setCurrentVideoUrl(durableUrl);
+                        // Never while previewing the safe variant: only the auto
+                        // render is archived, so the fallback would swap the framing
+                        // under a control that still says "safe".
+                        if (previewVariant === 'auto' && durableUrl && currentVideoUrl !== durableUrl) setCurrentVideoUrl(durableUrl);
                         else setVideoErrored(true);
                     }}
                     onPlay={() => {
@@ -631,6 +644,34 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
                         }
                     }}
                 />
+                {variants.length > 1 && (
+                    /* Preview switch only. Every server action below keeps
+                       running on the auto variant — see the note it renders. */
+                    <div className="absolute bottom-14 left-3 right-3">
+                        <SegmentedControl
+                            size="sm"
+                            options={variants.map((v) => ({
+                                value: v.id,
+                                label: v.id,
+                                hint: v.id === 'safe' ? 'fixed frame' : 'tracked',
+                            }))}
+                            value={previewVariant}
+                            onChange={(id) => {
+                                const entry = variants.find((v) => v.id === id);
+                                if (!entry) return;
+                                setPreviewVariant(id);
+                                setCurrentVideoUrl(getApiUrl(entry.video_url));
+                                setVideoErrored(false);
+                                if (videoRef.current) videoRef.current.load();
+                            }}
+                        />
+                        {previewVariant !== 'auto' && (
+                            <p className="mt-1 text-center text-[10px] leading-tight text-muted bg-black/70 rounded-full px-2 py-0.5">
+                                preview only — subtitles, hooks, dubs and posts use the tracked version
+                            </p>
+                        )}
+                    </div>
+                )}
                 <div className="absolute top-3 left-3 flex gap-2">
                     <span className="bg-black/70 text-ink font-mono text-micro uppercase px-2 py-1 rounded-full">
                         Clip {index + 1}

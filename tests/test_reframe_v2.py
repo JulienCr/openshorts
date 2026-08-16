@@ -1,10 +1,15 @@
 from reframe_v2 import (
     DELIVERY_MIN_WIDTH,
+    GENERAL_CONTENT_HEIGHT_RATIO,
     concat_list_content,
     dedupe_sendcmd_lines,
     delivery_size,
+    full_width_content_height,
     general_filtergraph,
+    general_render_cmd,
+    parse_variants,
     scene_frame_ranges,
+    variant_filename,
 )
 
 VERTICAL = 9 / 16
@@ -125,3 +130,116 @@ class TestGeneralLayout:
         from reframe_v2 import GENERAL_CONTENT_HEIGHT_RATIO
         scaled_w = 1920 * GENERAL_CONTENT_HEIGHT_RATIO * (16 / 9)
         assert 1080 / scaled_w > 0.70, "keeps less than 70% of the source width"
+
+
+class TestVariantParsing:
+    """The delivery-variant list: what a caller asks for vs what ships."""
+
+    def test_nothing_asked_still_ships_the_auto_render(self):
+        for raw in (None, "", [], "   ", ","):
+            assert parse_variants(raw) == ("auto",)
+
+    def test_asking_only_for_safe_still_ships_auto(self):
+        # "safe" is a SECOND delivery, never a replacement. Every other code
+        # path in the app resolves a clip to its auto file; dropping it would
+        # leave webhook/MCP/ZIP pointing at nothing.
+        assert parse_variants("safe") == ("auto", "safe")
+
+    def test_order_is_the_constant_not_the_request(self):
+        assert parse_variants("safe,auto") == ("auto", "safe")
+
+    def test_unknown_names_are_ignored_not_rejected(self):
+        # Same doctrine as `layouts`: a typo costs the caller the feature,
+        # never the job.
+        assert parse_variants("safe,bogus,SAFE, auto ") == ("auto", "safe")
+
+    def test_accepts_a_list_as_well_as_csv(self):
+        assert parse_variants(["safe"]) == ("auto", "safe")
+
+
+class TestVariantFilename:
+    """Suffix, never prefix — the property the whole A/B isolation rests on."""
+
+    def test_auto_keeps_the_canonical_name(self):
+        assert variant_filename("Talk_clip_3.mp4", "auto") == "Talk_clip_3.mp4"
+
+    def test_safe_is_suffixed(self):
+        assert variant_filename("Talk_clip_3.mp4", "safe") == "Talk_clip_3_safe.mp4"
+
+    def test_safe_file_escapes_the_auto_caption_glob(self):
+        # app.py finds a clip's newest burned copy with
+        # `subtitled_*_<base>_clip_<n>.mp4`, which requires the name to END
+        # there. If the safe variant were PREFIXED it would land inside that
+        # glob and a safe render could win the auto slot.
+        import fnmatch
+        safe = "subtitled_1_" + variant_filename("Talk_clip_3.mp4", "safe")
+        assert not fnmatch.fnmatch(safe, "subtitled_*_Talk_clip_3.mp4")
+        assert fnmatch.fnmatch(safe, "subtitled_*_Talk_clip_3_safe.mp4")
+
+    def test_strip_burned_prefix_still_recovers_the_safe_name(self):
+        # _strip_burned_captions / stripBurns only ever remove a PREFIX, so
+        # they stay correct for both variants without knowing about them.
+        import re
+        safe = "subtitled_1_Talk_clip_3_safe.mp4"
+        assert re.match(r'^subtitled_\d+_(.+)$', safe).group(1) == "Talk_clip_3_safe.mp4"
+
+
+class TestGeneralRenderCmd:
+    """The safe variant's ffmpeg invocation."""
+
+    def _cmd(self):
+        return general_render_cmd("in.mp4", "out.mp4", 1080, 1920, 608)
+
+    def test_single_input_single_pass(self):
+        assert self._cmd().count("-i") == 1
+
+    def test_audio_is_copied_and_optional(self):
+        cmd = self._cmd()
+        # The clip cut already encoded audio with loudnorm applied, so a
+        # re-encode would only lose quality. The `?` keeps a silent source
+        # from aborting the render.
+        assert "-map" in cmd and "0:a:0?" in cmd
+        assert cmd[cmd.index("-c:a") + 1] == "copy"
+
+    def test_faststart_is_present(self):
+        # Without it the moov atom lands at the end and the dashboard <video>
+        # spins forever on a file that downloads fine.
+        cmd = self._cmd()
+        assert cmd[cmd.index("-movflags") + 1] == "+faststart"
+
+    def test_carries_no_camera_movement(self):
+        # The guarantee this variant sells. sendcmd/crop@c are how the auto
+        # render moves the frame; neither may appear here.
+        blob = " ".join(self._cmd())
+        assert "sendcmd" not in blob
+        assert "crop@c" not in blob
+
+    def test_filter_is_exactly_the_general_graph(self):
+        cmd = self._cmd()
+        assert cmd[cmd.index("-filter_complex") + 1] == general_filtergraph(1080, 1920, 608)
+
+    def test_keeps_the_whole_width(self):
+        # content_h comes from full_width_content_height, NOT the default 0.42
+        # ratio. The default crops the sides to buy presence and throws away
+        # ~24% of the width — the exact opposite of what "safe" promises.
+        out_w, out_h = delivery_size(1920, 1080, VERTICAL)
+        content_h = full_width_content_height(1920, 1080, out_w)
+        cmd = general_render_cmd("in.mp4", "out.mp4", out_w, out_h, content_h)
+        default_h = int(out_h * GENERAL_CONTENT_HEIGHT_RATIO)
+        assert content_h < default_h, "safe variant must shrink to fit, not crop"
+        assert general_filtergraph(out_w, out_h, content_h) in cmd
+
+
+def test_general_graph_has_no_time_varying_construct():
+    """What licenses rendering the safe variant in ONE pass, no scene detection.
+
+    general_filtergraph interpolates only out_w/out_h/fg_h, all computed once
+    per clip from the source resolution — so every GENERAL scene of a clip
+    produces the identical filter string, and concatenating N identical
+    segments is the same picture as one pass over the whole clip (minus a
+    forced keyframe per boundary). If anyone ever adds a temporal construct
+    here, that equivalence breaks and this test is the tripwire.
+    """
+    graph = general_filtergraph(1080, 1920)
+    assert "sendcmd" not in graph
+    assert "enable=" not in graph
