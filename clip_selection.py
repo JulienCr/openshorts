@@ -281,13 +281,21 @@ def window_text_with_anchors(window, segments, precision=3):
     shortlist is ~5-6k words, so ~65k input tokens of coordinates burying the
     prose the model is supposed to be judging.
     """
+    def anchor(seconds):
+        scale = 10 ** precision
+        return f"[{int(float(seconds) * scale) / scale:.{precision}f}]"
+
     seg_from = window.get("seg_from")
     seg_to = window.get("seg_to")
     if seg_from is None or seg_to is None or seg_to < seg_from:
-        return str(window.get("text", "") or "")
-    scale = 10 ** precision
+        # The empty-transcript fallback window has no segments to anchor to.
+        # It still gets one marker — its own start — because the prompt forbids
+        # timestamps that do not come from a marker, and handing the model an
+        # instruction it cannot satisfy is worse than a coarse anchor.
+        return f"{anchor(window.get('start', 0) or 0)} " \
+               f"{str(window.get('text', '') or '')}".strip()
     return " ".join(
-        f"[{int(start * scale) / scale:.{precision}f}] {text}"
+        f"{anchor(start)} {text}"
         for start, _end, text in segments[seg_from:seg_to + 1])
 
 
@@ -348,12 +356,25 @@ def drop_overlapping_clips(shorts, max_overlap=MAX_CLIP_OVERLAP_SECONDS):
 MAX_SILENCE_SKIP = 10.0
 
 
-def _falls_inside_a_word(time, intervals, open_edge):
-    """True when ``time`` lands inside a spoken word rather than in a gap.
+def _running_max_ends(intervals):
+    """Prefix maximum of word end times, for the containment test below.
 
-    ``intervals`` is the PAIRED (start, end) list, sorted by start — not two
-    independently sorted lists, whose indices only line up as long as no word
-    overlaps its neighbour.
+    Consulting only the last word that starts before the bound is wrong as soon
+    as words overlap: over ``[(10, 20), (15, 16)]`` at t=17 that lookup lands on
+    ``(15, 16)``, calls it silence, and the caller then walks away from speech
+    that is still going. The running maximum answers "does ANY word starting at
+    or before this point still cover it", which is the actual question.
+    """
+    running = []
+    highest = float("-inf")
+    for _start, end in intervals:
+        highest = max(highest, end)
+        running.append(highest)
+    return running
+
+
+def _falls_inside_a_word(time, starts, max_ends, open_edge):
+    """True when ``time`` lands inside a spoken word rather than in a gap.
 
     This, not a distance threshold, is what decides how a bound gets snapped.
     Inside a word the model pointed at speech and the nearest boundary is the
@@ -368,18 +389,20 @@ def _falls_inside_a_word(time, intervals, open_edge):
     marker of the next sentence. Symmetrically a start landing on a word's end
     means "begin after this word".
     """
-    index = bisect.bisect_right(intervals, (time, float("inf"))) - 1
-    if index < 0:
+    if not starts:
         return False
-    word_start, word_end = intervals[index]
     if open_edge == "start":
-        return word_start < time <= word_end
-    return word_start <= time < word_end
+        # Clip end: a word with start < time <= end still covers it.
+        index = bisect.bisect_left(starts, time) - 1
+        return index >= 0 and max_ends[index] >= time
+    # Clip start: a word with start <= time < end still covers it.
+    index = bisect.bisect_right(starts, time) - 1
+    return index >= 0 and max_ends[index] > time
 
 
-def _snap_start_to_speech(start, starts, intervals, max_silence_skip):
+def _snap_start_to_speech(start, starts, max_ends, max_silence_skip):
     """Word start the clip should open on, or None to leave the bound alone."""
-    if _falls_inside_a_word(start, intervals, open_edge="end"):
+    if _falls_inside_a_word(start, starts, max_ends, open_edge="end"):
         return min(starts, key=lambda s: abs(s - start))
     # In a gap: walk FORWARD. The nearest word overall may be the tail of the
     # previous sentence, on the wrong side of the pause — and since the detail
@@ -392,9 +415,9 @@ def _snap_start_to_speech(start, starts, intervals, max_silence_skip):
     return word_start if word_start - start <= max_silence_skip else None
 
 
-def _snap_end_to_speech(end, ends, intervals, max_silence_skip):
+def _snap_end_to_speech(end, ends, starts, max_ends, max_silence_skip):
     """Word end the clip should close on, or None to leave the bound alone."""
-    if _falls_inside_a_word(end, intervals, open_edge="start"):
+    if _falls_inside_a_word(end, starts, max_ends, open_edge="start"):
         return min(ends, key=lambda e: abs(e - end))
     # Mirror of the start: walk BACKWARD so the clip never trails off into
     # silence, and never swallows the first word of the next phrase. That last
@@ -436,10 +459,11 @@ def snap_clip_to_words(start, end, words, video_duration,
     intervals = sorted((float(w.get("s", 0)), float(w.get("e", 0))) for w in words)
     starts = [s for s, _ in intervals]
     ends = sorted(e for _, e in intervals)
+    max_ends = _running_max_ends(intervals)
 
     # START: onto a word start, then lead back into the silence before it.
     new_start = float(start)
-    word_start = _snap_start_to_speech(new_start, starts, intervals, max_silence_skip)
+    word_start = _snap_start_to_speech(new_start, starts, max_ends, max_silence_skip)
     if word_start is not None:
         prev_ends = [e for e in ends if e <= word_start]
         lead = min(max_lead, max(0.0, word_start - max(prev_ends)) / 2) if prev_ends else max_lead
@@ -447,7 +471,7 @@ def snap_clip_to_words(start, end, words, video_duration,
 
     # END: onto a word end, then trail into the silence after it.
     new_end = float(end)
-    word_end = _snap_end_to_speech(new_end, ends, intervals, max_silence_skip)
+    word_end = _snap_end_to_speech(new_end, ends, starts, max_ends, max_silence_skip)
     if word_end is not None:
         next_starts = [s for s in starts if s >= word_end]
         tail = min(max_tail, max(0.0, min(next_starts) - word_end) / 2) if next_starts else max_tail

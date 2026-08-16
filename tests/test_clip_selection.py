@@ -119,9 +119,13 @@ class TestWindowTextWithAnchors:
                                          min_duration=1.0, max_duration=60.0)
         assert end < 30.56, f"clip ran to {end}, swallowing the word at 30.56"
 
-    def test_falls_back_to_plain_text_without_a_span(self):
-        window = {"seg_from": None, "seg_to": None, "text": "whole transcript"}
-        assert window_text_with_anchors(window, []) == "whole transcript"
+    def test_span_less_window_still_gets_one_legal_anchor(self):
+        """The prompt forbids timestamps not taken from a marker, so the
+        empty-transcript fallback must not arrive with zero markers.
+        """
+        window = {"seg_from": None, "seg_to": None, "start": 0.0,
+                  "text": "whole transcript"}
+        assert window_text_with_anchors(window, []) == "[0.000] whole transcript"
 
 
 class TestDropOverlappingClips:
@@ -375,6 +379,20 @@ class TestSnapClipToWords:
         _start, end = snap_clip_to_words(10.0, 30.5, words, 100.0,
                                          min_duration=1.0, max_duration=60.0)
         assert end == 29.0 + 0.45  # the previous word's end, not 31.2
+
+    def test_a_bound_inside_a_long_word_masked_by_a_short_one_is_speech(self):
+        """Consulting only the last word starting before the bound calls this
+        silence: at t=17 over [(10,20),(15,16)] that lookup lands on (15,16),
+        while (10,20) is still being spoken, and the caller then walks away
+        from speech that has not finished.
+        """
+        words = [_word("looong", 10.0, 20.0), _word("in", 15.0, 16.0),
+                 _word("after", 40.0, 41.0)]
+        _start, end = snap_clip_to_words(0.5, 19.0, words, 100.0,
+                                         min_duration=1.0, max_duration=60.0)
+        # Read as speech, the bound snaps to the long word's own end (20.0).
+        # Read as silence it walks back to 16.0 and cuts mid-word.
+        assert end > 20.0, f"cut at {end}, inside the word running to 20.0"
 
     def test_failed_repair_keeps_the_bound_that_did_snap(self):
         """The old code returned the raw input the moment the duration repair

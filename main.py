@@ -1221,6 +1221,7 @@ def get_viral_clips(transcript_result, video_duration):
 
         # --- Pass 1: score every window in batches, keep the highest-scoring ---
         scored = []
+        unscored = []
         # A typo here must not fail the job: the whole body sits under a broad
         # `except Exception` that would report it as "Gemini Error, no clips".
         try:
@@ -1236,12 +1237,17 @@ def get_viral_clips(transcript_result, video_duration):
             parsed, cost = _run_gemini_stage(client, model_name, prompt, "score")
             if cost:
                 costs.append(cost)
-            scored.extend(parsed.get("windows") or [])
+            # Reconciled against THIS batch, not the global list. A window the
+            # model silently omitted would otherwise drop out of the ranking
+            # altogether — the same loss the batch cap used to cause, through a
+            # different door — and an id hallucinated here that happens to
+            # belong to another batch would be accepted as if it had been
+            # scored, hiding the real omission behind a fabricated score.
+            batch_scored, batch_missing = reconcile_scores(
+                parsed.get("windows") or [], batch)
+            scored.extend(batch_scored)
+            unscored.extend(batch_missing)
 
-        # A window the model silently omitted would be excluded from the
-        # ranking altogether — the same loss the batch cap used to cause,
-        # through a different door. Unscored windows sink to the bottom instead.
-        scored, unscored = reconcile_scores(scored, windows)
         if unscored:
             print(f"   ⚠️ {len(unscored)} window(s) came back unscored; ranked last.")
 
