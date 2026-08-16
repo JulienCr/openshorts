@@ -100,6 +100,10 @@ MIN_MARK_WIDTH = 80
 # is untouched, and everything else is scaled down until it fits rather than
 # being refused. Scaling beats refusing: a slightly smaller mark is a mark, and
 # the alternative on a landscape export is no branding at all.
+#
+# Not a BRAND_* env var, unlike every placement setting above: this is the
+# safety ceiling, and an operator who raised it would recreate precisely the
+# hook-card collision it exists to prevent. Changing it should cost a review.
 MAX_BAND_HEIGHT_RATIO = 0.06
 
 Placement = namedtuple("Placement", "path width height x y")

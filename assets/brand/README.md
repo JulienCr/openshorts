@@ -33,7 +33,7 @@ setup tells you rather than looking like it worked.
 
 ## Tuning
 
-Every number is an env var, so none of this needs a code change:
+Every *placement* number is an env var, so none of this needs a code change:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -49,6 +49,22 @@ Every number is an env var, so none of this needs a code change:
 `BRAND_Y_RATIO` has a real floor and ceiling: below ~0.12 the mark disappears
 under TikTok's tabs and Shorts' search icons, and above ~0.55 it runs into the
 burned captions. See the docstring in `branding.py` for the full band map.
+
+**`MAX_BAND_HEIGHT_RATIO` (6%) is deliberately not an env var.** It is the
+safety ceiling that keeps a tall or square asset — and every non-9:16
+`output_format` — from printing over the hook card, not a style knob. Raising it
+would recreate exactly the collision it was added to prevent, so it lives in
+`branding.py` where changing it is a code change with a code review.
+
+### Known interaction: `/api/edit` zoom effects
+
+Branding is burned into the canonical clip, so a zoom applied afterwards zooms
+the mark with it. At the maximum 15% (`edit_builder.EFFECTS`) roughly 6.5% is
+cropped from each edge, which clips the marks' outer edges (the margin is 5%)
+and lifts the band to y≈0.075, back under the platform chrome. The same is true
+of the free-plan watermark, and the fix — keeping an unbranded edit source and
+reapplying afterwards — belongs in the edit pipeline rather than here. Tracked
+in issue #6.
 
 ## Regenerating the badge
 
