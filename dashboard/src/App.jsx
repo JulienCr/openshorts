@@ -18,6 +18,7 @@ import LoginModal from './components/LoginModal';
 import TrialGate from './components/TrialGate';
 import AdvancedBanner from './components/AdvancedBanner';
 import HistoryTab from './components/HistoryTab';
+import BatchStrip from './components/BatchStrip';
 import ProfileMenu from './components/ProfileMenu';
 import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
@@ -163,6 +164,22 @@ const UserProfileSelector = ({ profiles, selectedUserId, onSelect }) => {
 const SESSION_KEY = 'openshorts_session';
 const SESSION_MAX_AGE = 3600000; // 1 hour (matches server job retention)
 
+// The batch roster gets its own key on purpose. openshorts_session expires after
+// an hour and is deleted the moment status goes back to 'idle' — a batch of thirty
+// two-hour recordings launched in the evening would survive neither the night nor
+// the user closing the current job while the other twenty-nine are still running.
+// It has to outlive the single-job view, not live inside it.
+const BATCH_KEY = 'openshorts_batch';
+const BATCH_MAX_AGE = 24 * 3600000;
+
+const loadBatch = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(BATCH_KEY) || 'null');
+    if (!saved || Date.now() - saved.timestamp > BATCH_MAX_AGE) return null;
+    return saved.batch || null;
+  } catch (_) { return null; }
+};
+
 // Mock polling function
 const pollJob = async (jobId) => {
   const res = await apiFetch(`/api/status/${jobId}`);
@@ -208,6 +225,11 @@ function App() {
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
+  // {id, jobs:[{job_id, name}]} — the roster of a multi-file submission. jobId
+  // keeps its exact meaning (the job currently open); this sits beside it and
+  // never becomes a second "active" job, which is what leaves the whole
+  // single-job flow untouched.
+  const [batch, setBatch] = useState(loadBatch);
   const [results, setResults] = useState(null);
   // Bulk subtitles: apply one style to every clip of the job (triggered from
   // within a clip's subtitle modal via "apply to all").
@@ -286,13 +308,36 @@ function App() {
     const data = await apiJson(`/api/projects/${projectJobId}/restore`, { method: 'POST' });
     flushClipState();
     setProjectState(data.project_state || null);
-    setNoSource(true);
+    // A job reopened straight after it finished — the normal move on a batch —
+    // still has its source on the server, so don't blank the preview for it.
+    const hasSource = data.has_source ?? false;
+    setNoSource(!hasSource);
     setJobId(data.job_id);
     setResults(data.result || null);
     setLogs(['♻️ Project restored from your library.']);
-    setProcessingMedia(null);
+    setProcessingMedia(hasSource ? { type: 'server', payload: `/api/source/${data.job_id}` } : null);
     setQualityGate(null);
     setStatus('complete');
+    setActiveTab('dashboard');
+  };
+
+  // Switch the Clip Generator to another job of the batch. A finished one goes
+  // through the library restore that already exists; a running one just becomes
+  // the polled job and the existing interval picks it up on its next tick.
+  const openJob = async (id) => {
+    if (id === jobId) return;
+    const s = await apiJson(`/api/status/${id}`).catch(() => null);
+    if (!s) return;
+    if (s.status === 'completed') { await restoreProject(id); return; }
+    flushClipState();
+    setProjectState(null);
+    setNoSource(false);
+    setJobId(id);
+    setResults(s.result || null);
+    setLogs(s.logs || []);
+    setProcessingMedia({ type: 'server', payload: `/api/source/${id}` });
+    setQualityGate(null);
+    setStatus(s.status === 'failed' ? 'error' : 'processing');
     setActiveTab('dashboard');
   };
 
@@ -394,6 +439,15 @@ function App() {
       localStorage.removeItem(SESSION_KEY);
     }
   }, []);
+
+  // The batch roster persists on its own clock, deliberately not tied to the
+  // single-job session above (see BATCH_KEY).
+  useEffect(() => {
+    try {
+      if (batch) localStorage.setItem(BATCH_KEY, JSON.stringify({ batch, timestamp: Date.now() }));
+      else localStorage.removeItem(BATCH_KEY);
+    } catch (_) { /* localStorage full — the strip is not worth failing over */ }
+  }, [batch]);
 
   // Session Recovery: Save state changes
   useEffect(() => {
@@ -606,6 +660,26 @@ function App() {
       // BYOK sends the Gemini header; managed users rely on the bearer token
       // that apiFetch attaches automatically.
       const headers = apiKey ? { 'X-Gemini-Key': apiKey } : {};
+
+      if (data.type === 'local-batch') {
+        // Several server-side files in one submission. Returns a roster instead
+        // of a job id, so it takes its own endpoint and its own early return.
+        const d = await apiJson('/api/process/batch', {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            local_paths: data.payload,
+            acknowledged: !!data.acknowledged,
+            output_format: data.outputFormat || 'auto',
+          }),
+        });
+        if (!d.jobs?.length) throw new Error('No file in the batch could be queued.');
+        setBatch({ id: d.batch_id, jobs: d.jobs, skipped: d.skipped || [] });
+        // The first one opens like any single job; the rest live in the strip.
+        setJobId(d.jobs[0].job_id);
+        setProcessingMedia({ type: 'server', payload: `/api/source/${d.jobs[0].job_id}` });
+        return;
+      }
 
       if (data.type === 'url') {
         headers['Content-Type'] = 'application/json';
@@ -1275,6 +1349,12 @@ function App() {
             <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
               <div className="min-h-full flex flex-col items-center justify-center px-4 py-6 sm:p-6">
               <div className="max-w-xl w-full text-center space-y-8">
+                {/* Visible on the idle screen too: coming back to submit more
+                    must not hide a batch that is still running. */}
+                <div className="text-left">
+                  <BatchStrip batch={batch} activeJobId={jobId} onOpen={openJob}
+                              onDismiss={() => setBatch(null)} />
+                </div>
                 <div className="space-y-4">
                   <p className="eyebrow">01 · CLIP GENERATOR</p>
                   <h1 className="font-display lowercase text-4xl md:text-5xl text-ink">
@@ -1299,7 +1379,12 @@ function App() {
 
           {/* View: Processing / Results (Split View) */}
           {activeTab === 'dashboard' && (status === 'processing' || status === 'complete' || status === 'error') && (
-            <div className="h-full flex flex-col md:flex-row gap-4 p-4 overflow-y-auto md:overflow-y-hidden custom-scrollbar animate-fade">
+            <div className="h-full flex flex-col p-4 overflow-y-auto md:overflow-hidden custom-scrollbar animate-fade">
+            {/* Above the split, not inside it: the batch outlives whichever job
+                happens to be open, so it must not scroll away with one. */}
+            <BatchStrip batch={batch} activeJobId={jobId} onOpen={openJob}
+                        onDismiss={() => setBatch(null)} />
+            <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-4">
 
               {/* Left Panel: Preview & Status */}
               <div className={`${status === 'complete' ? 'w-full md:w-[30%] lg:w-[25%]' : 'w-full md:w-[55%] lg:w-[60%]'} md:h-full flex flex-col shrink-0 md:shrink card p-4 sm:p-6 overflow-y-auto custom-scrollbar transition-all duration-700 ease-in-out`}>
@@ -1459,6 +1544,7 @@ function App() {
                 </div>
               </div>
 
+            </div>
             </div>
           )}
 

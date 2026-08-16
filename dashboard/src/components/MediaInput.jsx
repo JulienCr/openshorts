@@ -14,7 +14,11 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const [localIngestEnabled, setLocalIngestEnabled] = useState(false);
     const [localFiles, setLocalFiles] = useState([]);
     const [localTruncated, setLocalTruncated] = useState(false);
-    const [localName, setLocalName] = useState('');
+    // A Set of relative names. Several files go out as one batch; a single one
+    // takes the exact path it always did, so the common case is untouched.
+    const [localSelected, setLocalSelected] = useState(() => new Set());
+    const [localFilter, setLocalFilter] = useState('');
+    const [localSources, setLocalSources] = useState([]);
     const [localError, setLocalError] = useState('');
     const [loadingLocal, setLoadingLocal] = useState(false);
     // File upload is the primary path; the link is secondary.
@@ -65,6 +69,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
             .then((d) => {
                 setLocalFiles(d.files || []);
                 setLocalTruncated(!!d.truncated);
+                setLocalSources(d.sources || []);
             })
             .catch(() => setLocalError("Could not read the server's video folder."))
             .finally(() => setLoadingLocal(false));
@@ -96,6 +101,31 @@ export default function MediaInput({ onProcess, isProcessing }) {
     // Nothing to attest to when the box is not shown.
     const rightsOk = !requireRights || acknowledged;
 
+    const formatSize = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
+
+    const needle = localFilter.trim().toLowerCase();
+    const visibleFiles = needle
+        ? localFiles.filter((f) => f.name.toLowerCase().includes(needle))
+        : localFiles;
+    const selectedSizeMb = localFiles.reduce(
+        (sum, f) => (localSelected.has(f.name) ? sum + f.size_mb : sum), 0);
+    // A folder the server could read but that holds nothing at all.
+    const emptySources = localSources.filter((s) => s.entries === 0);
+
+    const toggleLocal = (name) => setLocalSelected((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(name)) next.add(name);
+        return next;
+    });
+
+    const selectAll = (on) => setLocalSelected((prev) => {
+        const next = new Set(prev);
+        // Only ever touches what the filter is showing, so clearing after a
+        // search cannot silently drop a selection made under another one.
+        visibleFiles.forEach((f) => (on ? next.add(f.name) : next.delete(f.name)));
+        return next;
+    });
+
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!rightsOk) return;
@@ -103,8 +133,14 @@ export default function MediaInput({ onProcess, isProcessing }) {
             onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat });
         } else if (mode === 'file' && file) {
             onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat });
-        } else if (mode === 'local' && localName) {
-            onProcess({ type: 'local', payload: localName, acknowledged: true, outputFormat });
+        } else if (mode === 'local' && localSelected.size) {
+            const names = [...localSelected];
+            // One file takes the single-job path it always took, byte for byte.
+            // The batch endpoint only comes into play from two, so the common
+            // case gains nothing to go wrong.
+            onProcess(names.length === 1
+                ? { type: 'local', payload: names[0], acknowledged: true, outputFormat }
+                : { type: 'local-batch', payload: names, acknowledged: true, outputFormat });
         }
     };
 
@@ -196,28 +232,18 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     </div>
                 ) : mode === 'local' ? (
                     <div className="space-y-3">
-                        {/* Select and refresh stay mounted whatever the folder
+                        {/* Filter and refresh stay mounted whatever the folder
                             holds — hiding them on the empty state would strand
                             the user right after dropping their first file. */}
                         <div className="flex items-center gap-2">
-                            <select
-                                value={localName}
-                                onChange={(e) => setLocalName(e.target.value)}
+                            <input
+                                type="search"
+                                value={localFilter}
+                                onChange={(e) => setLocalFilter(e.target.value)}
+                                placeholder={localFiles.length ? 'Filter by name…' : 'Nothing to pick yet'}
                                 className="input-field flex-1"
                                 disabled={loadingLocal || localFiles.length === 0}
-                                required
-                            >
-                                <option value="">
-                                    {localFiles.length ? 'Pick a file already on the server…' : 'Nothing to pick yet'}
-                                </option>
-                                {localFiles.map((f) => (
-                                    <option key={f.name} value={f.name}>
-                                        {f.name} — {f.size_mb >= 1024
-                                            ? `${(f.size_mb / 1024).toFixed(1)} GB`
-                                            : `${f.size_mb} MB`}
-                                    </option>
-                                ))}
-                            </select>
+                            />
                             <button
                                 type="button"
                                 onClick={loadLocalFiles}
@@ -230,6 +256,18 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             </button>
                         </div>
 
+                        {/* A source folder with nothing at all in it is nearly
+                            always a mount that did not happen, not an empty
+                            folder — and as a short file list it looks like
+                            neither. Say so instead of letting it read as "there
+                            is nothing there". */}
+                        {emptySources.map((s) => (
+                            <p key={s.name} className="readout text-brass">
+                                {s.name}/ is empty ({s.fstype || 'unknown filesystem'}) — if it should be
+                                a mounted drive, the mount is gone.
+                            </p>
+                        ))}
+
                         {loadingLocal ? (
                             <p className="readout">Reading the server folder…</p>
                         ) : localError ? (
@@ -240,9 +278,57 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             </p>
                         ) : (
                             <>
+                                <div className="max-h-64 overflow-y-auto rounded-input border border-rule2 divide-y divide-rule">
+                                    {visibleFiles.map((f) => (
+                                        <label
+                                            key={f.name}
+                                            className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-paper3 transition-colors"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={localSelected.has(f.name)}
+                                                onChange={() => toggleLocal(f.name)}
+                                                className="accent-[var(--color-accent)] cursor-pointer shrink-0"
+                                            />
+                                            <span className="flex-1 min-w-0 truncate text-sm text-ink2">{f.name}</span>
+                                            <span className="shrink-0 font-mono text-xs text-muted">{formatSize(f.size_mb)}</span>
+                                        </label>
+                                    ))}
+                                    {visibleFiles.length === 0 && (
+                                        <p className="px-3 py-2 text-sm text-muted">No file matches “{localFilter}”.</p>
+                                    )}
+                                </div>
+
+                                <div className="flex items-center justify-between gap-3 text-xs">
+                                    <div className="flex gap-3">
+                                        {/* Acting on the filtered set, not on all
+                                            500: "all" after a filter means the
+                                            files you are looking at. */}
+                                        <button type="button" onClick={() => selectAll(true)}
+                                            className="text-muted hover:text-brass transition-colors lowercase">
+                                            select all{localFilter && ' shown'}
+                                        </button>
+                                        <button type="button" onClick={() => selectAll(false)}
+                                            className="text-muted hover:text-brass transition-colors lowercase">
+                                            clear
+                                        </button>
+                                    </div>
+                                    <span className="text-muted">
+                                        {localSelected.size
+                                            ? `${localSelected.size} selected · ${formatSize(selectedSizeMb)}`
+                                            : `${visibleFiles.length} file${visibleFiles.length === 1 ? '' : 's'}`}
+                                    </span>
+                                </div>
+
                                 <p className="readout">
                                     Read straight from the server's disk — nothing is uploaded, so the size limit does not apply.
                                 </p>
+                                {localSelected.size > 1 && (
+                                    <p className="readout text-brass">
+                                        Queued and rendered one at a time, not in parallel — plan for
+                                        roughly {localSelected.size}× a single run.
+                                    </p>
+                                )}
                                 {localTruncated && (
                                     <p className="readout text-brass">
                                         Only the first {localFiles.length} files are listed — narrow the server folder to see the rest.
@@ -338,13 +424,17 @@ export default function MediaInput({ onProcess, isProcessing }) {
 
                 <button
                     type="submit"
-                    disabled={isProcessing || !rightsOk || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'local' && !localName)}
+                    disabled={isProcessing || !rightsOk || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'local' && localSelected.size === 0)}
                     className="w-full btn-primary mt-4"
                 >
                     {isProcessing ? (
                         <>
                             <Loader2 size={16} className="animate-spin" />
                             Processing Video...
+                        </>
+                    ) : mode === 'local' && localSelected.size > 1 ? (
+                        <>
+                            Generate Clips · {localSelected.size} files
                         </>
                     ) : (
                         <>
