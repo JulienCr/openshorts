@@ -448,6 +448,15 @@ It renders from the same 16:9 temp as the auto variant, **before**
 crops the sides and throws away ~24% of the width, which is the opposite of
 what this variant promises.
 
+**A new per-clip finishing step goes in `finish_rendered_clip`, never at a call
+site.** It owns watermark → branding → captions+hook, in that order, for both
+variants. This is not tidiness: the branding and the automatic hook were each
+added to that sequence by a different branch, both landed on the auto path only,
+and **neither produced a merge conflict**. The result was a safe variant
+shipping with no channel logo and no hook card — an A/B lost on differences that
+have nothing to do with framing, which is the one thing it exists to compare.
+Two call sites of a growing sequence drift silently; one cannot.
+
 Naming is a **suffix** (`<base>_clip_3_safe.mp4`), never a prefix: the caption
 glob for a clip is `subtitled_*_<base>_clip_3.mp4` and requires the name to END
 there, so the two variants cannot capture each other's files. `clip["video_url"]`
