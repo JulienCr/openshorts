@@ -195,10 +195,14 @@ def _collect_word_blocks(transcript, clip_start, clip_end, max_chars=20, max_dur
     return blocks
 
 
-def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, max_duration=2.0):
+def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20,
+                 max_duration=2.0, uppercase=False):
     """
     Generates an SRT file from the transcript for a specific time range.
     Groups words into short lines suitable for vertical video.
+
+    ``uppercase`` mirrors the karaoke generator's option. SRT carries no
+    per-word markup, so the only place to apply it is the emitted text.
     """
     blocks = _collect_word_blocks(transcript, clip_start, clip_end, max_chars, max_duration)
     if not blocks:
@@ -207,6 +211,8 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
     srt_content = ""
     for index, block in enumerate(blocks, 1):
         text = " ".join(w['word'] for w in block).strip()
+        if uppercase:
+            text = text.upper()
         srt_content += format_srt_block(index, block[0]['start'], block[-1]['end'], text)
 
     # Write UTF-8 with BOM so Windows/FFmpeg subtitle readers reliably detect Unicode text.
@@ -246,6 +252,23 @@ AUTO_CAPTION_STYLE = {
     "max_chars": 16,
     "max_duration": 1.4,
 }
+
+
+def resolve_caption_style():
+    """The caption look for this job: the defaults above, with the server's
+    style preset merged over the top.
+
+    Only keys AUTO_CAPTION_STYLE already declares are merged. An unknown key is
+    dropped rather than passed through — same rule as ``layout_env``, where a
+    newer dashboard writing a key this renderer has never heard of must not
+    break the job. Returns a fresh dict every call: clips render in parallel
+    threads inside one process (CLIP_WORKERS), so writing through to the module
+    constant would let one clip restyle every clip rendered after it.
+    """
+    import style_preset
+
+    captions = style_preset.preset_from_env().get("captions")
+    return style_preset.coerce_section(captions, AUTO_CAPTION_STYLE)
 
 
 def _ass_time(seconds):
@@ -462,15 +485,171 @@ def _sanitize_font_name(name):
     return cleaned or "Verdana"
 
 
+def generate_auto_captions(transcript, clip_start, clip_end, output_dir,
+                           generation_id, style):
+    """Write the pipeline's automatic caption file for ``style``.
+
+    Returns its path, or None when no words fall in the clip's range.
+
+    Honouring ``style["style"]`` is what makes the default-style panel's
+    "Classic" choice mean anything. AUTO_CAPTION_STYLE has always carried
+    ``style: "karaoke"`` and nothing ever read it — harmless while the value was
+    unreachable, a broken promise now that it is selectable.
+
+    The extension is the branch, not a cosmetic: ``burn_subtitles`` keys its
+    filter off it (``.ass`` carries its own styles; anything else gets
+    force_style), so the two must be chosen together.
+
+    The name never carries the clip's title. It is interpolated into an ffmpeg
+    filter string, where an apostrophe closes the quote — and titles carry them
+    constantly ("Earth's", "Don't"). The uuid also makes it unique per clip
+    rather than per second: clips render in parallel (CLIP_WORKERS), so a bare
+    timestamp would let one clip burn another's captions.
+    """
+    import uuid
+
+    karaoke = style.get("style") != "classic"
+    path = os.path.join(
+        output_dir,
+        f"autosubs_{int(generation_id)}_{uuid.uuid4().hex[:8]}."
+        f"{'ass' if karaoke else 'srt'}")
+
+    if karaoke:
+        ok = generate_ass(
+            transcript, clip_start, clip_end, path,
+            max_chars=style["max_chars"], max_duration=style["max_duration"],
+            alignment=style["alignment"], fontsize=style["font_size"],
+            font_name=style["font_name"], font_color=style["font_color"],
+            border_color=style["border_color"], border_width=style["border_width"],
+            highlight_color=style["highlight_color"], effect=style["effect"],
+            base_opacity=style["base_opacity"], uppercase=style["uppercase"])
+    else:
+        # Classic carries no per-word markup; the look comes from the
+        # force_style burn_subtitles builds for a non-.ass file.
+        ok = generate_srt(transcript, clip_start, clip_end, path,
+                          max_chars=style["max_chars"],
+                          max_duration=style["max_duration"],
+                          uppercase=style["uppercase"])
+    return path if ok else None
+
+
+def captioned_output_name(stem, generation_id):
+    """The name of the derived, styled copy of a clip.
+
+    A contract rather than a label. app.py finds the newest derived clip with
+    ``glob("subtitled_*_<clean>")`` and walks it back with
+    ``re.match(r'^subtitled_\\d+_(.+)$')`` — restore-after-restart, the R2
+    upload and the download bundle all depend on it resolving. The separator
+    positions and the digits-only generation id are therefore load-bearing:
+    a uuid there orphans every clip, silently.
+    """
+    return f"subtitled_{int(generation_id)}_{stem}"
+
+
+def _finite_seconds(value):
+    """A finite, non-negative float, or None. Nothing else reaches a filtergraph."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")) or number < 0:
+        return None
+    # Trim a trailing .0 so the common 3 stays "3.0" rather than becoming noise
+    # in the logged command; the value is a plain float either way.
+    return number
+
+
+def build_burn_command(video_path, output_path, vf, overlay_png=None,
+                       overlay_xy=(0, 0), overlay_until=None):
+    """Assemble the ffmpeg argv that burns captions, and optionally a hook, in
+    ONE pass.
+
+    One pass rather than two is a naming constraint, not a speed tweak.
+    ``auto_caption_clip`` writes ``subtitled_<ts>_<stem>.mp4``, and that name is
+    a contract: the subtitle modal's walk-back and ``_canonical_clip_file``
+    reconstruct the clean original from that exact prefix. A separate hook pass
+    would have to write ``hooked_subtitled_...`` and orphan the pair — besides
+    charging a second full re-encode per clip.
+    """
+    if not overlay_png:
+        inputs = ['-i', video_path]
+        filters = ['-vf', vf]
+        maps = []
+    else:
+        x, y = overlay_xy
+        # None means "for the whole clip", which is what /api/hook has always
+        # meant by duration_seconds=None.
+        #
+        # Coerced HERE and not only upstream, because this is the line that
+        # formats a caller-supplied value into a filtergraph: a string can close
+        # between(...) and rewrite the graph. The preset that feeds it is
+        # hand-edited JSON, and a caller can also send one inline. An
+        # uncoercible value falls back to "no time limit" rather than failing
+        # the burn — the clip matters more than the hook's timing.
+        until = _finite_seconds(overlay_until)
+        enable = "" if until is None else f":enable='between(t,0,{until})'"
+        graph = (f"[0:v]{vf}[v0];"
+                 f"[v0][1:v]overlay=x={int(x)}:y={int(y)}{enable}[v]")
+        inputs = ['-i', video_path, '-i', overlay_png]
+        filters = ['-filter_complex', graph]
+        # The single-input form got away with a bare '-c:a copy'. Two inputs
+        # make the mapping explicit, and the trailing '?' is load-bearing:
+        # without it ffmpeg aborts on a source with no audio stream, and silent
+        # sources are a case the pipeline handles everywhere else.
+        maps = ['-map', '[v]', '-map', '0:a?']
+
+    return [
+        'ffmpeg', '-y',
+        *inputs,
+        *filters,
+        *maps,
+        '-c:a', 'copy',
+        *video_encode_args(QUALITY),
+        *METADATA_SCRUB,
+        '-movflags', '+faststart',
+        output_path,
+    ]
+
+
+def _burn_filter(srt_path, style_string, safe_srt_path=None, safe_fonts_dir=None):
+    """The video filter for a burn: the subtitle renderer, or a pass-through.
+
+    ``srt_path=None`` yields ``null`` — the clip goes through untouched. That is
+    what lets the automatic hook be burned on a clip with no captions, which
+    happens legitimately (AUTO_CAPTIONS=0, or a clip whose range holds no
+    words). Gating the hook behind captions made `hook.enabled` promise
+    something the pipeline would not do.
+
+    The first option is named explicitly (filename=) rather than positional:
+    ffmpeg 8's filtergraph parser rejects a quoted positional value that is
+    followed by more :name=value options ("No option name near ..."), while the
+    named form parses on every version back to 4.x.
+    """
+    if not srt_path:
+        return "null"
+    if str(srt_path).lower().endswith('.ass'):
+        # ASS files (karaoke style) carry their own styles; force_style would
+        # override the per-word color tags.
+        return f"ass=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
+    return (f"subtitles=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
+            f":charenc=UTF-8:force_style='{style_string}'")
+
+
 def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
-                   bg_color="#000000", bg_opacity=0.0):
+                   bg_color="#000000", bg_opacity=0.0,
+                   overlay_png=None, overlay_xy=(0, 0), overlay_until=None):
     """
     Burns subtitles into the video using FFmpeg.
     Supports two modes:
     - Outline mode (bg_opacity=0): Text with colored outline/border
     - Box mode (bg_opacity>0): Text with semi-transparent background box
+
+    Pass overlay_png to composite a hook image in the same pass (see
+    build_burn_command for why that must not become a second pass).
     """
     # Position mapping
     ass_alignment = 2
@@ -493,7 +672,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     border_width = _clamp_number(border_width, 0, 10, 2)
 
     # Path handling for FFmpeg filter syntax
-    safe_srt_path = _escape_ffmpeg_filter_value(srt_path)
+    safe_srt_path = _escape_ffmpeg_filter_value(srt_path) if srt_path else None
 
     # Convert colors to ASS format and build style
     primary_colour = hex_to_ass_color(font_color, 1.0)
@@ -530,28 +709,11 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
     safe_fonts_dir = _escape_ffmpeg_filter_value(fonts_dir)
 
-    # The first option is named explicitly (filename=) rather than positional:
-    # ffmpeg 8's filtergraph parser rejects a quoted positional value that is
-    # followed by more :name=value options ("No option name near ..."), while
-    # the named form parses on every version back to 4.x.
-    if str(srt_path).lower().endswith('.ass'):
-        # ASS files (karaoke style) carry their own styles; force_style would
-        # override the per-word color tags.
-        vf = f"ass=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
-    else:
-        vf = (f"subtitles=filename='{safe_srt_path}':fontsdir='{safe_fonts_dir}'"
-              f":charenc=UTF-8:force_style='{style_string}'")
+    vf = _burn_filter(srt_path, style_string, safe_srt_path, safe_fonts_dir)
 
-    cmd = [
-        'ffmpeg', '-y',
-        '-i', video_path,
-        '-vf', vf,
-        '-c:a', 'copy',
-        *video_encode_args(QUALITY),
-        *METADATA_SCRUB,
-        '-movflags', '+faststart',
-        output_path
-    ]
+    cmd = build_burn_command(video_path, output_path, vf,
+                             overlay_png=overlay_png, overlay_xy=overlay_xy,
+                             overlay_until=overlay_until)
 
     _log(f"🎬 Burning subtitles: {' '.join(cmd)}")
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

@@ -86,6 +86,15 @@ def cmd_process(args):
         body["webhook_url"] = args.webhook
     if args.webhook_secret:
         body["webhook_secret"] = args.webhook_secret
+    if args.style:
+        # Read here rather than passing a path: the server may well be on
+        # another machine, where this file does not exist.
+        try:
+            with open(args.style) as f:
+                body["style"] = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"error: could not read style file {args.style}: {e}", file=sys.stderr)
+            sys.exit(1)
     status, payload = _request("POST", "/api/process", body)
     if status >= 400:
         _die(status, payload)
@@ -202,6 +211,9 @@ def main(argv=None):
     p.add_argument("--format", help="output format, e.g. 1080p")
     p.add_argument("--webhook", help="webhook URL fired once when the job ends")
     p.add_argument("--webhook-secret", help="HMAC secret for X-OpenShorts-Signature")
+    p.add_argument("--style", metavar="FILE",
+                   help="style JSON to use for this job instead of the server's "
+                        "default (see style.example.json)")
     p.add_argument("--wait", action="store_true", help="stream logs until the job ends")
     p.set_defaults(func=cmd_process)
 

@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts, list_all_clips, upload_actor_to_s3, list_actor_gallery, upload_video_to_gallery, list_video_gallery
+import style_preset
 
 load_dotenv()
 
@@ -472,6 +473,13 @@ def _reapply_captions(job_id, clip_index, video_path):
             return None
         clip = clips[clip_index]
         import main as _main
+        # Captions only — deliberately NOT the style preset's automatic hook,
+        # even though clip['viral_hook_text'] is right there. One of this
+        # function's two callers is /api/hook itself, so re-applying it would
+        # stack the preset's card on top of the one the user just wrote. The
+        # cost is that re-deriving a clip (an effect, a caption re-style) drops
+        # the automatic hook; re-adding it is a modal away, and that is the
+        # cheaper failure of the two.
         return _main.auto_caption_clip(video_path, transcript,
                                        clip['start'], clip['end'])
     except Exception as e:
@@ -549,14 +557,51 @@ _RESUME_FILE = ".resume.json"
 MAX_RESUME_ATTEMPTS = 2
 
 
+def _resume_job_env(manifest) -> dict:
+    """Rebuild a resumed job's environment. The manifest holds no secrets, so
+    everything here is either re-read from the server or replayed from a plain
+    value the caller chose.
+
+    Layouts and the style have to be replayed explicitly: they are per-job env
+    overrides, and a rebuilt environment does not have them. Without this a job
+    interrupted by a redeploy silently finished without SPLIT, screencast or
+    punch-in — worst on a thirty-file batch, which would deliver two halves that
+    do not match.
+
+    The style is taken from the manifest rather than re-read from disk. Re-reading
+    looks equivalent and is not: a job submitted with an inline style (the CLI's
+    --style, the MCP tool's `style`) would come back wearing the server default
+    instead, and editing style.json while a job sits in the queue would split
+    that job's own clips the same way.
+    """
+    env = os.environ.copy()
+
+    chosen = layout_env(manifest.get("layouts") or [])
+    env.update(chosen)
+    env.update(style_preset.style_env(effective_preset(manifest.get("style"))))
+
+    # The burned-in mark flags go through _resume_mark_env, which writes "0"
+    # rather than deleting the key — the resumed child calls load_dotenv(), so a
+    # deleted flag is one .env line away from coming back on.
+    return _resume_mark_env(env, manifest)
+
+
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
                            branding=False, webhook_url=None, webhook_secret=None,
-                           base_url=None, source_path=None, name=None, batch_id=None):
+                           base_url=None, source_path=None, name=None, batch_id=None,
+                           layouts=None, style=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         with open(path, "w") as f:
             json.dump({
                 "cmd": cmd, "priority": priority,
+                # Per-job env overrides, so they must be replayed by name: the
+                # resumed environment is rebuilt from os.environ and has no
+                # memory of what this job was asked to do. The style is the
+                # job's own — a caller can submit one inline — so re-reading the
+                # server file on resume would silently restyle it.
+                "layouts": list(layouts or []),
+                "style": style or {},
                 # A local_path job that resumes without these loses its preview
                 # (/api/source has nothing to serve), its staged copy, and its
                 # place in the batch strip — a redeploy halfway through thirty
@@ -665,13 +710,13 @@ def _resume_interrupted_jobs() -> set:
 
         # Rebuild env from scratch — the manifest holds no secrets. Managed
         # (cloud) jobs get the server key; self-host falls back to its env key.
-        env = os.environ.copy()
+        env = _resume_job_env(m)
         if BILLING_ENABLED and user_id is not None:
             try:
                 env["GEMINI_API_KEY"] = managed_keys.gemini_key()
             except Exception:
                 pass
-        _resume_mark_env(env, m)
+
 
         m["attempts"] = attempts
         try:
@@ -1753,6 +1798,94 @@ def _resolve_local_ingest(raw_path: str) -> str:
     return resolved
 
 
+OUTPUT_FORMATS = ("vertical", "horizontal", "square")
+
+# The job's resolved layout names, carried in its environment the way WATERMARK
+# is, so _register_job can put them in the resume manifest without every caller
+# having to resolve them a second time.
+LAYOUTS_ENV = "OPENSHORTS_LAYOUTS"
+
+
+def effective_preset(style=None):
+    """The preset this job runs under: the one carried on the request, else the
+    server's file. A non-object is ignored rather than honoured — a malformed
+    request must never silently blank the server's look.
+
+    In cloud mode the FILE is ignored entirely. Refusing PUT /api/style is not
+    isolation on its own: a style.json baked into the image or left over from a
+    self-host run would still be read on every submission and restyle every
+    tenant, and could globally waive the quality gate. Inline per-job styles
+    still apply — an agent legitimately sends one, and it only affects its own
+    job.
+    """
+    if isinstance(style, dict):
+        return style
+    return {} if BILLING_ENABLED else style_preset.load_style()
+
+
+def parse_inline_style(raw):
+    """A style carried on the request, as an object or a JSON string (multipart
+    forms have no other way to send one). Anything unparseable reads as absent."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except ValueError:
+            print("⚠️ Ignoring unparseable `style` on the request.")
+    return None
+
+
+def resolve_layouts(requested, preset=None):
+    """Layouts for this job: what the caller asked for, else the preset's.
+
+    An empty list means the caller said nothing — /api/process/batch normalises
+    a missing key to [] — not that they want none.
+    """
+    if requested:
+        return list(requested)
+    configured = effective_preset(preset).get("layouts")
+    return list(configured) if isinstance(configured, list) else []
+
+
+def resolve_output_format(requested, preset=None):
+    """Aspect for this job: the caller's, else the preset's, else auto.
+
+    ``auto`` counts as an explicit choice, not as silence. It is a documented
+    value — the MCP tool lists it in its enum — and it means "let the pipeline
+    decide". Folding it in with "omitted" made a caller who asks for auto
+    inherit the server's square or horizontal instead, with no way to ask for
+    pipeline-driven formatting at all.
+    """
+    if requested in OUTPUT_FORMATS or requested == "auto":
+        return requested
+    configured = effective_preset(preset).get("output_format")
+    return configured if configured in OUTPUT_FORMATS else "auto"
+
+
+def resolve_force_low_quality(requested, preset=None):
+    """Whether to proceed past the low-resolution warning without confirming.
+
+    Worth having in the preset: thirty queued recordings must not each stop on
+    a confirmation nobody is sitting there to click.
+
+    Takes the RAW request value, because an explicit ``false`` has to be
+    distinguishable from an absent one. Coercing to bool first made the two
+    identical, so a preset that waived the warning could never be re-armed for
+    a single job — the opposite of "the request beats the file".
+    """
+    if requested is None or requested == "":
+        # Typed like every other preset field: "false" is a truthy string, so a
+        # bare bool() turned a mistyped preset into a silent waiver of the very
+        # warning it reads as declining.
+        return style_preset.coerce_like(
+            effective_preset(preset).get("force_low_quality"), False)
+    if isinstance(requested, bool):
+        return requested
+    return str(requested).lower() in ("1", "true", "yes")
+
+
 def _parse_branding(raw):
     """Tri-state channel-branding flag: None inherits the server default.
 
@@ -1769,20 +1902,50 @@ def _parse_branding(raw):
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _build_job_env(api_key: str, layouts, job_id: str, branding=None) -> dict:
-    """Environment for the main.py subprocess: server env + caller key + layouts.
+def _build_job_env(api_key: str, layouts, job_id: str, style=None,
+                   branding=None) -> dict:
+    """Environment for the main.py subprocess: server env + caller key + layouts
+    + channel branding + the server's style preset.
 
     Layouts are per job and the renderer reads them at import time in the
     subprocess, so they have to be in place before Popen — the same path
     WATERMARK already takes. Channel branding (branding.py) reads
-    BRAND_WATERMARK the same way, so it has to be resolved here too.
+    BRAND_WATERMARK the same way, and the style preset rides along in a single
+    JSON variable.
+
+    Both submission endpoints go through here, so /api/process and
+    /api/process/batch cannot drift apart on styling — which matters most for
+    the batch lane, the one surface where nobody is watching each job.
     """
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = api_key  # Override with key from request
-    chosen = layout_env(layouts)
+
+    # Read once and pass down, so a dashboard save landing mid-submission can't
+    # give one job its captions from the old preset and its layouts from the new.
+    #
+    # A style carried on the request (the CLI's --style, the MCP tool's `style`)
+    # REPLACES the server default for this job rather than merging into it: a
+    # half-file, half-request hybrid is not predictable from either source
+    # alone. A malformed one is ignored rather than honoured — never let a bad
+    # request silently blank the server's look.
+    preset = effective_preset(style)
+
+    resolved = resolve_layouts(layouts, preset)
+    chosen = layout_env(resolved)
     env.update(chosen)
     if chosen:
         print(f"[layouts] job={job_id} enabled={sorted(chosen)}")
+    # Carried by name so the resume manifest can replay them: the environment a
+    # resumed job is rebuilt from has no memory of this job's overrides. Names
+    # rather than the env vars above, so a later change to LAYOUT_IMPLIES
+    # applies to a resumed job instead of freezing today's mapping.
+    env[LAYOUTS_ENV] = json.dumps(resolved)
+
+    styled = style_preset.style_env(preset)
+    env.update(styled)
+    if styled:
+        print(f"[style] job={job_id} preset applied ({sorted(preset)})")
+
     if branding is True:
         env["BRAND_WATERMARK"] = "1"
     elif branding is False:
@@ -1838,12 +2001,23 @@ def _register_job(job_id: str, *, cmd, env, output_dir, attestation, priority,
 
     # Resume manifest: enough to re-run this job if the container dies mid-flight
     # (a redeploy). No secrets — the env is rebuilt from os.environ on resume.
+    # Read back what _build_job_env resolved, so the endpoints do not have to
+    # resolve any of it a second time just to record it.
+    try:
+        job_layouts = json.loads(env.get(LAYOUTS_ENV) or "[]")
+    except ValueError:
+        job_layouts = []
+    try:
+        job_style = json.loads(env.get(style_preset.STYLE_ENV) or "{}")
+    except ValueError:
+        job_style = {}
     _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
                            watermark=jobs[job_id]['watermark'],
                            branding=jobs[job_id]['branding'],
                            webhook_url=webhook_url, webhook_secret=webhook_secret,
                            base_url=base_url, source_path=source_path,
-                           name=name, batch_id=batch_id)
+                           name=name, batch_id=batch_id, layouts=job_layouts,
+                           style=job_style)
 
     _enqueue_job(job_id, priority)
 
@@ -1860,14 +2034,18 @@ async def process_endpoint(
     branding: Optional[str] = Form(None),
     force_low_quality: Optional[str] = Form(None),
     webhook_url: Optional[str] = Form(None),
-    webhook_secret: Optional[str] = Form(None)
+    webhook_secret: Optional[str] = Form(None),
+    style: Optional[str] = Form(None)
 ):
     api_key = await resolve_gemini(request)
     if not api_key:
         raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
-    force_low = str(force_low_quality).lower() in ("1", "true", "yes")
+    # Kept RAW until the resolver: coercing here would erase the difference
+    # between "the caller said false" and "the caller said nothing", and the
+    # preset has to lose to the first while winning the second.
+    force_low_raw = force_low_quality
     brand_flag = _parse_branding(branding)
 
     # Handle JSON body manually for URL payload
@@ -1877,18 +2055,29 @@ async def process_endpoint(
         url = body.get("url")
         local_path = body.get("local_path")
         ack_flag = bool(body.get("acknowledged"))
-        force_low = bool(body.get("force_low_quality"))
+        force_low_raw = body.get("force_low_quality")
         output_format = body.get("output_format")
         layouts = body.get("layouts")
         brand_flag = _parse_branding(body.get("branding"))
         webhook_url = body.get("webhook_url")
         webhook_secret = body.get("webhook_secret")
+        style = body.get("style")
 
-    # Normalize output format (auto = keep pipeline default).
-    if output_format not in ("vertical", "horizontal", "square"):
-        output_format = "auto"
+    # Resolved once and reused, so every setting below comes from the same
+    # preset even if a dashboard save lands mid-submission.
+    preset = effective_preset(parse_inline_style(style))
 
-    # Accepts a JSON list or a comma-separated form field.
+    # Normalize output format (auto = keep pipeline default). Both resolvers
+    # fall back to the style preset for whatever the caller did not name — that
+    # is what lets an agent, a cron or an n8n node submit with no style fields
+    # at all and still get this server's look. An explicit value in the request
+    # always wins; the preset is a default, not a cage.
+    output_format = resolve_output_format(output_format, preset)
+    force_low = resolve_force_low_quality(force_low_raw, preset)
+
+    # Accepts a JSON list or a comma-separated form field. Layouts themselves
+    # fall back to the preset inside _build_job_env, where the batch lane picks
+    # up the same behaviour.
     if isinstance(layouts, str):
         layouts = [p for p in layouts.split(",") if p.strip()]
     elif not isinstance(layouts, list):
@@ -1950,7 +2139,8 @@ async def process_endpoint(
 
     # Prepare Command
     cmd = ["python", "-u", "main.py"] # -u for unbuffered
-    env = _build_job_env(api_key, layouts, job_id, branding=brand_flag)
+    env = _build_job_env(api_key, layouts, job_id, style=preset,
+                         branding=brand_flag)
 
     input_path = None
     if url:
@@ -2059,9 +2249,10 @@ async def process_batch_endpoint(request: Request):
         raise HTTPException(status_code=400,
                             detail=f"At most {LOCAL_BATCH_MAX_FILES} files per batch.")
 
-    output_format = body.get("output_format")
-    if output_format not in ("vertical", "horizontal", "square"):
-        output_format = "auto"
+    # The style preset fills in whatever the batch did not name. This is the
+    # surface it matters most on: thirty queued recordings, nobody watching.
+    preset = effective_preset(parse_inline_style(body.get("style")))
+    output_format = resolve_output_format(body.get("output_format"), preset)
     layouts = body.get("layouts")
     layouts = layouts if isinstance(layouts, list) else []
     brand_flag = _parse_branding(body.get("branding"))
@@ -2110,7 +2301,8 @@ async def process_batch_endpoint(request: Request):
             cmd.extend(["--format", output_format])
 
         _register_job(job_id, cmd=cmd,
-                      env=_build_job_env(api_key, layouts, job_id, branding=brand_flag),
+                      env=_build_job_env(api_key, layouts, job_id, style=preset,
+                                         branding=brand_flag),
                       output_dir=job_output_dir, attestation=attestation,
                       priority=BATCH_PRIORITY, base_url=api_base,
                       source_path=input_path, name=raw, batch_id=batch_id)
@@ -2119,6 +2311,95 @@ async def process_batch_endpoint(request: Request):
     print(f"[attestation] batch={batch_id} ip={attestation['ip']} "
           f"files={len(created)} skipped={len(skipped)} ack=true")
     return {"batch_id": batch_id, "jobs": created, "skipped": skipped}
+
+
+# ---- The server's default style ---------------------------------------------
+# One preset for the whole server, deliberately: named per-user presets would
+# need a table, a migration and a CRUD surface to answer a question nobody has
+# asked yet. If a second look is ever needed, only the resolution below changes.
+
+class StyleRequest(BaseModel):
+    style: dict
+
+
+@app.get("/api/style")
+async def get_style():
+    """The style preset every job on this server starts from."""
+    return {"style": style_preset.load_style(),
+            "editable": not BILLING_ENABLED,
+            "path": style_preset.style_file_path()}
+
+
+def _assert_not_cross_site(request: Request):
+    """Refuse a cross-site write to the server-wide style.
+
+    Self-host runs with allow_origins=["*"] and no authentication, so without
+    this any page the operator happens to visit could PUT a new style.json and
+    silently restyle every job from then on. /api/process is unauthenticated
+    too, but it only creates one job the operator can see; this changes all of
+    them, persistently, with nothing on screen.
+
+    The signal is Sec-Fetch-Site, NOT a comparison of Origin against this
+    request's host. The documented dashboard reaches the API through Vite's
+    proxy with ``changeOrigin: true``, so the browser sends
+    ``Origin: http://localhost:5175`` while FastAPI sees a base_url of
+    ``http://backend:8000``. Those can never match, and comparing them rejected
+    every save from the setup the README tells people to run. Under
+    changeOrigin the server genuinely cannot recover the browser-facing origin,
+    so no amount of care with Origin fixes it. Sec-Fetch-Site is computed by
+    the browser and passes through the proxy untouched.
+
+    An absent header is allowed, and that is the deliberate limit of this
+    check: curl, the CLI and the MCP adapter send none, and a browser old
+    enough to omit it gets no protection. Defending the modern-browser case
+    without breaking the documented setup is the trade being made here.
+    """
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        raise HTTPException(
+            status_code=403,
+            detail="Cross-site writes to the default style are refused.")
+
+
+@app.put("/api/style")
+async def put_style(req: StyleRequest, request: Request):
+    """Replace the server's style preset.
+
+    Self-host only. A single server-wide default is meaningless once tenants
+    share the instance — whoever saved last would restyle everybody's clips —
+    so the cloud build serves this read-only and keeps the built-in look.
+    """
+    _assert_not_cross_site(request)
+    if BILLING_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="The default style is a self-host setting. Style each clip "
+                   "from the subtitle and hook modals instead.")
+
+    # Anything that isn't a JSON object is refused by the request schema above,
+    # which matters: load_style() discards a non-object, so writing one would
+    # look like a save and behave like a delete.
+    #
+    # Written to a sibling and swapped in with os.replace, never truncated in
+    # place. load_style() runs on every submission, so an in-place write is
+    # observable: a job arriving mid-save reads half a file, falls back to the
+    # built-in defaults and renders with the wrong look — silently. A crash
+    # would leave the preset permanently truncated. The sibling keeps the swap
+    # on one filesystem, which is what makes os.replace atomic.
+    path = style_preset.style_file_path()
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(req.style, f, indent=2)
+        os.replace(tmp_path, path)
+    except OSError as e:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500,
+                            detail=f"Could not write {path}: {e}")
+    print(f"[style] default style saved to {path} ({sorted(req.style)})")
+    return {"style": req.style, "path": path}
 
 
 @app.get("/api/status/{job_id}")
@@ -3301,9 +3582,10 @@ async def add_hook(req: HookRequest, request: Request):
     output_filename = f"hook_{filename}"
     output_path = os.path.join(output_dir, output_filename)
     
-    # Map Size to Scale
-    size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
-    font_scale = size_map.get(req.size, 1.0)
+    # Map Size to Scale. Shared with the style preset's automatic hook, so the
+    # two cannot disagree on what "L" means.
+    from hooks import HOOK_SIZE_SCALE
+    font_scale = HOOK_SIZE_SCALE.get(req.size, 1.0)
 
     # Meter the FFmpeg overlay re-encode (no-op for BYOK / self-host).
     hook_minutes = _cloud_config.HOOK_MINUTES if BILLING_ENABLED else 0

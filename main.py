@@ -1,3 +1,4 @@
+import functools
 import time
 import cv2
 import scenedetect
@@ -772,29 +773,40 @@ def finalize_clip_passthrough(input_video, final_output_video):
     return True
 
 
-def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
+def auto_caption_clip(clip_path, transcript, clip_start, clip_end, hook_text=None):
     """Burn the default caption style onto a finished clip.
 
     Captions are mandatory for short-form to land, but they were opt-in behind a
     modal and only 9% of delivered clips ever got them (prod audit, 25-jul-2026).
     So every clip now ships captioned by default.
 
+    ``hook_text`` is Gemini's ``viral_hook_text`` for this clip. When the style
+    preset enables the automatic hook, it is composited **in this same ffmpeg
+    pass** rather than in one of its own. That is a naming constraint, not a
+    speed tweak: the output name below is a contract, and a second pass would
+    have to invent a name outside it (see build_burn_command).
+
     The captioned file is written ALONGSIDE the clip as
     ``subtitled_<ts>_<clip>.mp4`` — the same convention /api/subtitle uses — so
     the untouched original stays on disk and re-styling from the modal replaces
     the captions instead of burning a second layer over them.
 
-    Returns the captioned path, or None when captions were skipped (silent
-    video, no words in range, AUTO_CAPTIONS=0, or any failure — a caption
-    problem must never cost the user the clip they already paid for).
+    Returns the derived path, or None when there was nothing to burn at all —
+    no captions AND no hook — or on any failure, because a styling problem must
+    never cost the user the clip they already paid for.
+
+    Captions and the hook are decided INDEPENDENTLY. Returning early on
+    AUTO_CAPTIONS=0 or an empty word range used to skip the hook too, so
+    `hook.enabled` promised something the pipeline would not deliver on exactly
+    the clips that need a hook most (a silent or wordless one).
     """
-    if os.environ.get("AUTO_CAPTIONS", "1").strip() == "0":
-        return None
-    if not transcript or not transcript.get('segments'):
-        return None  # silent video: nothing to caption
     try:
         import subtitles as _subs
-        style = _subs.AUTO_CAPTION_STYLE
+        import hooks as _hooks
+        style = _subs.resolve_caption_style()
+        captions_wanted = (
+            os.environ.get("AUTO_CAPTIONS", "1").strip() != "0"
+            and bool(transcript and transcript.get('segments')))
         output_dir = os.path.dirname(clip_path)
         stem = os.path.basename(clip_path)
         generation_id = int(time.time())
@@ -820,31 +832,47 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
         # Unique per clip, not just per second: clips render in parallel
         # (CLIP_WORKERS), so a bare timestamp would collide and let one clip
         # burn another's captions.
-        ass_path = os.path.join(
-            output_dir, f"autosubs_{generation_id}_{uuid.uuid4().hex[:8]}.ass")
-        out_path = os.path.join(output_dir, f"subtitled_{generation_id}_{stem}")
+        out_path = os.path.join(
+            output_dir, _subs.captioned_output_name(stem, generation_id))
 
-        if not _subs.generate_ass(
-                transcript, clip_start, clip_end, ass_path,
-                max_chars=style["max_chars"], max_duration=style["max_duration"],
+        ass_path = _subs.generate_auto_captions(
+            transcript, clip_start, clip_end, output_dir, generation_id,
+            style) if captions_wanted else None
+
+        with _hooks.auto_hook_overlay(clip_path, hook_text, generation_id) as overlay:
+            if not ass_path and not overlay:
+                # Nothing to burn. Skip the re-encode entirely rather than
+                # writing a byte-shuffled copy of the clip.
+                if captions_wanted:
+                    print("   ℹ️ No words in range — clip ships without captions.")
+                return None
+            burn = functools.partial(
+                _subs.burn_subtitles, clip_path, ass_path, out_path,
                 alignment=style["alignment"], fontsize=style["font_size"],
                 font_name=style["font_name"], font_color=style["font_color"],
-                border_color=style["border_color"], border_width=style["border_width"],
-                highlight_color=style["highlight_color"], effect=style["effect"],
-                base_opacity=style["base_opacity"], uppercase=style["uppercase"]):
-            print("   ℹ️ No words in range — clip ships without captions.")
-            return None
-
-        _subs.burn_subtitles(
-            clip_path, ass_path, out_path,
-            alignment=style["alignment"], fontsize=style["font_size"],
-            font_name=style["font_name"], font_color=style["font_color"],
-            border_color=style["border_color"], border_width=style["border_width"])
-        print(f"   💬 Captions burned: {os.path.basename(out_path)}")
+                border_color=style["border_color"], border_width=style["border_width"])
+            hooked = bool(overlay)
+            try:
+                burn(**overlay)
+            except Exception as e:
+                # The hook is the optional half. Letting its failure escape
+                # would deliver the clip with no captions either, even though
+                # they generated fine — so enabling hooks could silently strip
+                # captions from every clip whose overlay misbehaves.
+                if not ass_path:
+                    raise
+                print(f"   ⚠️ Hook overlay failed ({type(e).__name__}: {e}) — "
+                      f"burning captions alone.")
+                burn()
+                hooked = False
+            burned = ", ".join(
+                part for part, on in (("captions", bool(ass_path)),
+                                      ("hook", hooked)) if on)
+        print(f"   💬 Burned {burned}: {os.path.basename(out_path)}")
         return out_path
     except Exception as e:
-        print(f"   ⚠️ Auto-captions failed ({type(e).__name__}: {e}) — "
-              f"delivering the clip without them.")
+        print(f"   ⚠️ Auto-styling failed ({type(e).__name__}: {e}) — "
+              f"delivering the clip without it.")
         return None
 
 
@@ -1609,8 +1637,11 @@ if __name__ == '__main__':
                         # burned into a derived file would be dropped there.
                         branding.apply_branding(clip_final_path)
                         # Captions last, so they sit on top of the watermark and
-                        # the canonical file stays clean for re-styling.
-                        auto_caption_clip(clip_final_path, transcript, start, end)
+                        # the canonical file stays clean for re-styling. The
+                        # hook rides the same pass — Gemini already wrote the
+                        # text, it just never reached the video.
+                        auto_caption_clip(clip_final_path, transcript, start, end,
+                                          hook_text=clip.get('viral_hook_text'))
                         print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
                     return success
                 finally:

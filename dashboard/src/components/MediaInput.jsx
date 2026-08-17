@@ -31,7 +31,11 @@ export default function MediaInput({ onProcess, isProcessing }) {
     // is one click per job. Defaults to true so a failed /api/config keeps
     // today's behaviour instead of dropping the guard silently.
     const [requireRights, setRequireRights] = useState(true);
-    const [outputFormat, setOutputFormat] = useState('vertical'); // vertical | horizontal | square
+    // null = inherit the server's default style (Settings > Default style).
+    // It has to be the initial state, not just an option: a concrete value here
+    // is sent on every submission and always beats the preset, which made the
+    // panel's format control do nothing for dashboard jobs.
+    const [outputFormat, setOutputFormat] = useState(null); // null | vertical | horizontal | square
     // Channel branding. The checkbox only appears when the server has a brand
     // asset to burn (brandingAvailable); its initial state mirrors the operator's
     // BRAND_WATERMARK default, so unticking it is an override for this job only.
@@ -388,8 +392,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 {/* Output format selector */}
                 <div className="mt-5">
                     <p className="eyebrow mb-2">Output format</p>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-4 gap-2">
                         {[
+                            { value: null, label: 'default', hint: 'Your saved style', w: 22, h: 26, dashed: true },
                             { value: 'vertical', label: '9:16', hint: 'Shorts · Reels · TikTok', w: 18, h: 32 },
                             { value: 'square', label: '1:1', hint: 'Feed posts', w: 28, h: 28 },
                             { value: 'horizontal', label: '16:9', hint: 'Keep landscape · YouTube', w: 36, h: 20 },
@@ -397,7 +402,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             const active = outputFormat === f.value;
                             return (
                                 <button
-                                    key={f.value}
+                                    key={f.value ?? 'default'}
                                     type="button"
                                     onClick={() => setOutputFormat(f.value)}
                                     className={`py-3 px-2 rounded-input border flex flex-col items-center gap-2 transition-colors
@@ -409,6 +414,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                         style={{
                                             width: `${f.w}px`,
                                             height: `${f.h}px`,
+                                            borderStyle: f.dashed ? 'dashed' : 'solid',
                                             borderColor: active ? 'var(--color-accent)' : 'var(--color-rule-2)',
                                             backgroundColor: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'transparent',
                                         }}

@@ -304,6 +304,7 @@ from `os.environ` on resume and an unticked box would otherwise come back ticked
 | POST | `/api/social/post` | Post to social media (async upload) |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
+| GET/PUT | `/api/style` | The server's default look (PUT is self-host only) |
 
 ### Agent access (MCP, API keys, webhooks)
 
@@ -383,11 +384,74 @@ container **creation**, so `ps -a` lists nothing and there is no container for a
 restart policy to act on; and a container created earlier whose source went away
 stays `exited` after a failed start, with no daemon retry. Both measured.
 
+### The server's default style
+
+Every clip already ships captioned, but the look was hard-coded in
+`subtitles.AUTO_CAPTION_STYLE`: identical for everyone, and changeable only one
+clip at a time, after the render, from a modal. `style.json` at the repo root
+replaces that (`style_preset.py`, template in `style.example.json`, move it with
+`OPENSHORTS_STYLE_FILE`). It carries the caption look, the automatic hook,
+layouts, output format and the quality gate.
+
+Three properties to keep:
+
+- **Read at submit, never at import.** Editing the file applies to the next job
+  without restarting the container. A module constant would make a colour change
+  need a redeploy.
+- **A broken preset costs nothing.** Missing file, malformed JSON, unknown key:
+  each reads as "no preset" and the built-in defaults stand. Same doctrine
+  `auto_caption_clip` already follows for captions.
+- **The request beats the file.** `layouts=`, `output_format=`, and a whole
+  inline `style` object (the CLI's `--style`, the MCP tool's `style`) override it
+  for one job. An inline style *replaces* the file rather than merging into it,
+  because a half-file half-request hybrid is unpredictable from either side.
+
+It reaches the renderer through `_build_job_env` (`app.py`), the seam
+`/api/process` and `/api/process/batch` already shared, in a single
+`OPENSHORTS_STYLE` variable rather than fifteen. Batch is the surface where this
+pays: thirty queued recordings carry no style fields at all.
+
+`GET/PUT /api/style` backs the dashboard's "Default style" panel. The PUT refuses
+when `BILLING_ENABLED` — one server-wide default is meaningless once tenants
+share an instance, since whoever saved last would restyle everybody's clips — and
+cloud **ignores the file on read too**. Refusing the write alone is not
+isolation: a `style.json` baked into the image or left over from a self-host run
+would still be read on every submission. Inline per-job styles keep working
+there, since they only affect their own job. The PUT is guarded by
+`Sec-Fetch-Site`, not by comparing `Origin` to the request host: Vite proxies
+`/api` with `changeOrigin: true`, so the two can never match and comparing them
+rejects every save from the documented dashboard.
+
+**The automatic hook.** Gemini has always written a `viral_hook_text` for every
+clip and nothing ever burned it; it waited for someone to open the modal. Under
+`hook.enabled`, it is composited in the **same ffmpeg pass** as the captions.
+That is a naming constraint, not a speed tweak: `auto_caption_clip` writes
+`subtitled_<ts>_<clip>.mp4`, and `_canonical_clip_file` / `_strip_burned_captions`
+rebuild the clean original from that exact prefix. A separate pass would have to
+invent a name outside it. Two inputs also make the audio mapping explicit, and
+the `?` in `-map 0:a?` is load-bearing: without it ffmpeg aborts on a silent
+source.
+
+Re-deriving a clip (an effect, a caption re-style) drops the automatic hook.
+`_reapply_captions` refuses to replay it on purpose, because one of its two
+callers is `/api/hook`, and replaying would stack the preset's card on top of the
+one the user just wrote.
+
+**Resume.** The manifest carries the job's `layouts` **and its resolved style**,
+and `_resume_job_env` replays both. Before that, a job interrupted by a redeploy
+came back without SPLIT, screencast or punch-in — invisible, and worst on a
+thirty-file batch, which delivered two halves that did not match. The style is
+carried rather than re-read for the same reason: a job submitted with an inline
+style would otherwise resume wearing the server default, and editing
+`style.json` while a job sits in the queue would split that job's own clips.
+
 ## Environment Variables
 
 **Server-side (.env):**
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET` - For S3 backup
 - `MAX_CONCURRENT_JOBS` - Concurrent processing limit (default: 5)
+- `OPENSHORTS_STYLE_FILE` - Where the default style lives (default: `style.json` at the repo root)
+- `AUTO_CAPTIONS` - `0` turns off the captions every clip ships with
 - `VITE_API_URL` - Production API URL override
 - `VITE_OPENPANEL_API_URL`, `VITE_OPENPANEL_CLIENT_ID` - Optional product analytics, read at **build** time. Unset (the default, including every self-hosted build) means no analytics is initialised and no third-party script is loaded. `dashboard/index.html` also gates reporting on an `ANALYTICS_HOSTS` allowlist, so a build carrying credentials stays inert on any other host.
 - `OPENPANEL_CLIENT_ID`, `OPENPANEL_CLIENT_SECRET` - Optional **server-side** analytics (`cloud/analytics.py`), same opt-in rule: unset means a silent no-op. Reports job outcomes with the user's job index, which the browser cannot do reliably — a render finishes after the tab is often gone, and ad-blockers eat a share of client events. Needs a *write* client; the read client used for querying is a different credential.

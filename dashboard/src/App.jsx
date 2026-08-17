@@ -9,6 +9,7 @@ import ThumbnailStudio from './components/ThumbnailStudio';
 import SaaShortsTab from './components/SaaShortsTab';
 import UGCGallery from './components/UGCGallery';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
+import DefaultStyleCard from './components/DefaultStyleCard';
 import UsageMeter from './components/UsageMeter';
 import TopUpModal from './components/TopUpModal';
 import StarBanner from './components/StarBanner';
@@ -670,7 +671,9 @@ function App() {
           body: JSON.stringify({
             local_paths: data.payload,
             acknowledged: !!data.acknowledged,
-            output_format: data.outputFormat || 'auto',
+            // Omitted, not 'auto': the server reads an absent value as "use the
+            // default style" and an explicit one — 'auto' included — as a choice.
+            ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
             branding: data.branding,
           }),
         });
@@ -687,9 +690,12 @@ function App() {
         body = JSON.stringify({
           url: data.payload,
           acknowledged: !!data.acknowledged,
-          output_format: data.outputFormat || 'auto',
+          ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
           branding: data.branding,
-          force_low_quality: forceLowQuality,
+          // Sent only on the confirmation retry. Sending false up front makes
+          // it an explicit override, so a default style that waives the
+          // low-resolution gate could never apply to a dashboard job.
+          ...(forceLowQuality ? { force_low_quality: true } : {}),
         });
       } else if (data.type === 'local') {
         // A name inside the server's LOCAL_INGEST_DIR, not a browser File —
@@ -698,18 +704,21 @@ function App() {
         body = JSON.stringify({
           local_path: data.payload,
           acknowledged: !!data.acknowledged,
-          output_format: data.outputFormat || 'auto',
+          ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
           branding: data.branding,
-          force_low_quality: forceLowQuality,
+          // Sent only on the confirmation retry. Sending false up front makes
+          // it an explicit override, so a default style that waives the
+          // low-resolution gate could never apply to a dashboard job.
+          ...(forceLowQuality ? { force_low_quality: true } : {}),
         });
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
         formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
-        formData.append('output_format', data.outputFormat || 'auto');
-        // Omitted rather than sent empty: a multipart field always arrives as a
-        // string, and "" would read as an explicit "off" instead of "inherit
-        // the server default".
+        // Both omitted rather than sent empty: a multipart field always
+        // arrives as a string, and "" would read as an explicit choice instead
+        // of "inherit the server default".
+        if (data.outputFormat) formData.append('output_format', data.outputFormat);
         if (data.branding !== undefined) {
           formData.append('branding', data.branding ? 'true' : 'false');
         }
@@ -1201,6 +1210,12 @@ function App() {
                     </span>
                   </p>
                 </div>
+              </div>
+
+              {/* The look every new job starts from. Read at submit time, so a
+                  change here applies to the next job with no restart. */}
+              <div className="mt-4">
+                <DefaultStyleCard />
               </div>
             </div>
           )}
