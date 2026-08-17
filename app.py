@@ -1716,14 +1716,24 @@ async def list_local_files():
 
 
 def _local_ingest_sources(root):
-    """One entry per mounted source folder: {name, fstype, entries}.
+    """One entry per source folder: {name, fstype, entries, status}.
 
     A broken mount is indistinguishable from an empty folder in a flat file list,
     and that is not hypothetical — a cloud drive that was not mounted when the
     container started made one of two sources vanish from the picker for days,
-    looking exactly like "there is nothing in there". `entries` counts *every*
-    directory entry, not just videos, because a source folder with literally
-    nothing in it is almost always a mount that did not happen.
+    looking exactly like "there is nothing in there".
+
+    There are two ways for it to break and they do not look alike. *Never
+    mounted* leaves an empty directory, which `entries: 0` describes. *Mounted,
+    then the transport died under it* leaves a path that cannot be stat'd at all,
+    and this used to filter on os.path.isdir(), which swallows that OSError and
+    returns False — so the source did not come back marked broken, it did not
+    come back at all. Reported as "the source is not configured on this server"
+    when the truth was "the files are fine, the mount needs redoing".
+
+    Which is why only `absent` is dropped here. Every other failure — an
+    unreadable directory above all, the everyday result of a UID/GID mismatch
+    on a bind mount — keeps its row and says what is wrong with it.
     """
     out = []
     try:
@@ -1731,16 +1741,20 @@ def _local_ingest_sources(root):
     except OSError:
         return out
     for name in names:
-        path = os.path.join(root, name)
-        if not os.path.isdir(path) or name.startswith((".", "$")):
+        if name.startswith((".", "$")):
             continue
-        try:
-            count = len(os.listdir(path))
-        except OSError:
-            count = 0
+        path = os.path.join(root, name)
+        status, count = local_stage.dir_state(path)
+        # "absent" is a plain file or a path that is not there: never a source.
+        if status == "absent":
+            continue
+        # fstype still resolves for a dead mount — the entry stays in
+        # /proc/self/mountinfo, which is exactly what makes it dead rather than
+        # gone, and naming the filesystem is what tells the reader which drive.
         out.append({"name": name,
                     "fstype": local_stage.fstype_for(path),
-                    "entries": count})
+                    "entries": count,
+                    "status": status})
     return out
 
 async def _probe_youtube_quality(url: str) -> dict:

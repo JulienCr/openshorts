@@ -6,6 +6,12 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
+# systemd starts a service with almost no environment, and the docker CLI in
+# ON_MOUNT_CMD says so out loud: `The "HOME" variable is not set. Defaulting to
+# a blank string.` It then looks for ~/.docker/config.json under "" and finds
+# nothing — harmless for a local `compose up`, not harmless the day the command
+# needs a credential helper or a non-default context.
+Environment=HOME=/root
 # `-` so a missing config file leaves the unit inert instead of failing every tick.
 EnvironmentFile=-/etc/openshorts/ingest-mounts.conf
 ExecStart=/usr/local/bin/ensure-ingest-mounts.sh

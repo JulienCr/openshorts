@@ -516,10 +516,39 @@ Two things there are load-bearing and easy to undo by accident:
 **A missing mount is the failure mode to design against.** Docker creates a bind
 source that does not exist, so an unmounted drive silently becomes an empty
 folder and the tab just looks short. `create_host_path: false` makes Compose fail
-loudly instead, `scripts/ensure-ingest-mounts.sh` (systemd timer) mounts drives
-that appear after boot **and re-runs Compose through `ON_MOUNT_CMD`**, and
-`/api/local-files` returns a per-source `{name, fstype, entries}` so the UI can
-say "this folder is empty" rather than implying it is complete.
+loudly instead, `scripts/ensure-ingest-mounts.sh` (systemd timer, installed by
+`scripts/install-ingest-mount-timer.sh`) mounts drives that appear after boot
+**and re-runs Compose through `ON_MOUNT_CMD`**, and `/api/local-files` returns a
+per-source `{name, fstype, entries, status}` so the UI can say "this folder is
+empty" rather than implying it is complete.
+
+**A mount can also die without going away, and that is a different bug in every
+layer.** The cloud client restarts, the drive letter returns on the Windows side,
+and the 9p session WSL held does not: the mountpoint stays in `/proc/mounts`
+while every syscall against it answers `ENODEV`. Each layer had been built for
+the *unmounted* case and mishandled this one, all four measured on 17 Aug 2026:
+
+- `ensure-ingest-mounts.sh` — `mountpoint -q` says "not mounted" (it cannot stat
+  it either) so it does not skip, but `[ -d ]` is then false and `mkdir -p` fails
+  on the unstattable path, so the loop hit `continue` and never reached `mount`.
+  It now `umount -l`s a mountpoint it cannot stat before rebuilding it.
+- `_local_ingest_sources` — filtered on `os.path.isdir()`, which swallows the
+  `OSError` and returns False, so the source did not come back marked broken, it
+  did not come back **at all**. `local_stage.dir_state` replaces it and returns
+  `"ok" | "dead" | "unreadable" | "absent"`; **only `absent` is dropped**, and
+  its errno list (`ENOENT`, `ENOTDIR`) is an allowlist for the same reason
+  `FAST_FSTYPES` is one — the first cut folded `EACCES` in with "not there" and
+  reintroduced the disappearance through another errno, since `os.path.isdir()`
+  answers True on a directory it cannot read (stat only needs to traverse the
+  parent) and such a source had always reached the picker. A UID/GID mismatch on
+  a bind mount is the ordinary way to hit it. Keep the logic there and not in
+  `app.py`: `local_stage` is stdlib-only and testable on the host, `app.py`
+  needs the container.
+- `ON_MOUNT_CMD` — a plain `up -d` is a **no-op** here, because the bind path
+  string is unchanged and that is all Compose diffs. It answers `Running` and
+  leaves the container on the dead mount; it needs `--force-recreate`.
+- and the timer itself was never installed — the fix for the previous outage was
+  a copy-paste block in `scripts/README.md`. Hence the installer script.
 
 `ON_MOUNT_CMD` is load-bearing, not garnish: `restart: unless-stopped` does *not*
 recover from a missing bind source. With the source absent, Docker fails at

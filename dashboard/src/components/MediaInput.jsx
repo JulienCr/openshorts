@@ -125,8 +125,19 @@ export default function MediaInput({ onProcess, isProcessing }) {
         : localFiles;
     const selectedSizeMb = localFiles.reduce(
         (sum, f) => (localSelected.has(f.name) ? sum + f.size_mb : sum), 0);
-    // A folder the server could read but that holds nothing at all.
-    const emptySources = localSources.filter((s) => s.entries === 0);
+    // A folder the server could read but that holds nothing at all. A broken
+    // source also counts zero entries, so this has to name the states it means
+    // rather than exclude them one by one; `!s.status` keeps a server from
+    // before that field existed showing its empty folders.
+    const emptySources = localSources.filter(
+        (s) => (!s.status || s.status === 'ok') && s.entries === 0);
+    // Worth its own wording: "empty" sends you looking for files that are not
+    // missing. The mount is still in the table with its transport dead under it,
+    // so the recordings are intact and it is the link to them that needs redoing.
+    const deadSources = localSources.filter((s) => s.status === 'dead');
+    // And a third: the server can see the folder and not read it. Same visible
+    // symptom, completely different fix — permissions, not the mount.
+    const unreadableSources = localSources.filter((s) => s.status === 'unreadable');
 
     const toggleLocal = (name) => setLocalSelected((prev) => {
         const next = new Set(prev);
@@ -283,6 +294,22 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             folder — and as a short file list it looks like
                             neither. Say so instead of letting it read as "there
                             is nothing there". */}
+                        {deadSources.map((s) => (
+                            <p key={s.name} className="readout text-danger">
+                                {s.name}/ cannot be read ({s.fstype || 'unknown filesystem'}) — the mount
+                                broke under it. The recordings are still on the drive; the server needs
+                                it remounted.
+                            </p>
+                        ))}
+
+                        {unreadableSources.map((s) => (
+                            <p key={s.name} className="readout text-danger">
+                                {s.name}/ cannot be read ({s.fstype || 'unknown filesystem'}) — the folder
+                                is there but the server is not allowed into it. Check its ownership and
+                                mode against the user the backend runs as.
+                            </p>
+                        ))}
+
                         {emptySources.map((s) => (
                             <p key={s.name} className="readout text-brass">
                                 {s.name}/ is empty ({s.fstype || 'unknown filesystem'}) — if it should be
