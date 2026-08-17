@@ -560,7 +560,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
 })();
 </script>
 
-<main class="doc">
+<main class="doc" lang="fr">
 
   <!-- ══════════════════════════ bandeau ══════════════════════════ -->
   <header class="masthead">
@@ -703,8 +703,9 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         Seules <strong>dix fenêtres</strong> franchissaient la passe détail, quelle que soit la
         durée de la source. Sur une vidéo de 15 minutes, qui produit ~13 fenêtres, dix en couvrent
         77 % ; sur un live de deux heures, qui en produit ~79, les dix mêmes n'en couvrent plus
-        que 13 % — les 87 % restants notés puis jetés. La shortlist devient ~30 % des fenêtres,
-        plancher 10, plafond 24. Une part des <em>fenêtres</em> et non du temps, parce que les
+        que 13 % — les 87 % restants notés puis jetés. La shortlist devient ~30 % des fenêtres, son plafond bornée entre 10 et 24 —
+        et le résultat reste borné par le nombre de fenêtres disponibles, donc cinq fenêtres en
+        donnent cinq, pas dix. Une part des <em>fenêtres</em> et non du temps, parce que les
         fenêtres sont construites sur la parole : un live avec vingt minutes d'écran
         « ça commence bientôt » ne doit pas en être crédité.
       </p>
@@ -1348,9 +1349,9 @@ docker compose -f docker-compose.yml \
           </label>
           <dl>
             <dt>Faire</dt>
-            <dd>Écrire volontairement du JSON invalide dans <code>style.json</code> (ou le renommer), puis lancer un job. Recommencer avec une clé inconnue et une valeur du mauvais type, par exemple <code>"max_chars": "seize"</code>.</dd>
+            <dd>Trois variantes, à lancer séparément : du JSON invalide dans <code>style.json</code> ; le fichier <em>renommé</em> ; puis une clé inconnue et une valeur du mauvais type, par exemple <code>"max_chars": "seize"</code>.</dd>
             <dt>Attendu</dt>
-            <dd>Le job tourne normalement, avec les défauts natifs, et une ligne d'avertissement dans les logs. Une valeur mal typée retombe sur son défaut sans tuer les sous-titres.</dd>
+            <dd>Les trois fois, le job tourne normalement avec les défauts natifs, et une valeur mal typée retombe sur son défaut sans tuer les sous-titres. Le JSON invalide laisse une ligne d'avertissement dans les logs ; le fichier <strong>absent n'en laisse aucune, et c'est voulu</strong> — l'installation par défaut n'a pas de <code>style.json</code>, et journaliser à chaque soumission serait du bruit.</dd>
             <dt class="fail">Raté si</dt>
             <dd class="fail">Le job échoue, ou pire, sort sans sous-titres du tout. Un fichier de configuration facultatif ne doit jamais pouvoir casser un rendu.</dd>
           </dl>
@@ -1368,9 +1369,9 @@ docker compose -f docker-compose.yml \
             <dt>Faire</dt>
             <dd>Lancer, puis écouter le début et la fin de chaque clip, et comparer leurs intervalles deux à deux.</dd>
             <dt>Attendu</dt>
-            <dd>Nettement plus de trois clips — le plancher vise 4-9 et au-delà selon la matière. Aucun clip ne commence ni ne finit sur du silence. Aucune paire de clips ne se recouvre de plus d'une seconde ; ~0,8 s partagées entre deux clips consécutifs sont légitimes, c'est le rembourrage du snapper.</dd>
+            <dd>Six à douze clips : sur une shortlist d'au moins huit fenêtres, <code>clip_count_targets</code> plancher à 6 et plafonne à 12. Aucun clip ne commence ni ne finit sur du silence. Aucune paire de clips ne se recouvre de plus d'une seconde ; ~0,8 s partagées entre deux clips consécutifs sont légitimes, c'est le rembourrage du snapper.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Deux clips racontent le même moment : la fusion des fenêtres qui se chevauchent n'a pas eu lieu, ou la garde qui ne dépend pas du modèle est passée à côté. Ou : une source de deux heures rend six clips — le plafond de la passe de scoring est revenu.</dd>
+            <dd class="fail">Deux clips racontent le même moment : la fusion des fenêtres qui se chevauchent n'a pas eu lieu, ou la garde qui ne dépend pas du modèle est passée à côté. En revanche, <strong>six clips sur deux heures n'est pas un échec</strong> : c'est le plancher légitime, pas la trace de l'ancien plafond de scoring. Ce sont le recouvrement et le silence qui jugent cette passe, pas le compte.</dd>
           </dl>
         </li>
 
@@ -1438,13 +1439,13 @@ python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
             <tr><td>Le second rendu</td><td class="mono">variants=auto</td><td><span class="def">auto seul · safe si style.json</span></td></tr>
             <tr><td>Les sous-titres automatiques</td><td class="mono">AUTO_CAPTIONS=0</td><td><span class="def">1</span></td></tr>
             <tr><td>Le hook automatique</td><td class="mono">hook.enabled: false</td><td><span class="def">absent = éteint</span></td></tr>
-            <tr><td>Le style serveur entier</td><td class="mono">OPENSHORTS_STYLE_FILE</td><td><span class="def">style.json</span></td></tr>
+            <tr><td>Le style serveur entier</td><td class="mono">OPENSHORTS_STYLE_FILE=&lt;fichier absent&gt;</td><td><span class="def">style.json · vide y retombe</span></td></tr>
             <tr><td>La copie sur disque local</td><td class="mono">LOCAL_STAGE=never</td><td><span class="def">auto</span></td></tr>
             <tr><td>L'ingest serveur (et le batch)</td><td class="mono">LOCAL_INGEST_DIR=</td><td><span class="def">vide</span></td></tr>
             <tr><td>Le débit de la voie batch</td><td class="mono">LOCAL_BATCH_CONCURRENCY</td><td><span class="def">1</span></td></tr>
             <tr><td>La règle du plan court</td><td class="mono">MIN_TRACK_SECONDS=0</td><td><span class="def">1.5</span></td></tr>
             <tr><td>L'amortissement du tracker</td><td class="mono">TRACKER_FORGET_SECONDS<br>TRACKER_COOLDOWN_SECONDS</td><td><span class="def">1.0 / 1.0</span></td></tr>
-            <tr><td>La taille de la shortlist</td><td class="mono">CLIP_SHORTLIST_MAX</td><td><span class="def">max(10, min(24, 30 %))</span></td></tr>
+            <tr><td>La taille de la shortlist</td><td class="mono">CLIP_SHORTLIST_MAX</td><td><span class="def">max(3, min(plafond, n))<br>plafond = max(10, min(24, 30 %))</span></td></tr>
             <tr><td>Le lot de scoring</td><td class="mono">SCORE_BATCH</td><td><span class="def">8</span></td></tr>
             <tr><td>Le plafond de disque</td><td class="mono">OUTPUT_MAX_GB</td><td><span class="def">25 · 0 désactive</span></td></tr>
           </tbody>
@@ -1475,7 +1476,7 @@ python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
         </li>
         <li>
           <span class="flag">issue #6</span>
-          <span>Les effets de zoom de <code>/api/edit</code> recadrent et déplacent les marques brûlées — logo comme sous-titres.</span>
+          <span>Les effets de zoom de <code>/api/edit</code> recadrent et déplacent les deux marques brûlées dans le clip canonique — le filigrane du plan gratuit comme la marque de chaîne. Un zoom de 15 % rogne 6,52 % de chaque bord et remonte la bande sous les onglets de la plateforme. Les sous-titres, eux, sont retirés puis réappliqués autour de l'effet.</span>
         </li>
         <li>
           <span class="flag">issue #1</span>
