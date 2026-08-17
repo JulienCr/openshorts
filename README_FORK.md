@@ -60,27 +60,32 @@ l'amont n'a aucun fichier de ce nom, donc aucun conflit possible.
 
 ## Où les conflits tomberont
 
-Un merge amont ne peut casser que sur les fichiers que le fork a touchés. Au
-16 août 2026 ils sont dix, dont trois hors d'atteinte parce que l'amont ne les
-connaît pas : `README_FORK.md`, `docker-compose.gpu.yml`, `docker-compose.ingest.yml`.
+Un merge amont ne peut casser que sur les fichiers que le fork a touchés **et
+que l'amont connaît**. Ceux que lui seul possède (`README_FORK.md`, les deux
+`docker-compose.*.yml`, `local_stage.py`, `scripts/`, `BatchStrip.jsx`, leurs
+tests) ne peuvent pas conflicter : ils sont hors du tableau.
 
-Pour les sept autres, le risque ne se lit pas sur la taille du patch seule. Il
-faut la croiser avec ce que l'amont remue au même endroit.
+Pour les autres, le risque ne se lit pas sur la taille du patch seule. Il faut
+la croiser avec ce que l'amont remue au même endroit.
 
 | Fichier | Écart du fork | Commits amont sur 90 j | Ce que le fork y a mis |
 | --- | --- | --- | --- |
 | `app.py` | +408 | 37 | ingest par chemin, bibliothèque de projets, reprise de job |
-| `main.py` | +76 | 42 | reprise de job, taille de la shortlist |
+| `main.py` | +179 | 42 | reprise de job, sélection des clips en deux passes |
+| `clip_selection.py` | +288 | 2 | shortlist proportionnelle, fusion des fenêtres, snapping |
 | `dashboard/src/App.jsx` | +24 | 26 | câblage de l'ingest local et de la bibliothèque |
 | `dashboard/src/components/MediaInput.jsx` | +152 | 6 | choix d'un fichier serveur, relecture du dossier |
+| `CLAUDE.md` | +133 | 8 | tout ce que le fork a ajouté au pipeline |
+| `gemini_worker.py` | +35 | 8 | prompts de scoring et de détail |
 | `Dockerfile` | +12 | 8 | uid du conteneur en build arg |
-| `clip_selection.py` | +33 | 2 | shortlist proportionnelle à la durée |
 | `dashboard/src/components/HistoryTab.jsx` | +12 | 3 | bibliothèque de projets |
 
-Les trois premières lignes concentrent le danger. `MediaInput.jsx` porte pourtant le
-deuxième plus gros patch du fork, mais l'amont n'y touche presque pas, donc il passe
-sans bruit ; `main.py` est l'inverse, un petit patch dans le fichier le plus remué du
-projet.
+`app.py` et `main.py` concentrent le danger : gros patch **et** fichier remué en
+amont. `MediaInput.jsx` porte le quatrième plus gros patch du fork mais l'amont
+n'y touche presque pas, donc il passe sans bruit ; `clip_selection.py` est le
+cas confortable, un très gros écart dans un fichier que l'amont ignore
+quasiment (2 commits sur 90 jours) — c'est d'ailleurs la raison de l'y mettre
+plutôt que dans `main.py`, en plus de la CI qui ne peut pas importer `main`.
 
 Régénérer la carte après chaque synchro :
 

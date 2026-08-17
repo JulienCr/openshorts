@@ -674,6 +674,7 @@ function App() {
             // Omitted, not 'auto': the server reads an absent value as "use the
             // default style" and an explicit one — 'auto' included — as a choice.
             ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
+            branding: data.branding,
           }),
         });
         if (!d.jobs?.length) throw new Error('No file in the batch could be queued.');
@@ -690,6 +691,7 @@ function App() {
           url: data.payload,
           acknowledged: !!data.acknowledged,
           ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
+          branding: data.branding,
           // Sent only on the confirmation retry. Sending false up front makes
           // it an explicit override, so a default style that waives the
           // low-resolution gate could never apply to a dashboard job.
@@ -703,6 +705,7 @@ function App() {
           local_path: data.payload,
           acknowledged: !!data.acknowledged,
           ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
+          branding: data.branding,
           // Sent only on the confirmation retry. Sending false up front makes
           // it an explicit override, so a default style that waives the
           // low-resolution gate could never apply to a dashboard job.
@@ -712,7 +715,13 @@ function App() {
         const formData = new FormData();
         formData.append('file', data.payload);
         formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
+        // Both omitted rather than sent empty: a multipart field always
+        // arrives as a string, and "" would read as an explicit choice instead
+        // of "inherit the server default".
         if (data.outputFormat) formData.append('output_format', data.outputFormat);
+        if (data.branding !== undefined) {
+          formData.append('branding', data.branding ? 'true' : 'false');
+        }
         body = formData;
       }
 

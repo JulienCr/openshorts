@@ -33,6 +33,13 @@ load_dotenv()
 # the .env file has been applied.
 import local_stage
 
+# branding, by contrast, is import-order-independent on purpose: it resolves
+# BRAND_DIR and its ratios in settings(), per call. Do not "optimise" that back
+# into module constants — main.py imports it before its own load_dotenv(), so
+# freezing at import is what made BRAND_WATERMARK=1 in .env a silent no-op on
+# the direct-CLI path.
+from branding import assets_present as branding_assets_present
+
 # Constants
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
@@ -573,17 +580,15 @@ def _resume_job_env(manifest) -> dict:
     env.update(chosen)
     env.update(style_preset.style_env(effective_preset(manifest.get("style"))))
 
-    if manifest.get("watermark"):
-        env["WATERMARK"] = "1"
-    else:
-        # Never inherit the server's own marker onto a job that had none.
-        env.pop("WATERMARK", None)
-    return env
+    # The burned-in mark flags go through _resume_mark_env, which writes "0"
+    # rather than deleting the key — the resumed child calls load_dotenv(), so a
+    # deleted flag is one .env line away from coming back on.
+    return _resume_mark_env(env, manifest)
 
 
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
-                           webhook_url=None, webhook_secret=None, base_url=None,
-                           source_path=None, name=None, batch_id=None,
+                           branding=False, webhook_url=None, webhook_secret=None,
+                           base_url=None, source_path=None, name=None, batch_id=None,
                            layouts=None, style=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
@@ -605,6 +610,11 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
                 "user_id": None if user_id is None else str(user_id),
                 "reservation_id": reservation_id,
                 "watermark": bool(watermark), "attempts": 0,
+                # Resolved, not inherited: env is rebuilt from os.environ on
+                # resume, so a job submitted with the branding box UNticked
+                # would come back branded from the server default unless the
+                # decision itself is stored.
+                "branding": bool(branding),
                 # The caller's webhook must survive a redeploy: a pipeline that
                 # relies on the callback would otherwise hang forever on a job
                 # that resumed fine. The secret is the caller's own HMAC value,
@@ -616,6 +626,25 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
             }, f)
     except Exception as e:
         print(f"⚠️ Could not write resume manifest for {job_id}: {e}")
+
+
+def _resume_mark_env(env, manifest):
+    """Re-apply the burned-in mark decisions a resume manifest recorded.
+
+    A resumed job rebuilds its env from os.environ, which holds the *server's*
+    defaults — so without this a free-plan job would come back unwatermarked,
+    and a job submitted with the branding box unticked would come back branded.
+    Both flags are per job and neither can be re-derived after the fact, which
+    is why the manifest stores the resolved decision rather than the request.
+
+    "off" is written as "0" rather than by deleting the key, for the same reason
+    as in _build_job_env: the resumed child calls load_dotenv(), which fills in
+    *absent* variables, so a deleted flag is one `.env` line away from coming
+    back on.
+    """
+    for var, key in (("WATERMARK", "watermark"), ("BRAND_WATERMARK", "branding")):
+        env[var] = "1" if manifest.get(key) else "0"
+    return env
 
 
 def _clear_resume_manifest(job_id):
@@ -688,6 +717,7 @@ def _resume_interrupted_jobs() -> set:
             except Exception:
                 pass
 
+
         m["attempts"] = attempts
         try:
             with open(manifest_path, "w") as f:
@@ -713,6 +743,7 @@ def _resume_interrupted_jobs() -> set:
             'user_id': None if user_id is None else user_id,
             'reservation_id': reservation_id,
             'watermark': bool(m.get("watermark")),
+            'branding': bool(m.get("branding")),
             'webhook_url': m.get("webhook_url"),
             'webhook_secret': m.get("webhook_secret"),
             'base_url': m.get("base_url"),
@@ -1563,6 +1594,11 @@ async def get_config():
         "billingEnabled": BILLING_ENABLED,
         "googleAuthEnabled": bool(BILLING_ENABLED and cloud.settings.google_auth_enabled),
         "localIngestEnabled": local_ingest_enabled(),
+        # The branding checkbox only appears when the server can actually honour
+        # it: BRAND_WATERMARK is the operator's default, and without a PNG in
+        # assets/brand/ ticking the box would silently do nothing.
+        "brandingAvailable": branding_assets_present(),
+        "brandingDefault": os.environ.get("BRAND_WATERMARK", "0") == "1",
     }
 
 
@@ -1850,13 +1886,31 @@ def resolve_force_low_quality(requested, preset=None):
     return str(requested).lower() in ("1", "true", "yes")
 
 
-def _build_job_env(api_key: str, layouts, job_id: str, style=None) -> dict:
+def _parse_branding(raw):
+    """Tri-state channel-branding flag: None inherits the server default.
+
+    None is not the same as False here. The operator sets BRAND_WATERMARK once
+    in .env and every job inherits it; the per-job value only exists to override
+    that for one render (a clip going to a client, say). Collapsing "not sent"
+    into False would silently disarm the server setting for every older caller —
+    the CLI, the MCP tools — that does not know the parameter exists.
+    """
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _build_job_env(api_key: str, layouts, job_id: str, style=None,
+                   branding=None) -> dict:
     """Environment for the main.py subprocess: server env + caller key + layouts
-    + the server's style preset.
+    + channel branding + the server's style preset.
 
     Layouts are per job and the renderer reads them at import time in the
     subprocess, so they have to be in place before Popen — the same path
-    WATERMARK already takes. The style preset rides the same way, in a single
+    WATERMARK already takes. Channel branding (branding.py) reads
+    BRAND_WATERMARK the same way, and the style preset rides along in a single
     JSON variable.
 
     Both submission endpoints go through here, so /api/process and
@@ -1891,6 +1945,16 @@ def _build_job_env(api_key: str, layouts, job_id: str, style=None) -> dict:
     env.update(styled)
     if styled:
         print(f"[style] job={job_id} preset applied ({sorted(preset)})")
+
+    if branding is True:
+        env["BRAND_WATERMARK"] = "1"
+    elif branding is False:
+        # "0", not a pop. The child runs main.py, which calls load_dotenv(), and
+        # dotenv sets any variable that is *absent* — so deleting the key hands
+        # `.env` the last word and BRAND_WATERMARK=1 there silently re-brands a
+        # job the user explicitly unticked. Measured. An explicit "0" is already
+        # present, so dotenv's default override=False leaves it alone.
+        env["BRAND_WATERMARK"] = "0"
     return env
 
 
@@ -1914,6 +1978,7 @@ def _register_job(job_id: str, *, cmd, env, output_dir, attestation, priority,
         'user_id': user_id,
         'reservation_id': reservation_id,
         'watermark': env.get("WATERMARK") == "1",
+        'branding': env.get("BRAND_WATERMARK") == "1",
         'webhook_url': webhook_url,
         'webhook_secret': webhook_secret,
         'base_url': base_url,
@@ -1948,6 +2013,7 @@ def _register_job(job_id: str, *, cmd, env, output_dir, attestation, priority,
         job_style = {}
     _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id,
                            watermark=jobs[job_id]['watermark'],
+                           branding=jobs[job_id]['branding'],
                            webhook_url=webhook_url, webhook_secret=webhook_secret,
                            base_url=base_url, source_path=source_path,
                            name=name, batch_id=batch_id, layouts=job_layouts,
@@ -1965,6 +2031,7 @@ async def process_endpoint(
     acknowledged: Optional[str] = Form(None),
     output_format: Optional[str] = Form(None),
     layouts: Optional[str] = Form(None),
+    branding: Optional[str] = Form(None),
     force_low_quality: Optional[str] = Form(None),
     webhook_url: Optional[str] = Form(None),
     webhook_secret: Optional[str] = Form(None),
@@ -1979,6 +2046,7 @@ async def process_endpoint(
     # between "the caller said false" and "the caller said nothing", and the
     # preset has to lose to the first while winning the second.
     force_low_raw = force_low_quality
+    brand_flag = _parse_branding(branding)
 
     # Handle JSON body manually for URL payload
     content_type = request.headers.get("content-type", "")
@@ -1990,6 +2058,7 @@ async def process_endpoint(
         force_low_raw = body.get("force_low_quality")
         output_format = body.get("output_format")
         layouts = body.get("layouts")
+        brand_flag = _parse_branding(body.get("branding"))
         webhook_url = body.get("webhook_url")
         webhook_secret = body.get("webhook_secret")
         style = body.get("style")
@@ -2070,7 +2139,8 @@ async def process_endpoint(
 
     # Prepare Command
     cmd = ["python", "-u", "main.py"] # -u for unbuffered
-    env = _build_job_env(api_key, layouts, job_id, style=preset)
+    env = _build_job_env(api_key, layouts, job_id, style=preset,
+                         branding=brand_flag)
 
     input_path = None
     if url:
@@ -2185,6 +2255,7 @@ async def process_batch_endpoint(request: Request):
     output_format = resolve_output_format(body.get("output_format"), preset)
     layouts = body.get("layouts")
     layouts = layouts if isinstance(layouts, list) else []
+    brand_flag = _parse_branding(body.get("branding"))
 
     client_ip = request.client.host if request.client else "unknown"
     fwd = request.headers.get("x-forwarded-for")
@@ -2230,7 +2301,8 @@ async def process_batch_endpoint(request: Request):
             cmd.extend(["--format", output_format])
 
         _register_job(job_id, cmd=cmd,
-                      env=_build_job_env(api_key, layouts, job_id, style=preset),
+                      env=_build_job_env(api_key, layouts, job_id, style=preset,
+                                         branding=brand_flag),
                       output_dir=job_output_dir, attestation=attestation,
                       priority=BATCH_PRIORITY, base_url=api_base,
                       source_path=input_path, name=raw, batch_id=batch_id)

@@ -83,12 +83,17 @@ class TestResumeJobEnv:
         monkeypatch.setenv("OPENSHORTS_STYLE_FILE", str(tmp_path / "none.json"))
         assert app_module._resume_job_env({"watermark": True})["WATERMARK"] == "1"
 
-    def test_watermark_is_cleared_when_the_job_had_none(self, monkeypatch, tmp_path):
+    def test_watermark_is_turned_off_when_the_job_had_none(self, monkeypatch, tmp_path):
         # A free-plan marker left over in the server's own environment must not
         # leak onto a paid job that resumes.
+        #
+        # Turned OFF, not deleted. The resumed child calls load_dotenv(), which
+        # fills in any *absent* variable, so popping the key hands `.env` the
+        # last word — WATERMARK=1 there would silently re-mark the job. An
+        # explicit "0" is already present, so dotenv leaves it alone.
         monkeypatch.setenv("OPENSHORTS_STYLE_FILE", str(tmp_path / "none.json"))
         monkeypatch.setenv("WATERMARK", "1")
-        assert "WATERMARK" not in app_module._resume_job_env({"watermark": False})
+        assert app_module._resume_job_env({"watermark": False})["WATERMARK"] == "0"
 
 
 class TestManifestCarriesLayouts:
