@@ -568,9 +568,9 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
     <h1>Recette d'août</h1>
     <p class="lede">
       Trente-huit commits, cinq PR et un lot pré-PR séparent ce fork de l'amont.
-      Aucun n'a été validé par une CI : <strong>le workflow existe et n'a jamais tourné une seule fois</strong>,
+      Aucun n'a été validé par une CI : <strong>le workflow existe et n'a jamais tourné une seule fois</strong>,
       et les cinq PR ont mergé sans le moindre check derrière elles. Une note de release qui
-      s'arrêterait à « voilà ce qui a changé » serait donc à moitié inutile.
+      s'arrêterait à « voilà ce qui a changé » serait donc à moitié inutile.
       Celle-ci dit aussi <strong>quoi cliquer pour le prouver</strong>, parce que personne d'autre ne le fera.
     </p>
     <p class="dateline">
@@ -589,7 +589,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       <h2>Cinq PR, et un lot arrivé avant qu'on en fasse</h2>
       <p>
         Les numéros ci-dessous sont ceux des vraies pull requests du fork, avec leur trou.
-        Le <code>#6</code> manquant n'est pas une PR oubliée : c'est une issue ouverte.
+        Le <code>#6</code> manquant n'est pas une PR oubliée : c'est une issue ouverte.
       </p>
 
       <ul class="index">
@@ -601,7 +601,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         <li>
           <span class="id">#2</span>
           <span class="what">Staging des sources lentes, et le batch</span>
-          <span class="why">Le dossier source est sur un Google Drive ; le pipeline y fait douze seeks, pas une lecture.</span>
+          <span class="why">Le dossier source est sur un Google Drive ; le pipeline y fait douze seeks, pas une lecture.</span>
         </li>
         <li>
           <span class="id">#3</span>
@@ -652,7 +652,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
 
       <h3>Ingest par chemin</h3>
       <p>
-        Une source de 6 à 12 Go ne passe pas par un upload multipart : elle se recopierait
+        Une source de 6 à 12 Go ne passe pas par un upload multipart : elle se recopierait
         entièrement pour se faire refuser par <code>MAX_FILE_SIZE_MB</code> (2 Go).
         <code>local_path</code> la traite sur place. Barrée trois fois — éteinte sans
         <code>LOCAL_INGEST_DIR</code>, refusée dès <code>BILLING_ENABLED</code> (un locataire payant
@@ -662,9 +662,9 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
 
       <h3>Whisper large-v3 sur GPU</h3>
       <p>
-        Le défaut « small » était un compromis CPU. Or le transcript n'est pas seulement du
-        sous-titre : c'est le texte que Gemini lit pour trouver les moments, donc une ligne mal
-        transcrite est un clip qui n'existera jamais. Mesuré sur RTX 4090 : ~15× le temps réel
+        Le défaut « small » était un compromis CPU. Or le transcript n'est pas seulement du
+        sous-titre : c'est le texte que Gemini lit pour trouver les moments, donc une ligne mal
+        transcrite est un clip qui n'existera jamais. Mesuré sur RTX 4090 : ~15× le temps réel
         en float16, soit une douzaine de minutes pour trois heures d'enregistrement.
       </p>
 
@@ -672,28 +672,41 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       <p>
         En self-host, un job terminé devenait injoignable dès l'onglet fermé — les routes
         d'historique vivent derrière R2 et un compte. Le balayage de rétention supprimait
-        ensuite le dossier une heure plus tard : avec la sauvegarde S3 en option, c'était
+        ensuite le dossier une heure plus tard : avec la sauvegarde S3 en option, c'était
         de la perte de données. <code>JOB_RETENTION_SECONDS</code> passe à <code>0</code> hors
-        facturation, et <strong><code>0</code> veut dire « jamais », pas « tout de suite »</strong>.
+        facturation, et <strong><code>0</code> veut dire « jamais », pas « tout de suite »</strong>.
       </p>
 
       <h3>Reprise d'un job interrompu</h3>
       <p>
         Le pipeline écrit <code>&lt;titre&gt;_metadata.json</code> quand Gemini a fini,
         <strong>bien avant</strong> la première découpe. Les deux chemins de redémarrage
-        prenaient ce fichier pour une preuve de fin : l'un publiait le job comme terminé avec
-        une liste de clips dont chaque vidéo 404, l'autre déclarait « déjà fini » et supprimait
+        prenaient ce fichier pour une preuve de fin : l'un publiait le job comme terminé avec
+        une liste de clips dont chaque vidéo 404, l'autre déclarait « déjà fini » et supprimait
         le manifeste de reprise — détruisant l'état des jobs que ce mécanisme existe pour sauver.
       </p>
 
       <h3>Shortlist proportionnelle</h3>
+
+      <div class="note">
+        <span class="t">Le vocabulaire de la sélection</span>
+        Le transcript est découpé en <strong>fenêtres</strong> d'environ 90 secondes, chacune
+        chevauchant la précédente d'une trentaine de secondes pour qu'aucun moment ne soit coupé
+        en deux. Une <strong>première passe</strong>, dite <em>de scoring</em>, les note toutes,
+        par lots, et on ne garde que les meilleures : c'est la <strong>shortlist</strong>. Une
+        <strong>seconde passe</strong>, dite <em>détail</em>, ne lit que celle-là, et c'est elle
+        qui fabrique les clips et écrit les titres. Une fenêtre qui n'atteint pas la passe détail
+        a donc été notée — donc payée — puis jetée.
+      </div>
+
       <p>
-        Dix fenêtres notées atteignaient la passe détail, quelle que soit la durée de la source :
-        77 % d'une vidéo de 15 minutes, et 13 % d'un live de deux heures — les 87 % restants
-        notés puis jetés. La shortlist devient ~30 % des fenêtres, plancher 10, plafond 24.
-        Une part des <em>fenêtres</em> et non du temps, parce que les fenêtres sont construites
-        sur la parole : un live avec vingt minutes d'écran « ça commence bientôt » ne doit pas
-        en être crédité.
+        Seules <strong>dix fenêtres</strong> franchissaient la passe détail, quelle que soit la
+        durée de la source. Sur une vidéo de 15 minutes, qui produit ~13 fenêtres, dix en couvrent
+        77 % ; sur un live de deux heures, qui en produit ~79, les dix mêmes n'en couvrent plus
+        que 13 % — les 87 % restants notés puis jetés. La shortlist devient ~30 % des fenêtres,
+        plancher 10, plafond 24. Une part des <em>fenêtres</em> et non du temps, parce que les
+        fenêtres sont construites sur la parole : un live avec vingt minutes d'écran
+        « ça commence bientôt » ne doit pas en être crédité.
       </p>
     </div>
   </section>
@@ -711,8 +724,8 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       <h3>Pourquoi</h3>
       <p>
         Le dossier source est sur un Google Drive, atteint depuis WSL en 9p. Lire une source
-        « là où elle est » est juste sur le disque du serveur et faux ici, parce que le pipeline
-        n'est pas une lecture séquentielle : ffprobe, l'extraction audio pour Whisper, le
+        « là où elle est » est juste sur le disque du serveur et faux ici, parce que le pipeline
+        n'est pas une lecture séquentielle : ffprobe, l'extraction audio pour Whisper, le
         détecteur de scènes qui décode tout le fichier, les douze seeks du sélecteur de layout,
         puis un décodage par clip à l'extraction et un autre au reframe.
       </p>
@@ -780,7 +793,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         un slot global <em>avant</em> que le job tourne, donc un second sémaphore pris à l'intérieur
         laisserait chaque job de batch occuper un slot pendant qu'il attend le plafond de sa voie —
         et une <code>PriorityQueue</code> ne préempte pas.
-        La copie a lieu <strong>après</strong> la prise du slot, pas au submit : trente fichiers de
+        La copie a lieu <strong>après</strong> la prise du slot, pas au submit : trente fichiers de
         8 Go tenteraient sinon de poser 240 Go à l'intérieur d'un handler HTTP.
       </div>
 
@@ -795,13 +808,13 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         <li>
           Les balayages d'âge sur les uploads manquaient la garde <code>&gt; 0</code> que le
           balayage d'<code>OUTPUT_DIR</code> possède. En self-host, <code>JOB_RETENTION_SECONDS</code>
-          vaut 0 — qui se lit « garder toujours » — donc <strong>chaque upload était supprimé dans
+          vaut 0 — qui se lit « garder toujours » — donc <strong>chaque upload était supprimé dans
           les cinq minutes</strong>, source d'un job en cours comprise.
         </li>
         <li>
           Les octets échappés de <code>mountinfo</code> étaient décodés caractère par caractère,
           transformant <code>partagés</code> en <code>partagÃ©s</code> — et un point de montage qui
-          ne matche pas se lit silencieusement « stockage rapide ». Le vrai chemin contient un
+          ne matche pas se lit silencieusement « stockage rapide ». Le vrai chemin contient un
           espace, donc celui-là aurait mordu. Attrapé par un test.
         </li>
       </ul>
@@ -852,14 +865,14 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         </ul>
         <figcaption>
           Vérifié en rendant un cadre 1080×1920, en y brûlant les deux marques et en compositant
-          les zones de la plateforme par-dessus : la bande tombe à y 0,130–0,171, dégagée de tout.
+          les zones de la plateforme par-dessus : la bande tombe à y 0,130–0,171, dégagée de tout.
         </figcaption>
       </figure>
 
       <h3><code>BRAND_Y_RATIO</code> est le bord HAUT de la bande, pas son centre</h3>
       <p>
         Ancrer le centre a été essayé en premier et c'est faux. La hauteur de la bande dépend du
-        rapport d'aspect du logo, que l'opérateur choisit : un logo 3:1 centré sur 0,13 mettait son
+        rapport d'aspect du logo, que l'opérateur choisit : un logo 3:1 centré sur 0,13 mettait son
         bord haut à <strong>0,109</strong> — de retour sous les onglets TikTok. Le bord haut de la
         marque la plus haute est maintenant épinglé à <code>BRAND_Y_RATIO</code> et les marques plus
         courtes sont centrées contre elle, donc un asset plus grand grandit vers le bas.
@@ -870,7 +883,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         <strong>Pas <code>apply_watermark</code>.</strong> Celui-là est la marque <em>défensive</em>
         du plan gratuit hébergé, garée exprès à 40 % de la hauteur pour qu'un utilisateur gratuit ne
         puisse pas la recadrer. Celle-ci est cosmétique et reste délibérément à l'écart. Les deux
-        drapeaux peuvent être levés en même temps ; leurs bandes ne se touchent jamais.
+        drapeaux peuvent être levés en même temps ; leurs bandes ne se touchent jamais.
       </p>
 
       <div class="note warn">
@@ -898,7 +911,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
 
       <h3>Pourquoi</h3>
       <p>
-        La passe de scoring ne pouvait pas rendre plus de <strong>37,5 %</strong> du matériel : le
+        La passe de scoring ne pouvait pas rendre plus de <strong>37,5 %</strong> du matériel : le
         prompt disait <code>Choose up to 3 windows from this batch</code> contre des lots de huit.
         Le plafond, pas le score, était la contrainte active — et le tri global départageait des
         candidats qui avaient déjà été élus localement, à partir de scores notés dans des appels
@@ -918,10 +931,10 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       </div>
 
       <p>
-        Rien ne dédupliquait non plus. Les fenêtres se chevauchent de ~30 s par construction : deux
+        Rien ne dédupliquait non plus. Les fenêtres se chevauchent de ~30 s par construction : deux
         voisines, notées pareil parce qu'elles partagent leur texte, entraient toutes les deux dans
         la shortlist, et la passe détail recevait les mêmes phrases deux fois sous l'ordre
-        <em>« travaille chaque fenêtre »</em>. Seule une ligne <code>DIVERSITY</code> en langage
+        <em>« travaille chaque fenêtre »</em>. Seule une ligne <code>DIVERSITY</code> en langage
         naturel s'y opposait.
       </p>
 
@@ -938,7 +951,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         </li>
         <li>
           <strong><code>drop_overlapping_clips</code></strong> est la garde qui ne dépend pas de
-          l'obéissance du modèle. Seuil à 1,0 s et non zéro : <code>snap_clip_to_words</code>
+          l'obéissance du modèle. Seuil à 1,0 s et non zéro : <code>snap_clip_to_words</code>
           rembourre chaque borne de 0,35 s avant et 0,45 s après, donc deux clips consécutifs
           partagent légitimement ~0,8 s de silence.
         </li>
@@ -982,17 +995,17 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       <h3>Pourquoi</h3>
       <p>
         Styler n'était joignable qu'<strong>après</strong> le rendu, un clip à la fois, dans une
-        modale : les sous-titres partaient avec un look codé en dur, identique pour tout le monde ;
-        les onze préréglages de la modale n'étaient mémorisés nulle part ; Gemini écrivait un
+        modale : les sous-titres partaient avec un look codé en dur, identique pour tout le monde ;
+        les onze préréglages de la modale n'étaient mémorisés nulle part ; Gemini écrivait un
         <code>viral_hook_text</code> pour chaque clip et il n'atteignait jamais la vidéo, il attendait
-        qu'on ouvre la modale ; et <code>POST /api/process</code> n'acceptait aucun paramètre de
-        style, pas plus que la CLI ou MCP. À trente enregistrements par batch, « rouvrir la modale
-        par clip » n'est pas une option.
+        qu'on ouvre la modale ; et <code>POST /api/process</code> n'acceptait aucun paramètre de
+        style, pas plus que la CLI ou MCP. À trente enregistrements par batch, « rouvrir la modale
+        par clip » n'est pas une option.
       </p>
 
       <h3>Ce qui change</h3>
       <p>
-        <code>style.json</code> à la racine (modèle : <code>style.example.json</code>, déplaçable par
+        <code>style.json</code> à la racine (modèle : <code>style.example.json</code>, déplaçable par
         <code>OPENSHORTS_STYLE_FILE</code>), lu <strong>au moment du submit</strong>, portant les
         sous-titres, le hook automatique, les layouts, le format de sortie et la porte de qualité.
         Il atteint le renderer par <code>_build_job_env</code> — la couture que
@@ -1009,7 +1022,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         </li>
         <li>
           <strong>Un préréglage cassé ne coûte rien.</strong> Fichier absent, JSON malformé, clé
-          inconnue : chacun se lit « pas de préréglage » et les défauts natifs tiennent.
+          inconnue : chacun se lit « pas de préréglage » et les défauts natifs tiennent.
         </li>
         <li>
           <strong>La requête bat le fichier.</strong> Un objet <code>style</code> en ligne
@@ -1018,11 +1031,11 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         </li>
         <li>
           <strong>Le hook automatique passe dans la même passe ffmpeg que les sous-titres.</strong>
-          Ce n'est pas une optimisation, c'est une contrainte de nommage :
+          Ce n'est pas une optimisation, c'est une contrainte de nommage :
           <code>auto_caption_clip</code> écrit <code>subtitled_&lt;ts&gt;_&lt;clip&gt;.mp4</code> et
           deux fonctions reconstruisent l'original propre à partir de ce préfixe exact. Une passe
           séparée devrait inventer un nom hors du contrat — et facturer un second réencodage complet
-          par clip. Le <code>?</code> de <code>-map 0:a?</code> est porteur : sans lui, ffmpeg
+          par clip. Le <code>?</code> de <code>-map 0:a?</code> est porteur : sans lui, ffmpeg
           abandonne sur une source muette.
         </li>
       </ul>
@@ -1033,7 +1046,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         depuis <code>os.environ</code> au redémarrage. Un job interrompu par un redéploiement
         finissait donc silencieusement <strong>sans</strong> SPLIT, screencast ni punch-in — invisible,
         et pire sur un batch de trente fichiers, qui livrait deux moitiés qui ne se ressemblaient pas.
-        Le style est <em>porté</em> plutôt que relu pour la même raison : éditer <code>style.json</code>
+        Le style est <em>porté</em> plutôt que relu pour la même raison : éditer <code>style.json</code>
         pendant qu'un job attend en file couperait ce job en deux.
       </p>
 
@@ -1060,11 +1073,11 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       <h3>Pourquoi</h3>
       <p>
         Trois symptômes signalés sur des podcasts multicam — trois à quatre personnes, trois caméras,
-        60 fps : la caméra hésite et balaye, les clips coupent dans le vide, le rendu cadre quelqu'un
+        60 fps : la caméra hésite et balaye, les clips coupent dans le vide, le rendu cadre quelqu'un
         qui ne parle pas. Le deuxième est traité par la PR #4. Cette PR couvre le reste.
       </p>
 
-      <h3>Le filet de sécurité : deux rendus par clip</h3>
+      <h3>Le filet de sécurité : deux rendus par clip</h3>
       <p>
         <code>variants=auto,safe</code>, case pré-cochée dans le dashboard, bascule A/B sur chaque
         carte de résultat. La version <em>safe</em> est l'image 16:9 entière sur fond flou, caméra
@@ -1072,13 +1085,13 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       </p>
       <p>
         C'est une fonction dédiée, <strong>pas un drapeau qui traverse <code>render()</code></strong>.
-        Trois raisons, toutes porteuses : <code>render()</code> a déjà payé la détection de scènes et
-        l'analyse de stratégie avant sa boucle, et ceci n'a besoin d'aucune détection ;
+        Trois raisons, toutes porteuses : <code>render()</code> a déjà payé la détection de scènes et
+        l'analyse de stratégie avant sa boucle, et ceci n'a besoin d'aucune détection ;
         <code>process_video_to_vertical</code> avale toute exception v2 et retombe silencieusement sur
-        la boucle v1, qui ignorerait le drapeau et livrerait un rendu suivi étiqueté « safe » ; et les
+        la boucle v1, qui ignorerait le drapeau et livrerait un rendu suivi étiqueté « safe » ; et les
         drapeaux de layout sont des globales de module qu'un sélecteur mute à l'échelle du processus
-        pendant que trois clips rendent en threads. <strong>Ne lire aucun drapeau rend « la caméra
-        ne bouge jamais » structurel plutôt que conditionnel.</strong>
+        pendant que trois clips rendent en threads. <strong>Ne lire aucun drapeau rend « la caméra
+        ne bouge jamais » structurel plutôt que conditionnel.</strong>
       </p>
 
       <div class="measured">
@@ -1114,17 +1127,17 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
         <li>
           <strong>Un plan TRACK de moins de 1,5 s est rendu statique.</strong> Il coûte un snap plus
           un panoramique et n'a pas le temps d'établir un sujet. Les rafales de coupes sous la
-          seconde sont la source principale du « ça part à gauche, à droite, à gauche ».
+          seconde sont la source principale du « ça part à gauche, à droite, à gauche ».
         </li>
         <li>
           <strong>Les deux fenêtres d'amortissement du tracker sont des durées, pas des compteurs de
-          frames.</strong> Leurs commentaires disaient « 1 s », le code disait 30 frames — vrai à
+          frames.</strong> Leurs commentaires disaient « 1 s », le code disait 30 frames — vrai à
           30 fps, moitié moins à 60. C'est le terme dominant.
         </li>
       </ul>
       <p>
         Trois correctifs plausibles ont été construits, mesurés, et <strong>jetés</strong> — chacun
-        documenté dans le code pour ne pas être retenté : un contrôleur à deux seuils qui se pose sur
+        documenté dans le code pour ne pas être retenté : un contrôleur à deux seuils qui se pose sur
         le sujet plutôt que sur le bord de la zone morte (54,5 → 79,1 px/s, quatre scènes pires,
         zéro meilleure), le phasage de la détection sur le début de plan (54,4 → 58,2), et la
         réinitialisation des identités du tracker aux coupes (aucun effet, une scène 188 → 356).
@@ -1133,7 +1146,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       <div class="note warn">
         <span class="t">Le piège du harnais</span>
         Le phasage a d'abord affiché <strong>−57 %</strong>. Artefact de la trace elle-même, qui
-        n'avait de détections qu'une frame sur quatre : rejouée à une autre foulée, la caméra
+        n'avait de détections qu'une frame sur quatre : rejouée à une autre foulée, la caméra
         consulte des frames sans aucune détection, ne reçoit donc pas de cible, et la métrique de
         déplacement s'effondre — ce qui se lit comme une victoire spectaculaire.
         <strong>Enregistrer à <code>--detect-stride 1</code>.</strong>
@@ -1141,11 +1154,11 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
 
       <h3>Ce qui n'est pas fait</h3>
       <p>
-        « Le rendu cadre quelqu'un qui ne parle pas » <strong>n'est pas résolu</strong>, et le
+        « Le rendu cadre quelqu'un qui ne parle pas » <strong>n'est pas résolu</strong>, et le
         diagnostic initial — le tracker suit le plus gros visage au lieu du locuteur — n'est pas
-        confirmé par la mesure : une fois les identités stabilisées, le changement de sujet ne
+        confirmé par la mesure : une fois les identités stabilisées, le changement de sujet ne
         représente presque rien du mouvement visible, et le plus long panoramique reste à 534 px dans
-        toutes les variantes. Scorer « la personne cadrée est-elle celle qui parle » demande des
+        toutes les variantes. Scorer « la personne cadrée est-elle celle qui parle » demande des
         données annotées que ce harnais n'a pas.
       </p>
     </div>
@@ -1190,11 +1203,11 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
             <dd><pre>docker run --rm -u 0 -v "$PWD:/app" -w /app -e BILLING_ENABLED=0 \
   openshorts-backend sh -c <span class="v">"pip install -q pytest; \
   python -m pytest tests/ -q -p no:cacheprovider"</span></pre>
-            <p><span class="def"><code>-u 0</code> parce que <code>/opt/venv</code> appartient à root ; <code>-p no:cacheprovider</code> pour ne pas laisser de <code>.pytest_cache</code> derrière.</span></p></dd>
+            <p><span class="def"><code>-u 0</code> parce que <code>/opt/venv</code> appartient à root ; <code>-p no:cacheprovider</code> pour ne pas laisser de <code>.pytest_cache</code> derrière.</span></p></dd>
             <dt>Attendu</dt>
             <dd>La suite est verte. 755 fonctions de test réparties sur 42 fichiers.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Le compte de <em>skipped</em> grimpe : tout ce qui a besoin d'<code>import main</code> passe par <code>importorskip</code> et <strong>saute en silence</strong>. Une logique posée dans <code>main.py</code> est de la logique non testée, pas de la logique couverte.</dd>
+            <dd class="fail">Le compte de <em>skipped</em> grimpe : tout ce qui a besoin d'<code>import main</code> passe par <code>importorskip</code> et <strong>saute en silence</strong>. Une logique posée dans <code>main.py</code> est de la logique non testée, pas de la logique couverte.</dd>
           </dl>
         </li>
 
@@ -1230,7 +1243,7 @@ docker compose -f docker-compose.yml \
             <dt>Attendu</dt>
             <dd>Un objet par source, avec son type de système de fichiers et son compte d'entrées — par exemple <code>{"name":"replays","fstype":"9p","entries":25}</code> et <code>{"name":"inbox","fstype":"ext4","entries":1}</code>. L'onglet liste les fichiers, du plus récent au plus ancien.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Une source qui devrait être un disque monté affiche <code>entries: 0</code> <em>sans</em> que le dashboard le dise. La ligne attendue au-dessus de la liste est « <em>… is empty (…) — if it should be a mounted drive, the mount is gone.</em> » : un montage absent doit se <strong>signaler</strong>, pas rendre l'onglet plus court en silence.</dd>
+            <dd class="fail">Une source qui devrait être un disque monté affiche <code>entries: 0</code> <em>sans</em> que le dashboard le dise. La ligne attendue au-dessus de la liste est « <em>… is empty (…) — if it should be a mounted drive, the mount is gone.</em> » : un montage absent doit se <strong>signaler</strong>, pas rendre l'onglet plus court en silence.</dd>
           </dl>
         </li>
 
@@ -1248,7 +1261,7 @@ docker compose -f docker-compose.yml \
             <dt>Attendu</dt>
             <dd>Une ligne de staging apparaît au début, la copie se fait <em>après</em> la prise du slot de concurrence, et le fichier atterrit dans <code>stage/&lt;clé&gt;/&lt;nom d'origine&gt;</code>. Le projet porte le nom du fichier dans la bibliothèque. Relancer le même fichier doit toucher le cache et ne rien recopier.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Le projet s'appelle une suite de caractères hexadécimaux : la copie a été nommée par hash, et sur un batch de trente ce sont trente projets illisibles. Ou : la source de l'inbox (<code>ext4</code>) est copiée elle aussi, alors qu'elle ne devrait pas l'être.</dd>
+            <dd class="fail">Le projet s'appelle une suite de caractères hexadécimaux : la copie a été nommée par hash, et sur un batch de trente ce sont trente projets illisibles. Ou : la source de l'inbox (<code>ext4</code>) est copiée elle aussi, alors qu'elle ne devrait pas l'être.</dd>
           </dl>
         </li>
 
@@ -1256,7 +1269,7 @@ docker compose -f docker-compose.yml \
           <label class="case-head">
             <input type="checkbox">
             <span class="case-id">T04</span>
-            <span class="case-title">Le double rendu, et surtout : les deux versions sont finies pareil</span>
+            <span class="case-title">Le double rendu, et surtout : les deux versions sont finies pareil</span>
           </label>
           <dl>
             <dt>Préparer</dt>
@@ -1267,10 +1280,10 @@ docker compose -f docker-compose.yml \
             <dd>
               <p>Deux fichiers, le second en <strong>suffixe</strong> : <code>&lt;titre&gt;_clip_3_safe.mp4</code>. Jamais un préfixe — le glob des sous-titres exige que le nom se termine sur l'index du clip, sinon les deux variantes capturent les fichiers l'une de l'autre.</p>
               <p>La version safe montre l'image entière sur fond flou, sans jamais bouger.</p>
-              <p><strong>Le point de contrôle qui compte :</strong> la version safe porte <em>le même logo de chaîne et la même carte de hook</em> que l'auto.</p>
+              <p><strong>Le point de contrôle qui compte :</strong> la version safe porte <em>le même logo de chaîne et la même carte de hook</em> que l'auto.</p>
             </dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">La safe sort sans logo, ou sans hook. C'est exactement ce qui est arrivé : la marque et le hook ont été ajoutés à la séquence de finition par deux branches différentes, chacune n'a câblé que le chemin auto, et <strong>aucune n'a produit de conflit de merge</strong>. Un A/B perdu sur des différences qui n'ont rien à voir avec le cadrage est la seule chose que ce comparatif ne doit pas faire.</dd>
+            <dd class="fail">La safe sort sans logo, ou sans hook. C'est exactement ce qui est arrivé : la marque et le hook ont été ajoutés à la séquence de finition par deux branches différentes, chacune n'a câblé que le chemin auto, et <strong>aucune n'a produit de conflit de merge</strong>. Un A/B perdu sur des différences qui n'ont rien à voir avec le cadrage est la seule chose que ce comparatif ne doit pas faire.</dd>
           </dl>
         </li>
 
@@ -1286,7 +1299,7 @@ docker compose -f docker-compose.yml \
             <dt>Attendu</dt>
             <dd>La bande de batch affiche <code>0/3 done</code> puis progresse, avec un seul job en cours à la fois (<code>LOCAL_BATCH_CONCURRENCY</code> vaut 1). Le job lancé à la main démarre <strong>sans attendre</strong> la fin du batch.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Le job interactif fait la queue derrière les trois. C'est le symptôme d'un sémaphore pris dans le mauvais ordre : les jobs de batch occupent alors un slot global pendant qu'ils attendent le plafond de leur propre voie, et une <code>PriorityQueue</code> ne préempte pas.</dd>
+            <dd class="fail">Le job interactif fait la queue derrière les trois. C'est le symptôme d'un sémaphore pris dans le mauvais ordre : les jobs de batch occupent alors un slot global pendant qu'ils attendent le plafond de leur propre voie, et une <code>PriorityQueue</code> ne préempte pas.</dd>
           </dl>
         </li>
 
@@ -1300,9 +1313,9 @@ docker compose -f docker-compose.yml \
             <dt>Préparer</dt>
             <dd>Un <code>logo.png</code> dans <code>assets/brand/</code>, et <code>BRAND_WATERMARK=1</code> écrit dans <code>.env</code>. La case n'apparaît dans le formulaire que si <code>/api/config</code> répond <code>brandingAvailable: true</code> — pas de PNG, pas de case à cocher et à se demander pourquoi.</dd>
             <dt>Faire</dt>
-            <dd><strong>Décocher</strong> « <em>Burn the channel logo into every clip</em> » et lancer le job.</dd>
+            <dd><strong>Décocher</strong> « <em>Burn the channel logo into every clip</em> » et lancer le job.</dd>
             <dt>Attendu</dt>
-            <dd>Les clips sortent <strong>sans</strong> marque. Puis recocher et relancer : la marque revient, sur une ligne, logo à gauche et badge à droite, dans la bande y 13–17 %.</dd>
+            <dd>Les clips sortent <strong>sans</strong> marque. Puis recocher et relancer : la marque revient, sur une ligne, logo à gauche et badge à droite, dans la bande y 13–17 %.</dd>
             <dt class="fail">Raté si</dt>
             <dd class="fail">La marque est là malgré la case décochée. Le drapeau a été retiré de l'environnement au lieu d'y être écrit à <code>"0"</code>, et <code>load_dotenv()</code> a rendu la main à <code>.env</code>. Vérifier ce que le renderer <em>décide</em>, jamais quelles clés le dictionnaire d'environnement contient — c'est cette confusion qui a laissé passer le bug.</dd>
           </dl>
@@ -1320,7 +1333,7 @@ docker compose -f docker-compose.yml \
             <dt>Attendu</dt>
             <dd>Les clips portent le nouveau look de sous-titres <em>et</em> la carte de hook, composée dans la même passe ffmpeg. Le fichier <code>style.json</code> nommé dans le panneau a bien été réécrit.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Il faut redémarrer pour voir le changement : le préréglage a été gelé à l'import au lieu d'être lu au submit, et un changement de couleur devient un redéploiement. À vérifier aussi : sur une instance avec facturation, le panneau doit être <strong>désactivé d'avance</strong> (<code>editable: false</code>) et pas seulement refuser l'écriture — un <code>style.json</code> resté d'un run self-host serait sinon toujours lu.</dd>
+            <dd class="fail">Il faut redémarrer pour voir le changement : le préréglage a été gelé à l'import au lieu d'être lu au submit, et un changement de couleur devient un redéploiement. À vérifier aussi : sur une instance avec facturation, le panneau doit être <strong>désactivé d'avance</strong> (<code>editable: false</code>) et pas seulement refuser l'écriture — un <code>style.json</code> resté d'un run self-host serait sinon toujours lu.</dd>
           </dl>
         </li>
 
@@ -1344,7 +1357,7 @@ docker compose -f docker-compose.yml \
           <label class="case-head">
             <input type="checkbox">
             <span class="case-id">T09</span>
-            <span class="case-title">Sur une source longue : le compte des clips, et leurs bornes</span>
+            <span class="case-title">Sur une source longue : le compte des clips, et leurs bornes</span>
           </label>
           <dl>
             <dt>Préparer</dt>
@@ -1352,9 +1365,9 @@ docker compose -f docker-compose.yml \
             <dt>Faire</dt>
             <dd>Lancer, puis écouter le début et la fin de chaque clip, et comparer leurs intervalles deux à deux.</dd>
             <dt>Attendu</dt>
-            <dd>Nettement plus de trois clips — le plancher vise 4-9 et au-delà selon la matière. Aucun clip ne commence ni ne finit sur du silence. Aucune paire de clips ne se recouvre de plus d'une seconde ; ~0,8 s partagées entre deux clips consécutifs sont légitimes, c'est le rembourrage du snapper.</dd>
+            <dd>Nettement plus de trois clips — le plancher vise 4-9 et au-delà selon la matière. Aucun clip ne commence ni ne finit sur du silence. Aucune paire de clips ne se recouvre de plus d'une seconde ; ~0,8 s partagées entre deux clips consécutifs sont légitimes, c'est le rembourrage du snapper.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Deux clips racontent le même moment : la fusion des fenêtres qui se chevauchent n'a pas eu lieu, ou la garde qui ne dépend pas du modèle est passée à côté. Ou : une source de deux heures rend six clips — le plafond de la passe de scoring est revenu.</dd>
+            <dd class="fail">Deux clips racontent le même moment : la fusion des fenêtres qui se chevauchent n'a pas eu lieu, ou la garde qui ne dépend pas du modèle est passée à côté. Ou : une source de deux heures rend six clips — le plafond de la passe de scoring est revenu.</dd>
           </dl>
         </li>
 
@@ -1368,9 +1381,9 @@ docker compose -f docker-compose.yml \
             <dt>Faire</dt>
             <dd>Lancer un job avec des layouts non triviaux (par le style par défaut, puisque <code>layouts=</code> par job est réservé à l'API), attendre que l'extraction des clips commence, puis <code>docker compose restart backend</code>.</dd>
             <dt>Attendu</dt>
-            <dd>Le job reprend là où il en était, réutilise l'analyse sauvegardée, et <strong>garde ses layouts et son style</strong>. Il ne re-sollicite pas Gemini : un second appel peut renvoyer d'autres moments, et les clips finis ne correspondraient plus à ceux déjà listés.</dd>
+            <dd>Le job reprend là où il en était, réutilise l'analyse sauvegardée, et <strong>garde ses layouts et son style</strong>. Il ne re-sollicite pas Gemini : un second appel peut renvoyer d'autres moments, et les clips finis ne correspondraient plus à ceux déjà listés.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Le job revient sans SPLIT, sans punch-in, ou avec le look serveur au lieu du style qu'il portait. Invisible sur un job isolé, et pire sur un batch — qui livre alors deux moitiés qui ne se ressemblent pas. Ou : le job est publié comme terminé avec des clips dont chaque vidéo 404.</dd>
+            <dd class="fail">Le job revient sans SPLIT, sans punch-in, ou avec le look serveur au lieu du style qu'il portait. Invisible sur un job isolé, et pire sur un batch — qui livre alors deux moitiés qui ne se ressemblent pas. Ou : le job est publié comme terminé avec des clips dont chaque vidéo 404.</dd>
           </dl>
         </li>
 
@@ -1378,8 +1391,8 @@ docker compose -f docker-compose.yml \
 
       <h3>Optionnel — instrumenter la caméra</h3>
       <p>
-        Hors chemin critique, quand un rendu « bouge trop » et qu'il faut un chiffre plutôt qu'une
-        impression. L'enregistrement a besoin de la pile ML, donc il tourne dans l'image backend ;
+        Hors chemin critique, quand un rendu « bouge trop » et qu'il faut un chiffre plutôt qu'une
+        impression. L'enregistrement a besoin de la pile ML, donc il tourne dans l'image backend ;
         le rejeu est pur et tourne sur l'hôte. L'entrée est un <strong>clip déjà découpé</strong>,
         jamais une vidéo source.
       </p>
@@ -1391,8 +1404,8 @@ docker run --rm --entrypoint python -v "$PWD":/app -v /chemin/clips:/data \
 <span class="c"># rejouer autant de fois qu'on veut, sur l'hôte</span>
 python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
       <p>
-        Deux métriques, et choisir la mauvaise coûte la réponse : l'une exclut les frontières de
-        scène (« une coupe est censée recadrer »), l'autre les inclut. Sur du multicam la première
+        Deux métriques, et choisir la mauvaise coûte la réponse : l'une exclut les frontières de
+        scène (« une coupe est censée recadrer »), l'autre les inclut. Sur du multicam la première
         ne voit rien d'anormal et la seconde trouve les sauts de 517 px aux coupes.
       </p>
     </div>
@@ -1406,7 +1419,7 @@ python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
       <h2>Les boutons d'arrêt</h2>
       <p>
         Chaque nouveauté de cette release s'éteint par une variable, sans revert ni redéploiement de
-        code. Une nuance à connaître : les drapeaux de layout sont <strong>gelés à l'import</strong>
+        code. Une nuance à connaître : les drapeaux de layout sont <strong>gelés à l'import</strong>
         dans le sous-processus qui rend la vidéo, donc seule la construction de l'environnement du
         job peut les poser par job. <code>branding.py</code> est le seul module à relire ses réglages
         à chaque appel — ses voisins gardent le trou sur le chemin CLI direct.
@@ -1451,7 +1464,7 @@ python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
         </li>
         <li>
           <span class="flag">non résolu</span>
-          <span>« Le rendu cadre quelqu'un qui ne parle pas. » Le diagnostic initial n'est pas confirmé par la mesure, et le trancher demande des données annotées que le harnais n'a pas.</span>
+          <span>« Le rendu cadre quelqu'un qui ne parle pas. » Le diagnostic initial n'est pas confirmé par la mesure, et le trancher demande des données annotées que le harnais n'a pas.</span>
         </li>
         <li>
           <span class="flag">code mort</span>
@@ -1467,7 +1480,7 @@ python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
         </li>
         <li>
           <span class="flag soft">capacité</span>
-          <span>Le double rendu <strong>double le disque</strong> (~82 → ~164 Mo par clip avec sous-titres). En self-host, le plafond de sortie fait un <code>rmtree</code> <em>définitif</em> sur les plus vieux projets : relever <code>OUTPUT_MAX_GB</code> <strong>avant</strong> d'activer, pas après.</span>
+          <span>Le double rendu <strong>double le disque</strong> (~82 → ~164 Mo par clip avec sous-titres). En self-host, le plafond de sortie fait un <code>rmtree</code> <em>définitif</em> sur les plus vieux projets : relever <code>OUTPUT_MAX_GB</code> <strong>avant</strong> d'activer, pas après.</span>
         </li>
         <li>
           <span class="flag soft">outillage</span>
@@ -1490,11 +1503,11 @@ python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
         <a href="https://github.com/JulienCr/openshorts/pull/8"><strong>#8</strong></a> — un montage 9p
         resté dans <code>/proc/mounts</code> avec son transport mort dessous, donc présent et
         illisible — était ouverte et non mergée au moment de la rédaction. Elle n'est pas couverte
-        ici et méritera sa section : le geste qui la prouve est un <code>umount -l</code> à chaud,
+        ici et méritera sa section : le geste qui la prouve est un <code>umount -l</code> à chaud,
         la source doit alors rester listée et marquée cassée au lieu de disparaître du sélecteur.
         <br><br>
         Cette page vit dans le dépôt à <strong><code>docs/release-2026-08.html</code></strong>, sans
-        copie Markdown : deux exemplaires du même texte divergent, et c'est exactement la doctrine
+        copie Markdown : deux exemplaires du même texte divergent, et c'est exactement la doctrine
         que ce dépôt applique déjà à sa séquence de finition de clip.
         La police d'affichage est <strong>Anton</strong>, sous-ensemble latin embarqué —
         la même que le pipeline brûle lui-même sur les vidéos. Les couleurs sont le système
