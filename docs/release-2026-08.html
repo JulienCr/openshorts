@@ -577,7 +577,7 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
       <span>arrêté au commit <b>0cd7b28</b></span>
       <span>écart amont <b>+38 / −0</b></span>
       <span>PR <b>#2 #3 #4 #5 #7</b></span>
-      <span>tests collectés <b>755</b></span>
+      <span>suite backend <b>809 verts</b></span>
     </p>
   </header>
 
@@ -1205,9 +1205,9 @@ ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-s
   python -m pytest tests/ -q -p no:cacheprovider"</span></pre>
             <p><span class="def"><code>-u 0</code> parce que <code>/opt/venv</code> appartient à root ; <code>-p no:cacheprovider</code> pour ne pas laisser de <code>.pytest_cache</code> derrière.</span></p></dd>
             <dt>Attendu</dt>
-            <dd>La suite est verte. 755 fonctions de test réparties sur 42 fichiers.</dd>
+            <dd><code>809 passed</code>, aucun saut. L'image porte la pile ML, donc les tests qui ont besoin d'<code>import main</code> s'exécutent vraiment ici.</dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">Le compte de <em>skipped</em> grimpe : tout ce qui a besoin d'<code>import main</code> passe par <code>importorskip</code> et <strong>saute en silence</strong>. Une logique posée dans <code>main.py</code> est de la logique non testée, pas de la logique couverte.</dd>
+            <dd class="fail">Un compte de <em>skipped</em> apparaît. Hors de cette image — sur l'hôte, ou avec le seul jeu de dépendances de la CI — tout ce qui a besoin d'<code>import main</code> passe par <code>importorskip</code> et <strong>saute en silence</strong>. Un « tout est vert » obtenu là ne prouve rien sur <code>main.py</code> : c'est de la logique non testée, pas de la logique couverte.</dd>
           </dl>
         </li>
 
@@ -1273,7 +1273,10 @@ docker compose -f docker-compose.yml \
           </label>
           <dl>
             <dt>Préparer</dt>
-            <dd>La case <em>safe</em> pré-cochée sur le formulaire, un format de sortie autre que 16:9 (elle disparaît quand on choisit explicitement l'horizontal), et <code>OUTPUT_MAX_GB</code> relevé — <strong>le disque double</strong> (~82 → ~164 Mo par clip).</dd>
+            <dd>
+              <p><strong>Redémarrer le backend d'abord.</strong> <code>app.py</code> est lu <em>une seule fois</em>, au démarrage du processus ; le bind mount garde le fichier à jour sur le disque, pas en mémoire. Comme <code>main.py</code> est un sous-processus relancé à chaque job, un backend périmé applique les changements du renderer et pas ceux de l'API : on obtient un rendu unique alors que tout le reste de la PR fonctionne. C'est exactement ce qui a coûté un projet le 17 août.</p>
+              <p>Ensuite : la case <em>safe</em> pré-cochée sur le formulaire — après un <strong>rechargement franc de l'onglet</strong>, sinon le bundle en mémoire ne l'envoie pas —, un format de sortie autre que 16:9 (elle disparaît quand on choisit explicitement l'horizontal), et <code>OUTPUT_MAX_GB</code> relevé : <strong>le disque double</strong> (~82 → ~164 Mo par clip).</p>
+            </dd>
             <dt>Faire</dt>
             <dd>Lancer un job, puis sur une carte de résultat basculer <code>auto</code> ↔ <code>safe</code>.</dd>
             <dt>Attendu</dt>
@@ -1283,7 +1286,7 @@ docker compose -f docker-compose.yml \
               <p><strong>Le point de contrôle qui compte :</strong> la version safe porte <em>le même logo de chaîne et la même carte de hook</em> que l'auto.</p>
             </dd>
             <dt class="fail">Raté si</dt>
-            <dd class="fail">La safe sort sans logo, ou sans hook. C'est exactement ce qui est arrivé : la marque et le hook ont été ajoutés à la séquence de finition par deux branches différentes, chacune n'a câblé que le chemin auto, et <strong>aucune n'a produit de conflit de merge</strong>. Un A/B perdu sur des différences qui n'ont rien à voir avec le cadrage est la seule chose que ce comparatif ne doit pas faire.</dd>
+            <dd class="fail">La safe sort sans logo, ou sans hook. C'est exactement ce qui est arrivé : la marque et le hook ont été ajoutés à la séquence de finition par deux branches différentes, chacune n'a câblé que le chemin auto, et <strong>aucune n'a produit de conflit de merge</strong>. Un A/B perdu sur des différences qui n'ont rien à voir avec le cadrage est la seule chose que ce comparatif ne doit pas faire. Et si <em>aucun</em> fichier <code>_safe</code> n'apparaît : le second rendu est opt-in sur le fil et n'a pas de défaut serveur — <code>resolve_variants(None)</code> répond <code>['auto']</code>. Vérifier dans l'ordre le redémarrage, le rechargement de l'onglet, puis <code>style.json</code>.</dd>
           </dl>
         </li>
 
@@ -1432,7 +1435,7 @@ python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
           </thead>
           <tbody>
             <tr><td>La marque de chaîne</td><td class="mono">BRAND_WATERMARK=0</td><td><span class="def">0</span></td></tr>
-            <tr><td>Le second rendu</td><td class="mono">variants=auto</td><td><span class="def">safe pré-coché</span></td></tr>
+            <tr><td>Le second rendu</td><td class="mono">variants=auto</td><td><span class="def">auto seul · safe si style.json</span></td></tr>
             <tr><td>Les sous-titres automatiques</td><td class="mono">AUTO_CAPTIONS=0</td><td><span class="def">1</span></td></tr>
             <tr><td>Le hook automatique</td><td class="mono">hook.enabled: false</td><td><span class="def">absent = éteint</span></td></tr>
             <tr><td>Le style serveur entier</td><td class="mono">OPENSHORTS_STYLE_FILE</td><td><span class="def">style.json</span></td></tr>
