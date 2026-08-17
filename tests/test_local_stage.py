@@ -102,6 +102,36 @@ def test_dir_state_reports_a_mount_whose_transport_died(monkeypatch, err):
     assert local_stage.dir_state("/ingest/replays") == ("dead", 0)
 
 
+@pytest.mark.parametrize("err", [errno.EACCES, errno.EPERM])
+def test_dir_state_keeps_a_directory_it_cannot_read(monkeypatch, err):
+    """Unreadable is neither dead nor missing, and must not be either.
+
+    os.path.isdir() answers True here — stat only needs to traverse the parent —
+    so the source used to reach the picker with entries: 0. Folding EACCES into
+    "absent" makes the caller drop it, which is the disappearance this whole
+    change exists to stop, reintroduced through another errno. A UID/GID
+    mismatch on a bind mount is the ordinary way to land here.
+    """
+    def refused(_path):
+        raise OSError(err, os.strerror(err))
+
+    monkeypatch.setattr(os, "listdir", refused)
+    assert local_stage.dir_state("/ingest/replays") == ("unreadable", 0)
+
+
+def test_dir_state_shows_an_unknown_error_rather_than_hiding_it(monkeypatch):
+    """"absent" is an allowlist, like FAST_FSTYPES above and for the same reason.
+
+    An errno nobody thought of costs one puzzling line in the picker here; the
+    reverse costs a configured source vanishing with nothing said.
+    """
+    def odd(_path):
+        raise OSError(errno.ELOOP, os.strerror(errno.ELOOP))
+
+    monkeypatch.setattr(os, "listdir", odd)
+    assert local_stage.dir_state("/ingest/replays")[0] == "unreadable"
+
+
 def test_dir_state_does_not_call_a_missing_directory_dead(tmp_path):
     # "dead" has to mean something narrow, or the picker cries wolf on every
     # typo in LOCAL_INGEST_DIR.

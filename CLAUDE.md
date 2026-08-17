@@ -535,9 +535,15 @@ the *unmounted* case and mishandled this one, all four measured on 17 Aug 2026:
 - `_local_ingest_sources` — filtered on `os.path.isdir()`, which swallows the
   `OSError` and returns False, so the source did not come back marked broken, it
   did not come back **at all**. `local_stage.dir_state` replaces it and returns
-  `"ok" | "dead" | "absent"`; only `dead` and `ok` reach the picker. Keep the
-  logic there and not in `app.py`: `local_stage` is stdlib-only and testable on
-  the host, `app.py` needs the container.
+  `"ok" | "dead" | "unreadable" | "absent"`; **only `absent` is dropped**, and
+  its errno list (`ENOENT`, `ENOTDIR`) is an allowlist for the same reason
+  `FAST_FSTYPES` is one — the first cut folded `EACCES` in with "not there" and
+  reintroduced the disappearance through another errno, since `os.path.isdir()`
+  answers True on a directory it cannot read (stat only needs to traverse the
+  parent) and such a source had always reached the picker. A UID/GID mismatch on
+  a bind mount is the ordinary way to hit it. Keep the logic there and not in
+  `app.py`: `local_stage` is stdlib-only and testable on the host, `app.py`
+  needs the container.
 - `ON_MOUNT_CMD` — a plain `up -d` is a **no-op** here, because the bind path
   string is unchanged and that is all Compose diffs. It answers `Running` and
   leaves the container on the dead mount; it needs `--force-recreate`.

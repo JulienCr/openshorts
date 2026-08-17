@@ -137,11 +137,22 @@ DEAD_MOUNT_ERRNOS = frozenset({
     errno.EIO, errno.EREMOTEIO, errno.EHOSTDOWN,
 })
 
+# Errnos meaning "there is nothing at this path". An ALLOWLIST, and narrow on
+# purpose — this is the only verdict that lets a caller drop the source, so
+# anything not listed here is reported instead of silently discarded. An errno
+# nobody thought of then costs one puzzling line in the picker; the reverse
+# costs a configured source vanishing, which is the bug this module exists to
+# stop. EACCES in particular is ordinary: the backend runs as a non-root
+# appuser against bind-mounted host folders, and os.path.isdir() answers True
+# there — stat only needs to traverse the parent — so such a source has always
+# reached the picker.
+ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
+
 
 def dir_state(path):
-    """("ok" | "dead" | "absent", entry count) for a would-be source directory.
+    """("ok" | "dead" | "unreadable" | "absent", entry count) for a source dir.
 
-    One listdir answers all three, and that is the point: os.path.isdir()
+    One listdir answers all four, and that is the point: os.path.isdir()
     swallows the OSError and returns False, so a mount whose transport died is
     indistinguishable from a path that was never configured. A caller that
     filters on isdir() therefore drops a broken source from the picker
@@ -154,7 +165,11 @@ def dir_state(path):
     try:
         return "ok", len(os.listdir(path))
     except OSError as exc:
-        return ("dead" if exc.errno in DEAD_MOUNT_ERRNOS else "absent"), 0
+        if exc.errno in DEAD_MOUNT_ERRNOS:
+            return "dead", 0
+        if exc.errno in ABSENT_ERRNOS:
+            return "absent", 0
+        return "unreadable", 0
 
 
 def is_slow(path):

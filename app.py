@@ -1730,6 +1730,10 @@ def _local_ingest_sources(root):
     returns False — so the source did not come back marked broken, it did not
     come back at all. Reported as "the source is not configured on this server"
     when the truth was "the files are fine, the mount needs redoing".
+
+    Which is why only `absent` is dropped here. Every other failure — an
+    unreadable directory above all, the everyday result of a UID/GID mismatch
+    on a bind mount — keeps its row and says what is wrong with it.
     """
     out = []
     try:
