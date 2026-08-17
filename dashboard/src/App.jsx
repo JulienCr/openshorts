@@ -674,6 +674,9 @@ function App() {
             // Omitted, not 'auto': the server reads an absent value as "use the
             // default style" and an explicit one — 'auto' included — as a choice.
             ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
+            // Same rule: only sent when it asks for something beyond the
+            // single default render.
+            ...(data.variants && data.variants !== 'auto' ? { variants: data.variants } : {}),
             branding: data.branding,
           }),
         });
@@ -691,6 +694,7 @@ function App() {
           url: data.payload,
           acknowledged: !!data.acknowledged,
           ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
+          ...(data.variants && data.variants !== 'auto' ? { variants: data.variants } : {}),
           branding: data.branding,
           // Sent only on the confirmation retry. Sending false up front makes
           // it an explicit override, so a default style that waives the
@@ -705,6 +709,7 @@ function App() {
           local_path: data.payload,
           acknowledged: !!data.acknowledged,
           ...(data.outputFormat ? { output_format: data.outputFormat } : {}),
+          ...(data.variants && data.variants !== 'auto' ? { variants: data.variants } : {}),
           branding: data.branding,
           // Sent only on the confirmation retry. Sending false up front makes
           // it an explicit override, so a default style that waives the
@@ -715,10 +720,13 @@ function App() {
         const formData = new FormData();
         formData.append('file', data.payload);
         formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
-        // Both omitted rather than sent empty: a multipart field always
+        // All omitted rather than sent empty: a multipart field always
         // arrives as a string, and "" would read as an explicit choice instead
         // of "inherit the server default".
         if (data.outputFormat) formData.append('output_format', data.outputFormat);
+        if (data.variants && data.variants !== 'auto') {
+          formData.append('variants', data.variants);
+        }
         if (data.branding !== undefined) {
           formData.append('branding', data.branding ? 'true' : 'false');
         }

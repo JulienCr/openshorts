@@ -36,6 +36,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
     // is sent on every submission and always beats the preset, which made the
     // panel's format control do nothing for dashboard jobs.
     const [outputFormat, setOutputFormat] = useState(null); // null | vertical | horizontal | square
+    // On by default: the automatic framing is the thing most likely to need a
+    // second opinion, and finding out after the render costs a whole re-run.
+    const [safeVariant, setSafeVariant] = useState(true);
     // Channel branding. The checkbox only appears when the server has a brand
     // asset to burn (brandingAvailable); its initial state mirrors the operator's
     // BRAND_WATERMARK default, so unticking it is an override for this job only.
@@ -142,22 +145,24 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!rightsOk) return;
+        const variants = safeVariant ? 'auto,safe' : 'auto';
         // Only sent when the server offered the choice: on a server with no
         // brand asset, `undefined` leaves the decision to BRAND_WATERMARK
         // instead of pinning it to this build's idea of the default.
         const brand = brandingAvailable ? branding : undefined;
+        const common = { acknowledged: true, outputFormat, variants, branding: brand };
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat, branding: brand });
+            onProcess({ type: 'url', payload: url, ...common });
         } else if (mode === 'file' && file) {
-            onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat, branding: brand });
+            onProcess({ type: 'file', payload: file, ...common });
         } else if (mode === 'local' && localSelected.size) {
             const names = [...localSelected];
             // One file takes the single-job path it always took, byte for byte.
             // The batch endpoint only comes into play from two, so the common
             // case gains nothing to go wrong.
             onProcess(names.length === 1
-                ? { type: 'local', payload: names[0], acknowledged: true, outputFormat, branding: brand }
-                : { type: 'local-batch', payload: names, acknowledged: true, outputFormat, branding: brand });
+                ? { type: 'local', payload: names[0], ...common }
+                : { type: 'local-batch', payload: names, ...common });
         }
     };
 
@@ -426,6 +431,28 @@ export default function MediaInput({ onProcess, isProcessing }) {
                         })}
                     </div>
                 </div>
+
+                {/* Second render per clip. Hidden only when the user has
+                    explicitly picked 16:9, where nothing is reframed and the
+                    server collapses the request anyway. `null` means "inherit
+                    the server's default style", which may well be vertical, so
+                    it must NOT hide the box. */}
+                {outputFormat !== 'horizontal' && (
+                    <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={safeVariant}
+                            onChange={(e) => setSafeVariant(e.target.checked)}
+                            className="mt-0.5 accent-[var(--color-accent)] cursor-pointer"
+                        />
+                        <span>
+                            Also render a <strong className="text-ink">safe</strong> version of every clip —
+                            the whole frame on a blurred background, camera fixed, no subject tracking.
+                            Gives you a fallback when the automatic framing gets it wrong.
+                            <span className="block mt-0.5 opacity-70">Doubles this job's render time and disk usage.</span>
+                        </span>
+                    </label>
+                )}
 
                 {brandingAvailable && (
                     <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">

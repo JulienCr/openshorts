@@ -73,7 +73,7 @@ def load_style(path=None):
 # forwarded: an inline style is caller-supplied JSON, and the whole thing goes
 # into ONE environment variable.
 SUPPORTED_KEYS = ("captions", "hook", "layouts", "output_format",
-                  "force_low_quality")
+                  "force_low_quality", "variants")
 
 # Linux caps a single environment string at MAX_ARG_STRLEN (128 KiB). Past it
 # execve fails, so Popen raises and the QUEUED JOB IS LOST — far worse than the

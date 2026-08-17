@@ -145,6 +145,195 @@ def general_filtergraph(out_w, out_h, content_h=None):
     )
 
 
+# --- delivery variants ------------------------------------------------------
+
+# A clip can be delivered more than once, in different framings. "auto" is the
+# pipeline's own verdict (TRACK/GENERAL/SPLIT per scene); "safe" is the whole
+# 16:9 frame on a blurred background with a camera that never moves.
+#
+# The point of "safe" is to be the version that cannot be wrong. Every failure
+# mode the auto framing has — hunting left-right, following the wrong face,
+# stacking a silent listener — comes from choosing something per scene. This
+# chooses nothing, so a bad auto render costs a re-pick rather than a re-run.
+VARIANT_AUTO = "auto"
+VARIANT_SAFE = "safe"
+VARIANTS = (VARIANT_AUTO, VARIANT_SAFE)
+
+
+def parse_variants(raw):
+    """Ordered, deduped, validated variant list. ``auto`` is never droppable.
+
+    Accepts a comma-separated string, a list, or None. Unknown names are
+    ignored rather than rejected, matching how ``layouts`` already behaves:
+    a typo should cost the caller the feature, not the job.
+    """
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, (list, tuple)):
+        raw = []
+    asked = {str(v).strip().lower() for v in raw}
+    picked = [v for v in VARIANTS if v in asked]
+    if VARIANT_AUTO not in picked:
+        picked.insert(0, VARIANT_AUTO)
+    return tuple(picked)
+
+
+def variant_filename(clip_filename, variant):
+    """``Talk_clip_3.mp4`` + ``safe`` -> ``Talk_clip_3_safe.mp4``.
+
+    A SUFFIX, never a prefix. ``_canonical_clip_file`` and
+    ``_strip_burned_captions`` in app.py rebuild the clean name from the
+    ``subtitled_<ts>_`` PREFIX, and the caption glob for the auto variant
+    requires the name to END in ``_<base>_clip_<n>.mp4``. Suffixing keeps the
+    two variants in disjoint namespaces for free; prefixing would put the safe
+    file inside the auto variant's glob.
+    """
+    stem, dot, ext = clip_filename.rpartition(".")
+    if variant == VARIANT_AUTO or not dot:
+        return clip_filename
+    return f"{stem}_{variant}{dot}{ext}"
+
+
+# A tracked scene shorter than this is rendered static instead.
+#
+# Below it there is no time to establish a subject: the scene costs a snap on
+# entry plus whatever pan follows, and short scenes arrive in RUNS, so the frame
+# gets thrown left, right, left across a couple of seconds. Measured on three
+# real multicam podcast recordings, one stretch ran four TRACK scenes of 0.5s,
+# 1.0s, 0.7s and 10.0s with cut jumps of +297, -511 and -517px on top of 360,
+# 150, 135 and 564px of panning.
+#
+# 1.5s is where the corpus stops changing: 1.5, 2.0 and 3.0 all score
+# identically because no TRACK scene falls between them, so 1.5 buys the whole
+# improvement at the smallest cost in footage. 0 disables the rule.
+MIN_TRACK_SECONDS = float(os.environ.get("MIN_TRACK_SECONDS", "1.5"))
+
+
+def demote_short_track(strategies, scene_boundaries, fps,
+                       min_seconds=None):
+    """Send TRACK scenes shorter than ``min_seconds`` to GENERAL.
+
+    GENERAL is static, so a scene too short to be tracked calmly is better not
+    tracked at all. Measured over 93.1s of TRACK footage across three real
+    recordings: on-screen crop motion 72.2 -> 47.3 px/s (-34%) and the worst
+    cut-to-cut jump 517 -> 125px (-76%), for 2.3s of tracking given up.
+
+    Only ever downgrades, and only TRACK. SPLIT/SCREENCAST/INSET are decided
+    later and have their own minimum-duration rules.
+    """
+    if min_seconds is None:
+        min_seconds = MIN_TRACK_SECONDS
+    if not min_seconds:
+        return list(strategies)
+    out = []
+    for i, strategy in enumerate(strategies):
+        if strategy == 'TRACK' and i < len(scene_boundaries):
+            start_f, end_f = scene_boundaries[i]
+            if (end_f - start_f) / float(fps) < min_seconds:
+                out.append('GENERAL')
+                continue
+        out.append(strategy)
+    return out
+
+
+def clear_stale_variants(output_dir, clip_filename):
+    """Drop a previous run's variant files for this clip index.
+
+    Variant files are resolved from the clip INDEX, and re-analysing the same
+    source can return a different number of clips — so a
+    ``<base>_clip_7_safe.mp4`` left by a longer run would otherwise surface as
+    a variant of a clip that was never rendered with one.
+
+    The burned-in copies go too. Dropping only the pristine file already hides
+    the variant (app.py tests existence on the pristine name), but it leaves
+    every ``subtitled_<ts>_<clip>_safe.mp4`` on disk with nothing able to reach
+    it again — dead weight on the one deployment where the size cap deletes
+    whole projects for good. Found by re-running a job without the flag and
+    listing the directory, not by reasoning about it.
+    """
+    import glob
+
+    removed = []
+    for variant in VARIANTS:
+        if variant == VARIANT_AUTO:
+            continue
+        name = variant_filename(clip_filename, variant)
+        candidates = [os.path.join(output_dir, name)]
+        candidates += glob.glob(os.path.join(output_dir, f"subtitled_*_{name}"))
+        for path in candidates:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    removed.append(os.path.basename(path))
+            except OSError as e:
+                print(f"   ⚠️ Could not remove stale variant {path}: {e}")
+    return removed
+
+
+def _probe_dimensions(video_path):
+    """(width, height) of the first video stream, via ffprobe. Raises on failure.
+
+    Deliberately not ``main.get_video_resolution``: that one goes through cv2
+    and, worse, forces ``import main``, which pulls in mediapipe/torch and is
+    exactly what keeps the existing camera tests skipped in CI. ffprobe is
+    already a hard dependency of every render path here.
+    """
+    out = subprocess.check_output(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", video_path],
+        stderr=subprocess.STDOUT, timeout=60,
+    ).decode().strip().splitlines()[0].split("x")
+    return int(out[0]), int(out[1])
+
+
+def general_render_cmd(input_video, output_video, out_w, out_h, content_h):
+    """argv for the safe variant. Split out so CI can assert on it without ffmpeg."""
+    return [
+        "ffmpeg", "-y", "-loglevel", "error", "-i", input_video,
+        "-filter_complex", general_filtergraph(out_w, out_h, content_h),
+        "-map", "[v]",
+        # The ? matters: a silent source must still render. Audio is copied
+        # because the clip cut already encoded it with loudnorm applied.
+        "-map", "0:a:0?", "-c:a", "copy",
+        *video_encode_args(QUALITY_FAST), *METADATA_SCRUB,
+        "-movflags", "+faststart",
+        output_video,
+    ]
+
+
+def render_general(input_video, final_output_video, aspect_ratio):
+    """Render one clip as the safe variant: one ffmpeg pass, zero analysis.
+
+    Deliberately NOT a flag threaded through ``render()``. Three reasons:
+
+    - ``render()`` has already paid ``detect_scenes`` and
+      ``analyze_scenes_strategy`` before it reaches the segment loop, and the
+      latter is MediaPipe inference serialised behind ``main.DETECT_LOCK``.
+      This variant needs no detection at all, so going through there would
+      queue it behind the auto renders of the other clip workers for nothing.
+    - ``process_video_to_vertical`` swallows any v2 exception and silently
+      falls back to the v1 frame loop, which would not know about the flag —
+      the "safe" variant could then ship a tracked render with no signal.
+    - Reading the layout globals (``split_layout.ENABLED`` and friends) is a
+      race: ``layout_picker.apply()`` mutates them process-wide while three
+      clips render in threads.
+
+    Reading no flag at all makes "the camera never moves" a structural
+    property rather than a conditional one.
+
+    ``full_width_content_height`` (not the default 0.42 ratio) is what makes
+    this keep the WHOLE frame: the default GENERAL crops the sides and throws
+    away ~24% of the width to buy presence, which is exactly the "nothing is
+    ever cut off" guarantee this variant exists to make.
+    """
+    orig_w, orig_h = _probe_dimensions(input_video)
+    out_w, out_h = delivery_size(orig_w, orig_h, aspect_ratio)
+    content_h = full_width_content_height(orig_w, orig_h, out_w)
+    _run(general_render_cmd(input_video, final_output_video, out_w, out_h, content_h))
+    print(f"   ✅ Safe variant saved to {final_output_video}")
+    return True
+
+
 # --- analysis ---------------------------------------------------------------
 
 def _analyze_trajectory(input_video, scenes_boundaries, scene_strategies,
@@ -258,6 +447,14 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
     scene_boundaries = [(s.get_frames(), e.get_frames()) for s, e in scenes]
     strategies = m.analyze_scenes_strategy(input_video, scenes)
 
+    # Before anything downstream reads them: a scene too short to track calmly
+    # is rendered static. Runs of sub-second cuts are where the frame lurches.
+    before = sum(1 for s in strategies if s == 'TRACK')
+    strategies = demote_short_track(strategies, scene_boundaries, fps)
+    demoted = before - sum(1 for s in strategies if s == 'TRACK')
+    if demoted:
+        print(f"   🧊 {demoted} scene(s) too short to track — rendered static")
+
     # SPLIT is an upgrade applied on top of the TRACK/GENERAL verdict, keyed by
     # the scene's START FRAME rather than its index: scene_frame_ranges() drops
     # empty ranges, so indices there don't line up with `scenes`. A surviving
@@ -344,7 +541,10 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
     # reads the output pair. So out_w/out_h being the (possibly upscaled)
     # delivery size doesn't move the camera; only the final scale= uses it.
     cameraman = m.SmoothedCameraman(out_w, out_h, orig_w, orig_h, aspect_ratio=aspect_ratio)
-    tracker = m.SpeakerTracker(cooldown_frames=30)
+    # fps, not a frame count: the tracker's damping windows are durations, and
+    # this repo's real material is 60fps, where a hard-coded 30 is half of what
+    # the code claimed.
+    tracker = m.SpeakerTracker(fps=fps)
 
     xs = _analyze_trajectory(input_video, scene_boundaries, strategies, fps,
                              orig_w, orig_h, cameraman, tracker)
