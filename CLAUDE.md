@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenShorts is an AI-powered vertical video generator that transforms long YouTube videos or local uploads into viral-ready short clips (9:16 format) for TikTok, Instagram Reels, and YouTube Shorts. Uses Google Gemini 2.0 Flash for viral moment detection and title generation.
+OpenShorts is an AI-powered vertical video generator that transforms long YouTube videos or local uploads into viral-ready short clips (9:16 format) for TikTok, Instagram Reels, and YouTube Shorts. Uses Google Gemini for viral moment detection and title generation (default
+model `gemini-3.1-flash-lite`, override with `GEMINI_MODEL`).
 
 ## Development Commands
 
@@ -36,7 +37,8 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 1. **Ingest** - YouTube download (yt-dlp) or local upload
 2. **Transcription** - faster-whisper with word-level timestamps
 3. **Scene Detection** - PySceneDetect for segment boundaries
-4. **AI Analysis** - Gemini identifies 3-15 viral moments (15-60 sec each)
+4. **AI Analysis** - Gemini picks the viral moments in two passes (15-60 sec each;
+   how many is `clip_count_targets`, not a fixed 3-15 — see below)
 5. **FFmpeg Extraction** - Precise clip cutting
 6. **AI Cropping** - Vertical reframing with subject tracking
 7. **Effects/Subtitles** - Optional AI-generated FFmpeg filters
@@ -49,6 +51,8 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 | File | Purpose |
 |------|---------|
 | `main.py` | Core video processing: transcription, scene detection, clip extraction, vertical reframing |
+| `clip_selection.py` | Pure helpers behind the clip choice: windows, shortlist sizing, merging, word-snapping. Stdlib only — see below |
+| `gemini_worker.py` | Every Gemini prompt and response schema for the pipeline (score, detail, visual, layout, wide-content) |
 | `app.py` | FastAPI server with async job queue and REST endpoints |
 | `editor.py` | Gemini AI integration for dynamic video effects (FFmpeg filter generation) |
 | `hooks.py` | Hook text overlay generation with font rendering |
@@ -83,6 +87,79 @@ When editing pricing anywhere, edit `seo/data.js` too. Nothing on the site shoul
 say "OpenShorts is free" without naming the Cloud price in the same breath: both
 are true of different editions and quoting only the first one is what makes AI
 answers describe the paid product as free.
+
+### How the clips are chosen
+
+Two Gemini passes over the transcript (`main.py:get_viral_clips`), with every
+pure helper in `clip_selection.py` and every prompt in `gemini_worker.py`.
+
+`build_transcript_windows` cuts the transcript into ~90s windows aligned to
+Whisper segment boundaries, each overlapping the previous by ~30s so no moment
+is ever split in half. **Pass 1** scores them in batches of `SCORE_BATCH`
+(default 8); `shortlist_size` keeps the best 30%, floor 10, ceiling 24.
+**Pass 2** turns that shortlist into clips and writes the copy. Cuts then land
+on real word boundaries via `snap_clip_to_words`.
+
+Four things there are load-bearing and were each paid for with a bug:
+
+- **The scoring pass scores every window; it does not elect a few.** It used to
+  say "choose up to 3 windows from this batch" against batches of 8, so it
+  could never return more than 37.5% of the material and *that cap*, not the
+  score, was what reached the shortlist — a 2h source scored 79 windows,
+  returned 30, and `shortlist_size` picked 24 of them. The global sort was
+  choosing between candidates that had already been chosen. The rubric anchors
+  in the prompt (80-100 / 50-79 / 20-49 / 0-19) exist because batches are
+  scored in **separate calls**: without a shared scale, a weak batch spreads
+  40-80 and a strong one 60-95, and sorting them together compares two
+  different markers.
+- **Overlapping shortlisted windows are merged before the detail pass**
+  (`merge_overlapping_windows`), through segment indices and never through
+  string surgery on the joined text — rebuilding from `segments[seg_from:seg_to+1]`
+  of the union is what guarantees shared prose appears once. Two adjacent
+  windows both surviving the shortlist otherwise handed the model the same
+  sentences twice under an instruction to work through every window, and the
+  only thing against duplicate clips was a `DIVERSITY` line in the prompt.
+  `drop_overlapping_clips` is the guard that does not depend on the model
+  complying; its threshold is 1.0s rather than zero because `snap_clip_to_words`
+  pads each bound with up to 0.35s of lead and 0.45s of trail, so back-to-back
+  clips legitimately share ~0.8s of silence.
+- **The clip-count target is computed BEFORE merging.** Merging reshapes the
+  payload, it does not select less material, and the floor in
+  `clip_count_targets` rests on a retention measurement (users who got 1-3
+  clips returned 0.4% of the time against 16.1% for 4-9) that must not move
+  because two windows happened to be adjacent.
+- **The detail pass reads `[SECONDS]` anchors, not prose alone**
+  (`window_text_with_anchors`, one marker per Whisper segment). It has to answer
+  in absolute seconds and used to receive only the window's own start/end, so it
+  interpolated a position inside 90s of text and was routinely wrong — which is
+  most of what `snap_clip_to_words` was repairing. Per-word timings were the
+  other option and cost ~40x more (~65k input tokens on a 24-window shortlist)
+  while burying the prose the model is meant to be judging. The markers are
+  **truncated, never rounded**: a marker rounded up lands inside the first word
+  of the sentence it marks, the model returns that as `end`, and the snapper
+  then reads it as speech and keeps the word the clip was meant to exclude.
+  Only the sign of the error matters — 0.4ms late trips the same predicate as
+  40ms late — so more decimals shrink it without removing it.
+
+`snap_clip_to_words` walks to the nearest speech when a bound lands in a
+silence, forward for the start and backward for the end, capped at
+`MAX_SILENCE_SKIP`. The direction is the point: never open or close on dead
+air, and the *nearest* word can be on the wrong side of the gap. Past the cap
+the model's timestamp is not slightly off inside a pause, it is wrong, and
+moving the bound that far would change what is in the clip. It also picks the
+most-snapped **valid pair** rather than discarding both bounds when the
+duration repair fails, which is what used to hand back a raw clip because one
+side could not be fixed.
+
+**Everything testable lives in `clip_selection.py` because `import main` fails
+in CI** — main.py imports cv2/torch/ultralytics/mediapipe at module scope and
+`.github/workflows/ci.yml` installs none of them (tests that need it use
+`pytest.importorskip("main")` and silently skip). New selection logic put in
+main.py is untested logic.
+
+Knobs, none of them needed in normal operation: `GEMINI_MODEL`,
+`GEMINI_THINKING_SCORE` (score stage only), `SCORE_BATCH`, `CLIP_SHORTLIST_MAX`,
+`CLIP_TARGET_MIN` / `CLIP_TARGET_MAX`.
 
 ### Cómo se elige el layout
 
@@ -176,6 +253,57 @@ se desactiva porque el modelo diga `none`.
   `emphasis_times` is a plain list of seconds so the transcript's hook words can
   replace it without touching the module.
 
+### Channel branding (`branding.py`, `BRAND_WATERMARK=1`)
+
+Burns the operator's own logo + a secondary badge into every finished clip: one
+line, logo left and badge right, from PNGs in `assets/brand/` (gitignored; see
+the README there). Self-host branding, **not** the hosted free plan's
+`apply_watermark` in `main.py` — do not merge the two. That one is defensive and
+parked at 40% of the height so a free user cannot crop it off; this one is
+cosmetic and deliberately stays out of the way. Both flags can be on at once and
+their bands never touch.
+
+**The vertical band is the whole design, and `BRAND_Y_RATIO` is its TOP edge,
+not its centre.** Three things already own parts of a 9:16 frame: the platform
+chrome (down to y≈12%), the burned captions (`subtitles.SAFE_MARGIN_V`, y≈59-85%)
+and the hook's default `top` card (`hooks.py`, y=20%). Anchoring the centre was
+tried first and is wrong: the band's height depends on the logo's aspect ratio,
+which the operator picks, so a 3:1 logo at a 0.13 centre put its top edge at
+0.109 — back under TikTok's tabs. The tallest mark's top edge is pinned to
+`BRAND_Y_RATIO` and shorter marks are centred against it, so a taller asset
+grows downwards instead.
+
+**`MAX_BAND_HEIGHT_RATIO` is the other half of that.** Widths are a fraction of
+the clip *width*, but the safe band is measured in *height*, and the two only
+relate through the aspect ratio of the frame **and** of the asset — neither of
+which this code picks. `output_format` also delivers 1920×1080 and 1080×1080,
+where a 3:1 logo at 22% width is 13% of the height instead of 4.1%, so the band
+runs from 13% to 26% and crosses the hook card at 20%. Measured across both
+frame shapes and both asset shapes, every
+combination except the 9:16 wide lockup collided. The clamp scales **only the
+mark that breaks the band**, not the whole band: scaling everything by the
+tallest one's excess was tried and dragged the badge down to 83×19, which is
+unreadable on a phone.
+
+**Settings are read per call (`settings()`), never frozen at import.** `main.py`
+is also a CLI, and there the import block runs *before* `load_dotenv()`, so an
+import-time read saw nothing from `.env` — the documented way to switch this on.
+Reordering that import would have papered over it; reading at call time removes
+the ordering constraint instead of documenting one no autoformatter can see.
+The sibling modules (`punch_in`, `layout_picker`, `screencast_layout`) still
+freeze at import and still have this hole on the direct-CLI path.
+
+Applied in `main.py` right before `auto_caption_clip`, in place on the canonical
+clip, like the watermark — `/api/subtitle` walks back through `subtitled_`
+prefixes to re-style captions, so a mark burned into a derived file would be
+lost there. The `--skip-analysis` path needs its own call; it never reaches the
+per-clip loop.
+
+Per job, the dashboard checkbox sends a **tri-state**: absent means "inherit
+`BRAND_WATERMARK`", which is what keeps older callers (CLI, MCP) working. The
+resolved decision is persisted in the resume manifest, because env is rebuilt
+from `os.environ` on resume and an unticked box would otherwise come back ticked.
+
 ### Key Classes
 
 Both live in `camera.py` and are re-exported from `main.py`. They are pure
@@ -221,6 +349,7 @@ stride on scene starts (54.4 → 58.2), and resetting tracker identities at cuts
 | POST | `/api/social/post` | Post to social media (async upload) |
 | POST | `/mcp` | MCP server (JSON-RPC): the pipeline as agent tools |
 | POST/GET/DELETE | `/api/keys` | User API keys (cloud mode, session JWT only) |
+| GET/PUT | `/api/style` | The server's default look (PUT is self-host only) |
 
 ### Agent access (MCP, API keys, webhooks)
 
@@ -335,11 +464,74 @@ container **creation**, so `ps -a` lists nothing and there is no container for a
 restart policy to act on; and a container created earlier whose source went away
 stays `exited` after a failed start, with no daemon retry. Both measured.
 
+### The server's default style
+
+Every clip already ships captioned, but the look was hard-coded in
+`subtitles.AUTO_CAPTION_STYLE`: identical for everyone, and changeable only one
+clip at a time, after the render, from a modal. `style.json` at the repo root
+replaces that (`style_preset.py`, template in `style.example.json`, move it with
+`OPENSHORTS_STYLE_FILE`). It carries the caption look, the automatic hook,
+layouts, output format and the quality gate.
+
+Three properties to keep:
+
+- **Read at submit, never at import.** Editing the file applies to the next job
+  without restarting the container. A module constant would make a colour change
+  need a redeploy.
+- **A broken preset costs nothing.** Missing file, malformed JSON, unknown key:
+  each reads as "no preset" and the built-in defaults stand. Same doctrine
+  `auto_caption_clip` already follows for captions.
+- **The request beats the file.** `layouts=`, `output_format=`, and a whole
+  inline `style` object (the CLI's `--style`, the MCP tool's `style`) override it
+  for one job. An inline style *replaces* the file rather than merging into it,
+  because a half-file half-request hybrid is unpredictable from either side.
+
+It reaches the renderer through `_build_job_env` (`app.py`), the seam
+`/api/process` and `/api/process/batch` already shared, in a single
+`OPENSHORTS_STYLE` variable rather than fifteen. Batch is the surface where this
+pays: thirty queued recordings carry no style fields at all.
+
+`GET/PUT /api/style` backs the dashboard's "Default style" panel. The PUT refuses
+when `BILLING_ENABLED` — one server-wide default is meaningless once tenants
+share an instance, since whoever saved last would restyle everybody's clips — and
+cloud **ignores the file on read too**. Refusing the write alone is not
+isolation: a `style.json` baked into the image or left over from a self-host run
+would still be read on every submission. Inline per-job styles keep working
+there, since they only affect their own job. The PUT is guarded by
+`Sec-Fetch-Site`, not by comparing `Origin` to the request host: Vite proxies
+`/api` with `changeOrigin: true`, so the two can never match and comparing them
+rejects every save from the documented dashboard.
+
+**The automatic hook.** Gemini has always written a `viral_hook_text` for every
+clip and nothing ever burned it; it waited for someone to open the modal. Under
+`hook.enabled`, it is composited in the **same ffmpeg pass** as the captions.
+That is a naming constraint, not a speed tweak: `auto_caption_clip` writes
+`subtitled_<ts>_<clip>.mp4`, and `_canonical_clip_file` / `_strip_burned_captions`
+rebuild the clean original from that exact prefix. A separate pass would have to
+invent a name outside it. Two inputs also make the audio mapping explicit, and
+the `?` in `-map 0:a?` is load-bearing: without it ffmpeg aborts on a silent
+source.
+
+Re-deriving a clip (an effect, a caption re-style) drops the automatic hook.
+`_reapply_captions` refuses to replay it on purpose, because one of its two
+callers is `/api/hook`, and replaying would stack the preset's card on top of the
+one the user just wrote.
+
+**Resume.** The manifest carries the job's `layouts` **and its resolved style**,
+and `_resume_job_env` replays both. Before that, a job interrupted by a redeploy
+came back without SPLIT, screencast or punch-in — invisible, and worst on a
+thirty-file batch, which delivered two halves that did not match. The style is
+carried rather than re-read for the same reason: a job submitted with an inline
+style would otherwise resume wearing the server default, and editing
+`style.json` while a job sits in the queue would split that job's own clips.
+
 ## Environment Variables
 
 **Server-side (.env):**
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET` - For S3 backup
 - `MAX_CONCURRENT_JOBS` - Concurrent processing limit (default: 5)
+- `OPENSHORTS_STYLE_FILE` - Where the default style lives (default: `style.json` at the repo root)
+- `AUTO_CAPTIONS` - `0` turns off the captions every clip ships with
 - `VITE_API_URL` - Production API URL override
 - `VITE_OPENPANEL_API_URL`, `VITE_OPENPANEL_CLIENT_ID` - Optional product analytics, read at **build** time. Unset (the default, including every self-hosted build) means no analytics is initialised and no third-party script is loaded. `dashboard/index.html` also gates reporting on an `ANALYTICS_HOSTS` allowlist, so a build carrying credentials stays inert on any other host.
 - `OPENPANEL_CLIENT_ID`, `OPENPANEL_CLIENT_SECRET` - Optional **server-side** analytics (`cloud/analytics.py`), same opt-in rule: unset means a silent no-op. Reports job outcomes with the user's job index, which the browser cannot do reliably — a render finishes after the tab is often gone, and ad-blockers eat a share of client events. Needs a *write* client; the read client used for querying is a different credential.

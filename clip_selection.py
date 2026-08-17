@@ -2,8 +2,13 @@
 Pure helpers for the Gemini clip-selection pipeline.
 
 Standard-library only so both main.py and gemini_worker.py can import it and
-the logic stays unit-testable without the heavy video dependencies.
+the logic stays unit-testable without the heavy video dependencies. That is not
+a style preference: main.py imports cv2/torch/ultralytics/mediapipe at module
+scope and CI installs none of them, so anything living there cannot be tested.
+New selection logic belongs in this file for that reason.
 """
+
+import bisect
 
 # USD per 1M tokens (input, output incl. thinking), from ai.google.dev pricing.
 MODEL_PRICES = {
@@ -67,18 +72,6 @@ def clip_count_targets(n_windows):
     return low, max(low, high)
 
 
-def compact_words(words, precision=2):
-    """Round word timestamps for prompts — full float precision wastes tokens."""
-    return [
-        {
-            "w": w.get("w", ""),
-            "s": round(float(w.get("s", 0)), precision),
-            "e": round(float(w.get("e", 0)), precision),
-        }
-        for w in words
-    ]
-
-
 def shortlist_size(n_windows):
     """How many scored windows reach the (expensive) detail pass.
 
@@ -112,6 +105,51 @@ def shortlist_size(n_windows):
     return max(3, min(ceiling, n))
 
 
+def reconcile_scores(scored, windows):
+    """Give every submitted window a score, and report the ones Gemini skipped.
+
+    ``Score EVERY window`` is an instruction, not a guarantee: the response
+    schema accepts any list length, so a window the model simply omits would
+    vanish from the ranking entirely and never reach the detail pass — which is
+    the very failure the batch cap used to cause, arriving through a different
+    door. Whatever the model does not rank lands at the bottom rather than
+    outside, so `shortlist_size` stays the only thing that removes material.
+
+    Returns (scored, missing_ids). Entries whose id matches no submitted window
+    are dropped: those are hallucinations, not omissions.
+    """
+    known = {w["id"] for w in windows}
+    seen = set()
+    reconciled = []
+    for entry in scored or []:
+        window_id = entry.get("id")
+        if window_id not in known or window_id in seen:
+            continue
+        seen.add(window_id)
+        reconciled.append(entry)
+
+    missing = [w["id"] for w in windows if w["id"] not in seen]
+    reconciled.extend({"id": window_id, "score": 0, "reason": "not scored"}
+                      for window_id in missing)
+    return reconciled, missing
+
+
+def transcript_segments(transcript_result):
+    """The transcript's non-empty segments as (start, end, text) tuples.
+
+    Windows index into this list rather than carrying their prose around, which
+    is what lets two overlapping windows be merged without their shared
+    sentences appearing twice — see merge_overlapping_windows.
+    """
+    segments = []
+    for segment in (transcript_result or {}).get("segments", []) or []:
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        segments.append((float(segment.get("start", 0)), float(segment.get("end", 0)), text))
+    return segments
+
+
 def build_transcript_windows(transcript_result, video_duration,
                              window_seconds=90, overlap_seconds=30):
     """
@@ -120,13 +158,12 @@ def build_transcript_windows(transcript_result, video_duration,
     segment by segment to roughly window_seconds (up to 1.25x for the closing
     segment) and the next window starts ~overlap_seconds before the previous
     end, also snapped to a segment start.
+
+    Each window also carries ``seg_from``/``seg_to``: its span in
+    ``transcript_segments(transcript_result)``, both ends inclusive. Consumers
+    build their prompt payload from named keys, so these never reach the model.
     """
-    segments = []
-    for segment in transcript_result.get("segments", []):
-        text = str(segment.get("text") or "").strip()
-        if not text:
-            continue
-        segments.append((float(segment.get("start", 0)), float(segment.get("end", 0)), text))
+    segments = transcript_segments(transcript_result)
 
     windows = []
     window_index = 1
@@ -147,6 +184,8 @@ def build_transcript_windows(transcript_result, video_duration,
             "start": round(w_start, 3),
             "end": round(w_end, 3),
             "text": " ".join(seg[2] for seg in segments[i:j + 1]),
+            "seg_from": i,
+            "seg_to": j,
         })
         window_index += 1
 
@@ -166,70 +205,353 @@ def build_transcript_windows(transcript_result, video_duration,
             "start": 0.0,
             "end": round(float(video_duration), 3),
             "text": str(transcript_result.get("text", "") or ""),
+            # No segments to index into: the helpers below fall back to "text".
+            "seg_from": None,
+            "seg_to": None,
         })
     return windows
 
 
+def merge_overlapping_windows(windows, segments):
+    """Sort chronologically and fuse windows whose spans touch or overlap.
+
+    build_transcript_windows deliberately overlaps consecutive windows by
+    ~30s so no moment is cut in half. That is right for scoring, and wrong for
+    the detail pass: two adjacent windows both surviving the shortlist hand the
+    model the same sentences twice, under an instruction to work through every
+    window. Duplicate clips are the predictable result, and the only thing
+    standing against it was a DIVERSITY line in the prompt.
+
+    The merge goes through segment indices, never through string surgery on the
+    joined text: rebuilding from ``segments[seg_from:seg_to + 1]`` of the union
+    is what guarantees shared prose appears exactly once.
+
+    The surviving block keeps the FIRST window's id — ids only exist for the
+    model to echo back in ``source_window_id``; nothing looks them up.
+    """
+    if not windows:
+        return []
+
+    ordered = sorted(windows, key=lambda w: (float(w["start"]), float(w["end"])))
+    merged = []
+    for window in ordered:
+        window = dict(window)  # never mutate the caller's dicts
+        previous = merged[-1] if merged else None
+        if previous is None or float(window["start"]) > float(previous["end"]):
+            merged.append(window)
+            continue
+
+        previous["end"] = round(max(float(previous["end"]), float(window["end"])), 3)
+        spans = [w for w in (previous, window)
+                 if w.get("seg_from") is not None and w.get("seg_to") is not None]
+        if len(spans) == 2:
+            previous["seg_from"] = min(s["seg_from"] for s in spans)
+            previous["seg_to"] = max(s["seg_to"] for s in spans)
+            previous["text"] = " ".join(
+                seg[2] for seg in segments[previous["seg_from"]:previous["seg_to"] + 1])
+        else:
+            # A window with no segment span (the empty-transcript fallback).
+            # Concatenating is the best available answer and cannot duplicate
+            # anything, because that fallback is only ever the sole window.
+            previous["text"] = " ".join(
+                t for t in (previous.get("text"), window.get("text")) if t)
+    return merged
+
+
+def window_text_with_anchors(window, segments, precision=3):
+    """The window's prose with an absolute ``[SECONDS]`` marker per segment.
+
+    Markers are truncated toward zero, never rounded, and that is the whole
+    point of the arithmetic below. A rounded marker can land AFTER the segment's
+    true start — 30.56 emitted as [30.6] — and the model then returns an `end`
+    that sits inside the first word of the sentence it meant to exclude, so
+    _snap_end_to_speech reads it as speech and extends to that word's end. The
+    magnitude does not matter, only the sign: a marker 0.4ms late trips the same
+    predicate as one 40ms late. Truncating guarantees marker <= true start, so a
+    bound taken from a marker always reads as the gap it is. Rounding to more
+    decimals shrinks the error without removing it.
+
+    The detail pass has to answer in absolute seconds and used to receive prose
+    plus the window's own start/end — so it interpolated a position inside 90s
+    of text and was routinely wrong, which is what snap_clip_to_words spends
+    its time repairing. One marker per Whisper segment gives it real anchors to
+    choose between, at roughly one marker per 5-10s of speech.
+
+    Per-WORD timings were the other option and cost ~40x more: a 24-window
+    shortlist is ~5-6k words, so ~65k input tokens of coordinates burying the
+    prose the model is supposed to be judging.
+    """
+    def anchor(seconds):
+        scale = 10 ** precision
+        return f"[{int(float(seconds) * scale) / scale:.{precision}f}]"
+
+    seg_from = window.get("seg_from")
+    seg_to = window.get("seg_to")
+    if seg_from is None or seg_to is None or seg_to < seg_from:
+        # The empty-transcript fallback window has no segments to anchor to.
+        # It still gets one marker — its own start — because the prompt forbids
+        # timestamps that do not come from a marker, and handing the model an
+        # instruction it cannot satisfy is worse than a coarse anchor.
+        return f"{anchor(window.get('start', 0) or 0)} " \
+               f"{str(window.get('text', '') or '')}".strip()
+    return " ".join(
+        f"{anchor(start)} {text}"
+        for start, _end, text in segments[seg_from:seg_to + 1])
+
+
+# Two clips that genuinely run back to back can still overlap a little:
+# snap_clip_to_words leads into the silence before the first word (up to
+# max_lead) and trails past the last one (up to max_tail), so ~0.8s of shared
+# padding is normal and means nothing. Beyond that they share actual speech.
+MAX_CLIP_OVERLAP_SECONDS = 1.0
+
+
+def drop_overlapping_clips(shorts, max_overlap=MAX_CLIP_OVERLAP_SECONDS):
+    """Remove clips that repeat a stronger clip's footage.
+
+    Collisions are resolved on ``predicted_score``, not on array position. The
+    detail prompt does ask for best-first order, but an instruction is not a
+    guarantee and the candidate payload it reads is chronological, so position
+    is exactly the wrong thing to stake the choice on — it would discard the
+    stronger clip whenever the model answered in transcript order. The score is
+    in the schema; use it.
+
+    Output keeps the model's original order: whatever ranking it did apply is
+    still the best information available for numbering the delivered clips.
+    Degenerate entries are dropped too — they would only reach ffmpeg and fail
+    there.
+    """
+    candidates = []
+    for position, clip in enumerate(shorts or []):
+        try:
+            start = float(clip.get("start"))
+            end = float(clip.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if not end > start:
+            continue
+        try:
+            score = float(clip.get("predicted_score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        candidates.append((position, start, end, score, clip))
+
+    # Strongest first, ties broken by the model's own order.
+    kept = []
+    for position, start, end, _score, clip in sorted(
+            candidates, key=lambda c: (-c[3], c[0])):
+        collides = any(
+            min(end, k_end) - max(start, k_start) > max_overlap
+            for _p, k_start, k_end, _s, _c in kept)
+        if not collides:
+            kept.append((position, start, end, _score, clip))
+
+    return [clip for _p, _s, _e, _sc, clip in sorted(kept, key=lambda c: c[0])]
+
+
+# How far the snapper may walk to reach speech when a bound lands in silence.
+# Past this the model's timestamp is not "slightly inside a pause", it is
+# simply wrong, and moving the bound that far would change which content the
+# clip contains — an editor's decision, not the snapper's.
+MAX_SILENCE_SKIP = 10.0
+
+
+def _running_max_ends(intervals):
+    """Prefix maximum of word end times, for the containment test below.
+
+    Consulting only the last word that starts before the bound is wrong as soon
+    as words overlap: over ``[(10, 20), (15, 16)]`` at t=17 that lookup lands on
+    ``(15, 16)``, calls it silence, and the caller then walks away from speech
+    that is still going. The running maximum answers "does ANY word starting at
+    or before this point still cover it", which is the actual question.
+    """
+    running = []
+    highest = float("-inf")
+    for _start, end in intervals:
+        highest = max(highest, end)
+        running.append(highest)
+    return running
+
+
+def _is_mid_word(time, starts, max_ends):
+    """True when ``time`` sits strictly inside some word — both edges open.
+
+    A word's own start and end are legal places to cut; anything between them
+    is not. This filters the CANDIDATE boundaries, which the containment test
+    alone does not: recognising that a bound is speech says nothing about the
+    boundary then chosen for it, and over ``[(10, 20), (15, 16)]`` at t=17 the
+    nearest end is 16, which lands inside the word still running to 20 — the
+    mid-word cut the whole function exists to avoid.
+    """
+    index = bisect.bisect_left(starts, time) - 1
+    return index >= 0 and max_ends[index] > time
+
+
+def _nearest_cuttable(time, boundaries, starts, max_ends):
+    """The boundary closest to ``time`` that is not buried inside a word."""
+    cuttable = [b for b in boundaries if not _is_mid_word(b, starts, max_ends)]
+    return min(cuttable or boundaries, key=lambda b: abs(b - time))
+
+
+def _cut_after(word_end, starts, max_tail):
+    """Cut point just past a word, reaching into the following silence only.
+
+    The padding comes from the gap that actually follows, never from a fixed
+    constant: contiguous speech leaves no room at all, and a constant there
+    puts the cut inside the next word. Every place that closes a clip goes
+    through this, including the duration repairs — that is the point of it
+    being a function.
+    """
+    following = [s for s in starts if s >= word_end]
+    gap = (min(following) - word_end) if following else None
+    tail = max_tail if gap is None else min(max_tail, max(0.0, gap) / 2)
+    return word_end + tail
+
+
+def _cut_before(word_start, ends, max_lead):
+    """Mirror of _cut_after: cut point just before a word."""
+    preceding = [e for e in ends if e <= word_start]
+    gap = (word_start - max(preceding)) if preceding else None
+    lead = max_lead if gap is None else min(max_lead, max(0.0, gap) / 2)
+    return max(0.0, word_start - lead)
+
+
+def _falls_inside_a_word(time, starts, max_ends, open_edge):
+    """True when ``time`` lands inside a spoken word rather than in a gap.
+
+    This, not a distance threshold, is what decides how a bound gets snapped.
+    Inside a word the model pointed at speech and the nearest boundary is the
+    right answer; in a gap it pointed at nothing and the direction of travel
+    matters (see the callers). Distance cannot tell those apart: a bound 0.8s
+    into a 2s pause is "near" a word and still in dead air.
+
+    ``open_edge`` names the edge that counts as OUTSIDE, and the asymmetry is
+    load-bearing. A clip end landing exactly on a word's start means "stop
+    before this word", not "one instant inside it" — and that is the common
+    case, not a corner one, because the detail prompt asks for `end` at the
+    marker of the next sentence. Symmetrically a start landing on a word's end
+    means "begin after this word".
+    """
+    if not starts:
+        return False
+    if open_edge == "start":
+        # Clip end: a word with start < time <= end still covers it.
+        index = bisect.bisect_left(starts, time) - 1
+        return index >= 0 and max_ends[index] >= time
+    # Clip start: a word with start <= time < end still covers it.
+    index = bisect.bisect_right(starts, time) - 1
+    return index >= 0 and max_ends[index] > time
+
+
+def _snap_start_to_speech(start, starts, max_ends, max_silence_skip):
+    """Word start the clip should open on, or None to leave the bound alone."""
+    if _falls_inside_a_word(start, starts, max_ends, open_edge="end"):
+        return _nearest_cuttable(start, starts, starts, max_ends)
+    # In a gap: walk FORWARD. The nearest word overall may be the tail of the
+    # previous sentence, on the wrong side of the pause — and since the detail
+    # prompt now takes `start` from a sentence marker, snapping back would pull
+    # in the end of the sentence before the one the model chose.
+    index = bisect.bisect_left(starts, start)
+    if index >= len(starts):
+        return None
+    word_start = starts[index]
+    return word_start if word_start - start <= max_silence_skip else None
+
+
+def _snap_end_to_speech(end, ends, starts, max_ends, max_silence_skip):
+    """Word end the clip should close on, or None to leave the bound alone."""
+    if _falls_inside_a_word(end, starts, max_ends, open_edge="start"):
+        return _nearest_cuttable(end, ends, starts, max_ends)
+    # Mirror of the start: walk BACKWARD so the clip never trails off into
+    # silence, and never swallows the first word of the next phrase. That last
+    # one is not hypothetical: the detail prompt asks for `end` at the marker
+    # of the sentence AFTER the last one wanted, so the nearest word end is
+    # frequently the first word of a sentence the clip must not contain.
+    index = bisect.bisect_right(ends, end)
+    if index == 0:
+        return None
+    word_end = ends[index - 1]
+    return word_end if end - word_end <= max_silence_skip else None
+
+
 def snap_clip_to_words(start, end, words, video_duration,
                        min_duration=15.0, max_duration=60.0,
-                       search_window=1.5, max_lead=0.35, max_tail=0.45):
+                       max_lead=0.35, max_tail=0.45,
+                       max_silence_skip=MAX_SILENCE_SKIP):
     """
     Snap Gemini-proposed clip boundaries onto real word boundaries plus a bit
     of the surrounding silence. LLMs are bad at millisecond arithmetic; the
     word-level timestamps are ground truth, so cuts land in pauses instead of
     mid-word.
 
+    A ``search_window`` parameter used to gate this: nearest word within 1.5s,
+    raw value otherwise. Both halves were wrong. The threshold said nothing
+    about whether the bound was in speech or in a hole — 0.8s into a 2s pause
+    counts as "near" — and the raw fallback fired precisely in the silence case
+    it was supposed to fix. What matters is _falls_inside_a_word, so the
+    parameter is gone rather than kept and ignored.
+
     words: [{'w','s','e'}, ...] for the whole video, sorted by start.
-    Returns (start, end); falls back to the input if no words are nearby or
-    snapping cannot satisfy the duration bounds.
+    Returns (start, end), falling back to the input only when no arrangement of
+    snapped and raw bounds satisfies the duration limits.
     """
     original = (round(float(start), 3), round(float(end), 3))
     if not words:
         return original
 
-    starts = [float(w.get("s", 0)) for w in words]
-    ends = [float(w.get("e", 0)) for w in words]
+    intervals = sorted((float(w.get("s", 0)), float(w.get("e", 0))) for w in words)
+    starts = [s for s, _ in intervals]
+    ends = sorted(e for _, e in intervals)
+    max_ends = _running_max_ends(intervals)
 
-    # START: snap to the nearest word start, then lead into the silence before it.
+    # START: onto a word start, then lead back into the silence before it.
     new_start = float(start)
-    candidates = [s for s in starts if abs(s - new_start) <= search_window]
-    if candidates:
-        word_start = min(candidates, key=lambda s: abs(s - new_start))
-        prev_ends = [e for e in ends if e <= word_start]
-        if prev_ends:
-            gap = max(0.0, word_start - max(prev_ends))
-            lead = min(max_lead, gap / 2)
-        else:
-            lead = max_lead
-        new_start = max(0.0, word_start - lead)
+    word_start = _snap_start_to_speech(new_start, starts, max_ends, max_silence_skip)
+    if word_start is not None:
+        new_start = _cut_before(word_start, ends, max_lead)
 
-    # END: snap to the nearest word end, then trail into the silence after it.
+    # END: onto a word end, then trail into the silence after it.
     new_end = float(end)
-    candidates = [e for e in ends if abs(e - new_end) <= search_window]
-    if candidates:
-        word_end = min(candidates, key=lambda e: abs(e - new_end))
-        next_starts = [s for s in starts if s >= word_end]
-        if next_starts:
-            gap = max(0.0, min(next_starts) - word_end)
-            tail = min(max_tail, gap / 2)
-        else:
-            tail = max_tail
-        new_end = min(float(video_duration), word_end + tail)
+    word_end = _snap_end_to_speech(new_end, ends, starts, max_ends, max_silence_skip)
+    if word_end is not None:
+        new_end = min(float(video_duration), _cut_after(word_end, starts, max_tail))
 
-    # Repair duration bounds while staying on word boundaries.
-    if new_end - new_start < min_duration:
+    # Repair the duration — through the same two rules as above, not around
+    # them. This path used to pick a raw word end and add a flat 0.2s, so it
+    # reintroduced both defects the snapping had just fixed: an end buried
+    # inside an overlapping word, and padding that lands in the next word when
+    # speech is contiguous. And it did so invisibly, because the repaired pair
+    # is the first one the preference list tries.
+    cuttable_ends = [e for e in ends if not _is_mid_word(e, starts, max_ends)]
+    repaired_end = new_end
+    if repaired_end - new_start < min_duration:
         target = new_start + min_duration
-        later = sorted(e for e in ends if e >= target)
+        later = [e for e in cuttable_ends if e >= target]
         if later and later[0] - new_start <= max_duration:
-            new_end = min(float(video_duration), later[0] + 0.2)
-        else:
-            return original
-    if new_end - new_start > max_duration:
+            repaired_end = min(float(video_duration),
+                               _cut_after(later[0], starts, max_tail))
+    if repaired_end - new_start > max_duration:
         target = new_start + max_duration
-        earlier = [e for e in ends if new_start < e <= target]
-        new_end = (max(earlier) + 0.2) if earlier else target
-        new_end = min(new_end, new_start + max_duration, float(video_duration))
+        earlier = [e for e in cuttable_ends if new_start < e <= target]
+        if earlier:
+            repaired_end = min(_cut_after(max(earlier), starts, max_tail),
+                               new_start + max_duration, float(video_duration))
+        elif not _is_mid_word(target, starts, max_ends):
+            repaired_end = min(target, float(video_duration))
+        # Neither a cuttable end nor a cuttable target inside the limit: leave
+        # the pair over-long and let the preference list below reject it, rather
+        # than invent a cut in the middle of a word to satisfy the duration.
 
-    if new_end <= new_start or new_end - new_start < min_duration:
-        return original
-    return (round(new_start, 3), round(new_end, 3))
+    # Take the most-snapped pair that is actually valid. The old code returned
+    # the raw input the moment the repair failed, which threw away a bound that
+    # HAD snapped correctly because the other one could not — a clip with a
+    # clean start came back raw on both sides.
+    for low, high in ((new_start, repaired_end), (new_start, new_end),
+                      (new_start, original[1]), (original[0], repaired_end),
+                      (original[0], new_end), original):
+        low, high = float(low), float(high)
+        if low < 0 or high > float(video_duration) or high <= low:
+            continue
+        if min_duration <= high - low <= max_duration:
+            return (round(low, 3), round(high, 3))
+    return original

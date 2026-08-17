@@ -31,10 +31,19 @@ export default function MediaInput({ onProcess, isProcessing }) {
     // is one click per job. Defaults to true so a failed /api/config keeps
     // today's behaviour instead of dropping the guard silently.
     const [requireRights, setRequireRights] = useState(true);
-    const [outputFormat, setOutputFormat] = useState('vertical'); // vertical | horizontal | square
+    // null = inherit the server's default style (Settings > Default style).
+    // It has to be the initial state, not just an option: a concrete value here
+    // is sent on every submission and always beats the preset, which made the
+    // panel's format control do nothing for dashboard jobs.
+    const [outputFormat, setOutputFormat] = useState(null); // null | vertical | horizontal | square
     // On by default: the automatic framing is the thing most likely to need a
     // second opinion, and finding out after the render costs a whole re-run.
     const [safeVariant, setSafeVariant] = useState(true);
+    // Channel branding. The checkbox only appears when the server has a brand
+    // asset to burn (brandingAvailable); its initial state mirrors the operator's
+    // BRAND_WATERMARK default, so unticking it is an override for this job only.
+    const [brandingAvailable, setBrandingAvailable] = useState(false);
+    const [branding, setBranding] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
     const infoRef = useRef(null);
 
@@ -60,6 +69,10 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 // `=== false`, not `!cfg.billingEnabled`: a server too old to
                 // send the key keeps the box rather than losing it by accident.
                 if (cfg && cfg.billingEnabled === false) setRequireRights(false);
+                if (cfg && cfg.brandingAvailable) {
+                    setBrandingAvailable(true);
+                    setBranding(!!cfg.brandingDefault);
+                }
             })
             .catch(() => {});
     }, []);
@@ -133,18 +146,23 @@ export default function MediaInput({ onProcess, isProcessing }) {
         e.preventDefault();
         if (!rightsOk) return;
         const variants = safeVariant ? 'auto,safe' : 'auto';
+        // Only sent when the server offered the choice: on a server with no
+        // brand asset, `undefined` leaves the decision to BRAND_WATERMARK
+        // instead of pinning it to this build's idea of the default.
+        const brand = brandingAvailable ? branding : undefined;
+        const common = { acknowledged: true, outputFormat, variants, branding: brand };
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat, variants });
+            onProcess({ type: 'url', payload: url, ...common });
         } else if (mode === 'file' && file) {
-            onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat, variants });
+            onProcess({ type: 'file', payload: file, ...common });
         } else if (mode === 'local' && localSelected.size) {
             const names = [...localSelected];
             // One file takes the single-job path it always took, byte for byte.
             // The batch endpoint only comes into play from two, so the common
             // case gains nothing to go wrong.
             onProcess(names.length === 1
-                ? { type: 'local', payload: names[0], acknowledged: true, outputFormat, variants }
-                : { type: 'local-batch', payload: names, acknowledged: true, outputFormat, variants });
+                ? { type: 'local', payload: names[0], ...common }
+                : { type: 'local-batch', payload: names, ...common });
         }
     };
 
@@ -379,8 +397,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 {/* Output format selector */}
                 <div className="mt-5">
                     <p className="eyebrow mb-2">Output format</p>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-4 gap-2">
                         {[
+                            { value: null, label: 'default', hint: 'Your saved style', w: 22, h: 26, dashed: true },
                             { value: 'vertical', label: '9:16', hint: 'Shorts · Reels · TikTok', w: 18, h: 32 },
                             { value: 'square', label: '1:1', hint: 'Feed posts', w: 28, h: 28 },
                             { value: 'horizontal', label: '16:9', hint: 'Keep landscape · YouTube', w: 36, h: 20 },
@@ -388,7 +407,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             const active = outputFormat === f.value;
                             return (
                                 <button
-                                    key={f.value}
+                                    key={f.value ?? 'default'}
                                     type="button"
                                     onClick={() => setOutputFormat(f.value)}
                                     className={`py-3 px-2 rounded-input border flex flex-col items-center gap-2 transition-colors
@@ -400,6 +419,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                         style={{
                                             width: `${f.w}px`,
                                             height: `${f.h}px`,
+                                            borderStyle: f.dashed ? 'dashed' : 'solid',
                                             borderColor: active ? 'var(--color-accent)' : 'var(--color-rule-2)',
                                             backgroundColor: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'transparent',
                                         }}
@@ -412,15 +432,18 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     </div>
                 </div>
 
-                {/* Second render per clip. Hidden on 16:9, where nothing is
-                    reframed and the server collapses the request anyway. */}
+                {/* Second render per clip. Hidden only when the user has
+                    explicitly picked 16:9, where nothing is reframed and the
+                    server collapses the request anyway. `null` means "inherit
+                    the server's default style", which may well be vertical, so
+                    it must NOT hide the box. */}
                 {outputFormat !== 'horizontal' && (
                     <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
                         <input
                             type="checkbox"
                             checked={safeVariant}
                             onChange={(e) => setSafeVariant(e.target.checked)}
-                            className="mt-0.5 accent-[color:var(--color-accent)] cursor-pointer"
+                            className="mt-0.5 accent-[var(--color-accent)] cursor-pointer"
                         />
                         <span>
                             Also render a <strong className="text-ink">safe</strong> version of every clip —
@@ -428,6 +451,18 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             Gives you a fallback when the automatic framing gets it wrong.
                             <span className="block mt-0.5 opacity-70">Doubles this job's render time and disk usage.</span>
                         </span>
+                    </label>
+                )}
+
+                {brandingAvailable && (
+                    <label className="flex items-start gap-2 mt-5 text-xs text-muted cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={branding}
+                            onChange={(e) => setBranding(e.target.checked)}
+                            className="mt-0.5 accent-[var(--color-accent)] cursor-pointer"
+                        />
+                        <span>Burn the channel logo into every clip, clear of the captions and the platform UI.</span>
                     </label>
                 )}
 

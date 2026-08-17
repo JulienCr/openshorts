@@ -31,6 +31,10 @@ output/
 # Generated metadata
 *_metadata.json
 
+# Channel branding: an operator's own logo, not something to publish to a
+# public fork. The README next to them is versioned so the convention travels.
+assets/brand/*.png
+
 # Cache dirs
 .cache/
 .config/
@@ -46,3 +50,7 @@ skills-lock.json
 
 # Cloud env example kept local only (avoid leaking infra hints)
 .env.cloud.example
+
+# This server's default look, edited from the dashboard. style.example.json is
+# the versioned template.
+style.json

@@ -95,6 +95,17 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Set true to proceed after a needs_confirmation low-resolution warning.",
                 },
+                "style": {
+                    "type": "object",
+                    "description": (
+                        "Optional look for this job, replacing the server's default: "
+                        "{captions:{font_name,highlight_color,effect,uppercase,...}, "
+                        "hook:{enabled,style,position,size,duration_seconds}, layouts, "
+                        "output_format}. Omit it to use the server's configured style — "
+                        "which is the normal case, and why an agent needs to carry "
+                        "nothing to get this server's look."
+                    ),
+                },
             },
             "required": ["source_url", "confirm_rights"],
         },
@@ -224,10 +235,15 @@ async def _tool_process_video(client, args):
         "acknowledged": True,
         "layouts": args.get("layouts") or [],
         "output_format": args.get("output_format"),
-        "force_low_quality": bool(args.get("force_low_quality")),
         "webhook_url": args.get("webhook_url"),
         "webhook_secret": args.get("webhook_secret"),
+        "style": args.get("style"),
     }
+    # Only when the agent actually said something. Coercing an omitted argument
+    # to false makes it an explicit override, which is how an agent ended up
+    # unable to inherit a server preset that waives the low-resolution gate.
+    if "force_low_quality" in args:
+        body["force_low_quality"] = bool(args["force_low_quality"])
     resp = await client.post("/api/process", json=body)
     if resp.status_code >= 400:
         return _api_error(resp), True

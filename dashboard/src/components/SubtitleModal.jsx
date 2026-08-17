@@ -4,32 +4,12 @@ import { apiFetch } from '../lib/api';
 import RemotionPreview from './RemotionPreview';
 import Modal from './ui/Modal';
 import SegmentedControl from './ui/SegmentedControl';
-
-const FONT_OPTIONS = [
-    { value: 'Verdana', label: 'Verdana' },
-    { value: 'Arial', label: 'Arial' },
-    { value: 'Impact', label: 'Impact' },
-    { value: 'Helvetica', label: 'Helvetica' },
-    { value: 'Georgia', label: 'Georgia' },
-    { value: 'Courier New', label: 'Courier New' },
-];
-
-const COLOR_PRESETS = [
-    { color: '#FFFFFF', label: 'White' },
-    { color: '#FFFF00', label: 'Yellow' },
-    { color: '#00FFFF', label: 'Cyan' },
-    { color: '#00FF00', label: 'Green' },
-    { color: '#FF0000', label: 'Red' },
-    { color: '#FF69B4', label: 'Pink' },
-];
-
-const HIGHLIGHT_PRESETS = [
-    { color: '#FFDD00', label: 'Gold' },
-    { color: '#FF4444', label: 'Red' },
-    { color: '#00FF88', label: 'Green' },
-    { color: '#00BBFF', label: 'Blue' },
-    { color: '#FF69B4', label: 'Pink' },
-];
+import {
+    FONT_OPTIONS,
+    COLOR_PRESETS,
+    HIGHLIGHT_PRESETS,
+    CAPTION_PRESETS,
+} from '../lib/captionPresets';
 
 const ANIMATION_OPTIONS = [
     { value: 'pop', label: 'Pop' },
@@ -42,22 +22,6 @@ const POSITION_OPTIONS = [
     { value: 'top', label: 'top' },
     { value: 'middle', label: 'middle' },
     { value: 'bottom', label: 'bottom' },
-];
-
-// Ready-made caption looks burned server-side as karaoke ASS (word highlight):
-// dimmed base text + strong active word, optional glow/pop/box effect.
-const CAPTION_PRESETS = [
-    { id: 'tiktok',  label: 'TikTok',     style: 'karaoke', effect: 'none', highlightColor: '#FE2C55', baseOpacity: 0.75, uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'reels',   label: 'Reels',      style: 'karaoke', effect: 'none', highlightColor: '#E1306C', baseOpacity: 0.7,  uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'shorts',  label: 'Shorts Pop', style: 'karaoke', effect: 'pop',  highlightColor: '#FF0000', baseOpacity: 0.7,  uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'gold',    label: 'Gold Glow',  style: 'karaoke', effect: 'glow', highlightColor: '#FFD700', baseOpacity: 0.6,  uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'neon',    label: 'Neon',       style: 'karaoke', effect: 'glow', highlightColor: '#00FF88', baseOpacity: 0.55, uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'cyber',   label: 'Cyber',      style: 'karaoke', effect: 'glow', highlightColor: '#00FFFF', baseOpacity: 0.5,  uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'karaoke', label: 'Karaoke',    style: 'karaoke', effect: 'none', highlightColor: '#FF6B6B', baseOpacity: 0.6,  uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'minimal', label: 'Minimal',    style: 'karaoke', effect: 'none', highlightColor: '#FFFFFF', baseOpacity: 0.65, uppercase: false, fontName: 'Verdana', borderWidth: 1 },
-    { id: 'beast',   label: 'Beast',      style: 'karaoke', effect: 'pop',  highlightColor: '#FFD700', baseOpacity: 1.0,  uppercase: true,  fontName: 'Impact',  borderWidth: 3 },
-    { id: 'boxed',   label: 'Boxed',      style: 'karaoke', effect: 'box',  highlightColor: '#7C3AED', baseOpacity: 0.85, uppercase: false, fontName: 'Verdana', borderWidth: 2 },
-    { id: 'classic', label: 'Classic',    style: 'classic', effect: 'none', highlightColor: '#FFD700', baseOpacity: 1.0,  uppercase: false, fontName: 'Verdana', borderWidth: 2 },
 ];
 
 const swatchClass = (selected) =>

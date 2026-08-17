@@ -1,3 +1,4 @@
+import functools
 import time
 import cv2
 import scenedetect
@@ -21,10 +22,15 @@ import mediapipe as mp
 from google import genai
 from google.genai import types as genai_types
 
+# Safe to import before load_dotenv() below: branding reads its environment in
+# settings(), per call, precisely so this import's position is not load-bearing.
+import branding
 import gemini_worker
 import layout_picker
 from clip_selection import (build_transcript_windows, clip_count_targets,
-                            shortlist_size, snap_clip_to_words)
+                            drop_overlapping_clips, merge_overlapping_windows,
+                            reconcile_scores, shortlist_size, snap_clip_to_words,
+                            transcript_segments, window_text_with_anchors)
 from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
 from dotenv import load_dotenv
@@ -38,45 +44,6 @@ load_dotenv()
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
-
-GEMINI_PROMPT_TEMPLATE = """
-You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between 15 and 60 seconds long.
-
-⚠️ FFMPEG TIME CONTRACT — STRICT REQUIREMENTS:
-- Return timestamps in ABSOLUTE SECONDS from the start of the video (usable in: ffmpeg -ss <start> -to <end> -i <input> ...).
-- Only NUMBERS with decimal point, up to 3 decimals (examples: 0, 1.250, 17.350).
-- Ensure 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS.
-- Each clip between 15 and 60 s (inclusive).
-- Prefer starting 0.2–0.4 s BEFORE the hook and ending 0.2–0.4 s AFTER the payoff.
-- Use silence moments for natural cuts; never cut in the middle of a word or phrase.
-- STRICTLY FORBIDDEN to use time formats other than absolute seconds.
-
-VIDEO_DURATION_SECONDS: {video_duration}
-
-TRANSCRIPT_TEXT (raw):
-{transcript_text}
-
-WORDS_JSON (array of {{w, s, e}} where s/e are seconds):
-{words_json}
-
-STRICT EXCLUSIONS:
-- No generic intros/outros or purely sponsorship segments unless they contain the hook.
-- No clips < 15 s or > 60 s.
-
-OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by predicted performance (best to worst). In the descriptions, ALWAYS include a CTA like "Follow me and comment X and I'll send you the workflow" (especially if discussing an n8n workflow):
-{{
-  "shorts": [
-    {{
-      "start": <number in seconds, e.g., 12.340>,
-      "end": <number in seconds, e.g., 37.900>,
-      "video_description_for_tiktok": "<description for TikTok oriented to get views>",
-      "video_description_for_instagram": "<description for Instagram oriented to get views>",
-      "video_title_for_youtube_short": "<title for YouTube Short oriented to get views 100 chars max>",
-      "viral_hook_text": "<SHORT punchy text overlay (max 10 words). MUST BE IN THE SAME LANGUAGE AS THE VIDEO TRANSCRIPT. Examples: 'POV: You realized...', 'Did you know?', 'Stop doing this!'>"
-    }}
-  ]
-}}
-"""
 
 # Load the YOLO model once (Keep for backup or scene analysis if needed)
 model = YOLO('yolov8n.pt')
@@ -557,29 +524,40 @@ def finalize_clip_passthrough(input_video, final_output_video):
     return True
 
 
-def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
+def auto_caption_clip(clip_path, transcript, clip_start, clip_end, hook_text=None):
     """Burn the default caption style onto a finished clip.
 
     Captions are mandatory for short-form to land, but they were opt-in behind a
     modal and only 9% of delivered clips ever got them (prod audit, 25-jul-2026).
     So every clip now ships captioned by default.
 
+    ``hook_text`` is Gemini's ``viral_hook_text`` for this clip. When the style
+    preset enables the automatic hook, it is composited **in this same ffmpeg
+    pass** rather than in one of its own. That is a naming constraint, not a
+    speed tweak: the output name below is a contract, and a second pass would
+    have to invent a name outside it (see build_burn_command).
+
     The captioned file is written ALONGSIDE the clip as
     ``subtitled_<ts>_<clip>.mp4`` — the same convention /api/subtitle uses — so
     the untouched original stays on disk and re-styling from the modal replaces
     the captions instead of burning a second layer over them.
 
-    Returns the captioned path, or None when captions were skipped (silent
-    video, no words in range, AUTO_CAPTIONS=0, or any failure — a caption
-    problem must never cost the user the clip they already paid for).
+    Returns the derived path, or None when there was nothing to burn at all —
+    no captions AND no hook — or on any failure, because a styling problem must
+    never cost the user the clip they already paid for.
+
+    Captions and the hook are decided INDEPENDENTLY. Returning early on
+    AUTO_CAPTIONS=0 or an empty word range used to skip the hook too, so
+    `hook.enabled` promised something the pipeline would not deliver on exactly
+    the clips that need a hook most (a silent or wordless one).
     """
-    if os.environ.get("AUTO_CAPTIONS", "1").strip() == "0":
-        return None
-    if not transcript or not transcript.get('segments'):
-        return None  # silent video: nothing to caption
     try:
         import subtitles as _subs
-        style = _subs.AUTO_CAPTION_STYLE
+        import hooks as _hooks
+        style = _subs.resolve_caption_style()
+        captions_wanted = (
+            os.environ.get("AUTO_CAPTIONS", "1").strip() != "0"
+            and bool(transcript and transcript.get('segments')))
         output_dir = os.path.dirname(clip_path)
         stem = os.path.basename(clip_path)
         generation_id = int(time.time())
@@ -605,31 +583,47 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end):
         # Unique per clip, not just per second: clips render in parallel
         # (CLIP_WORKERS), so a bare timestamp would collide and let one clip
         # burn another's captions.
-        ass_path = os.path.join(
-            output_dir, f"autosubs_{generation_id}_{uuid.uuid4().hex[:8]}.ass")
-        out_path = os.path.join(output_dir, f"subtitled_{generation_id}_{stem}")
+        out_path = os.path.join(
+            output_dir, _subs.captioned_output_name(stem, generation_id))
 
-        if not _subs.generate_ass(
-                transcript, clip_start, clip_end, ass_path,
-                max_chars=style["max_chars"], max_duration=style["max_duration"],
+        ass_path = _subs.generate_auto_captions(
+            transcript, clip_start, clip_end, output_dir, generation_id,
+            style) if captions_wanted else None
+
+        with _hooks.auto_hook_overlay(clip_path, hook_text, generation_id) as overlay:
+            if not ass_path and not overlay:
+                # Nothing to burn. Skip the re-encode entirely rather than
+                # writing a byte-shuffled copy of the clip.
+                if captions_wanted:
+                    print("   ℹ️ No words in range — clip ships without captions.")
+                return None
+            burn = functools.partial(
+                _subs.burn_subtitles, clip_path, ass_path, out_path,
                 alignment=style["alignment"], fontsize=style["font_size"],
                 font_name=style["font_name"], font_color=style["font_color"],
-                border_color=style["border_color"], border_width=style["border_width"],
-                highlight_color=style["highlight_color"], effect=style["effect"],
-                base_opacity=style["base_opacity"], uppercase=style["uppercase"]):
-            print("   ℹ️ No words in range — clip ships without captions.")
-            return None
-
-        _subs.burn_subtitles(
-            clip_path, ass_path, out_path,
-            alignment=style["alignment"], fontsize=style["font_size"],
-            font_name=style["font_name"], font_color=style["font_color"],
-            border_color=style["border_color"], border_width=style["border_width"])
-        print(f"   💬 Captions burned: {os.path.basename(out_path)}")
+                border_color=style["border_color"], border_width=style["border_width"])
+            hooked = bool(overlay)
+            try:
+                burn(**overlay)
+            except Exception as e:
+                # The hook is the optional half. Letting its failure escape
+                # would deliver the clip with no captions either, even though
+                # they generated fine — so enabling hooks could silently strip
+                # captions from every clip whose overlay misbehaves.
+                if not ass_path:
+                    raise
+                print(f"   ⚠️ Hook overlay failed ({type(e).__name__}: {e}) — "
+                      f"burning captions alone.")
+                burn()
+                hooked = False
+            burned = ", ".join(
+                part for part, on in (("captions", bool(ass_path)),
+                                      ("hook", hooked)) if on)
+        print(f"   💬 Burned {burned}: {os.path.basename(out_path)}")
         return out_path
     except Exception as e:
-        print(f"   ⚠️ Auto-captions failed ({type(e).__name__}: {e}) — "
-              f"delivering the clip without them.")
+        print(f"   ⚠️ Auto-styling failed ({type(e).__name__}: {e}) — "
+              f"delivering the clip without it.")
         return None
 
 
@@ -642,8 +636,38 @@ def render_clip(input_video, final_output_video, output_format="auto"):
     return process_video_to_vertical(input_video, final_output_video, aspect_ratio=aspect)
 
 
+def finish_rendered_clip(clip_path, transcript, clip_start, clip_end,
+                         hook_text=None):
+    """Everything that happens to a clip AFTER it has been reframed.
+
+    One function on purpose. Both delivery variants have to receive the exact
+    same treatment — the whole point of shipping two renders is that they differ
+    by FRAMING and nothing else, so a safe version missing the channel logo or
+    the hook card would lose the comparison on something that is not being
+    compared.
+
+    That is not hypothetical: merging the branding and style-preset branches
+    added `apply_branding` and `hook_text` to the tracked path with no conflict
+    to resolve, and the second variant silently kept shipping without either.
+    Two call sites of a growing sequence is a drift waiting to happen; one is
+    not.
+
+    Order is load-bearing. Captions go LAST so they sit on top of the watermark
+    and the branding, and so the canonical file stays clean for re-styling:
+    /api/subtitle walks back through the `subtitled_` prefixes, so anything
+    burned into a derived file would be dropped there.
+    """
+    if os.environ.get("WATERMARK") == "1":
+        apply_watermark(clip_path)
+    branding.apply_branding(clip_path)
+    # The hook rides the caption pass — Gemini already wrote the text, it just
+    # never reached the video.
+    auto_caption_clip(clip_path, transcript, clip_start, clip_end,
+                      hook_text=hook_text)
+
+
 def render_safe_variant(clip_temp_path, output_dir, clip_filename, output_format,
-                        transcript, clip_start, clip_end):
+                        transcript, clip_start, clip_end, hook_text=None):
     """Deliver the same clip a second time, framed so it cannot be wrong.
 
     The whole 16:9 frame, centred on a blurred background, camera fixed. Every
@@ -655,6 +679,12 @@ def render_safe_variant(clip_temp_path, output_dir, clip_filename, output_format
     Rendered from the SAME 16:9 temp as the auto variant, before
     _process_one_clip's finally deletes it: a second cut would re-encode the
     source range again for nothing.
+
+    Everything after the reframe must mirror the auto variant exactly —
+    watermark, channel branding, captions, and the automatic hook. The point of
+    shipping two renders is that they differ by FRAMING and nothing else; a safe
+    version missing the hook card or the logo would lose the A/B on a difference
+    that has nothing to do with the thing being compared.
 
     Failures are swallowed. A secondary delivery must never cost the clip the
     user actually asked for — same doctrine auto_caption_clip already follows.
@@ -673,9 +703,8 @@ def render_safe_variant(clip_temp_path, output_dir, clip_filename, output_format
         print(f"   ⚠️ Safe variant failed ({type(e).__name__}: {e}) — "
               f"clip delivered with the automatic framing only.")
         return None
-    if os.environ.get("WATERMARK") == "1":
-        apply_watermark(safe_path)
-    auto_caption_clip(safe_path, transcript, clip_start, clip_end)
+    finish_rendered_clip(safe_path, transcript, clip_start, clip_end,
+                         hook_text=hook_text)
     return safe_path
 
 
@@ -966,13 +995,19 @@ def transcribe_video(video_path):
 
     return transcript
 
-def _run_gemini_stage(client, model_name, prompt, schema):
+def _run_gemini_stage(client, model_name, prompt, mode):
     """One schema-enforced Gemini call with transient-error backoff.
-    Returns (parsed_dict, cost_analysis)."""
-    config = genai_types.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=schema,
-    )
+
+    ``mode`` is "score" or "detail". The config comes from
+    gemini_worker._config_for_strategy rather than being rebuilt here: this
+    path used to pass neither temperature nor thinking config, so production
+    ran the scoring stage at the model default (1.0) where the stage wants to
+    be precise, and GEMINI_THINKING_SCORE was documented but dead outside the
+    CLI worker. One definition, one behaviour.
+
+    Returns (parsed_dict, cost_analysis).
+    """
+    config = gemini_worker._config_for_strategy("structured-schema", mode, model_name)
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
@@ -1034,23 +1069,42 @@ def get_viral_clips(transcript_result, video_duration):
             words.append({'w': word['word'], 's': word['start'], 'e': word['end']})
 
     try:
+        segments = transcript_segments(transcript_result)
         windows = build_transcript_windows(transcript_result, video_duration)
         print(f"   Built {len(windows)} scoring window(s).")
         costs = []
 
-        # --- Pass 1: score windows in batches, keep the highest-scoring ---
+        # --- Pass 1: score every window in batches, keep the highest-scoring ---
         scored = []
-        SCORE_BATCH = 8
-        for b in range(0, len(windows), SCORE_BATCH):
-            batch = windows[b:b + SCORE_BATCH]
+        unscored = []
+        # A typo here must not fail the job: the whole body sits under a broad
+        # `except Exception` that would report it as "Gemini Error, no clips".
+        try:
+            score_batch = max(int(os.environ.get("SCORE_BATCH") or 8), 1)
+        except ValueError:
+            score_batch = 8
+        for b in range(0, len(windows), score_batch):
+            batch = windows[b:b + score_batch]
             payload = [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in batch]
             prompt = gemini_worker.SCORE_PROMPT_TEMPLATE.format(
                 video_duration=video_duration, language=language,
                 windows_json=json.dumps(payload, ensure_ascii=False))
-            parsed, cost = _run_gemini_stage(client, model_name, prompt, gemini_worker.ScoreResponse)
+            parsed, cost = _run_gemini_stage(client, model_name, prompt, "score")
             if cost:
                 costs.append(cost)
-            scored.extend(parsed.get("windows") or [])
+            # Reconciled against THIS batch, not the global list. A window the
+            # model silently omitted would otherwise drop out of the ranking
+            # altogether — the same loss the batch cap used to cause, through a
+            # different door — and an id hallucinated here that happens to
+            # belong to another batch would be accepted as if it had been
+            # scored, hiding the real omission behind a fabricated score.
+            batch_scored, batch_missing = reconcile_scores(
+                parsed.get("windows") or [], batch)
+            scored.extend(batch_scored)
+            unscored.extend(batch_missing)
+
+        if unscored:
+            print(f"   ⚠️ {len(unscored)} window(s) came back unscored; ranked last.")
 
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.
@@ -1060,16 +1114,25 @@ def get_viral_clips(transcript_result, video_duration):
         shortlist = [by_id[w["id"]] for w in scored[:target] if w.get("id") in by_id]
         if not shortlist:
             shortlist = windows[:target]  # scoring returned nothing usable
-        print(f"   Shortlisted {len(shortlist)} window(s) for detail.")
+        # The clip-count target is derived BEFORE merging: merging reshapes the
+        # payload, it does not select less material, and the floor rests on a
+        # retention measurement (see clip_count_targets) that must not move as a
+        # side effect of two windows happening to be adjacent.
+        min_clips, max_clips = clip_count_targets(len(shortlist))
+        merged = merge_overlapping_windows(shortlist, segments)
+        print(f"   Shortlisted {len(shortlist)} window(s) → {len(merged)} block(s) for detail.")
 
         # --- Pass 2: detailed clip extraction on the shortlist ---
-        payload = [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in shortlist]
-        min_clips, max_clips = clip_count_targets(len(shortlist))
+        # Chronological (merge_overlapping_windows sorts) and de-duplicated, with
+        # per-sentence [SECONDS] anchors so the model reads real times instead of
+        # interpolating them out of 90s of prose.
+        payload = [{"id": w["id"], "start": w["start"], "end": w["end"],
+                    "text": window_text_with_anchors(w, segments)} for w in merged]
         prompt = gemini_worker.DETAIL_PROMPT_TEMPLATE.format(
             video_duration=video_duration, language=language,
             min_clips=min_clips, max_clips=max_clips,
             windows_json=json.dumps(payload, ensure_ascii=False))
-        detail, cost = _run_gemini_stage(client, model_name, prompt, gemini_worker.DetailResponse)
+        detail, cost = _run_gemini_stage(client, model_name, prompt, "detail")
         if cost:
             costs.append(cost)
 
@@ -1078,6 +1141,14 @@ def get_viral_clips(transcript_result, video_duration):
         for s in shorts:
             ns, ne = snap_clip_to_words(s.get("start", 0), s.get("end", 0), words, video_duration)
             s["start"], s["end"] = ns, ne
+
+        # Two clips covering the same footage are two renders of one video. The
+        # DIVERSITY rule in the prompt is the first line of defence; this is the
+        # one that does not depend on the model complying.
+        deduped = drop_overlapping_clips(shorts)
+        if len(deduped) != len(shorts):
+            print(f"   ✂️ Dropped {len(shorts) - len(deduped)} overlapping/degenerate clip(s).")
+        shorts = deduped
 
         # Aggregate cost across both passes.
         cost_analysis = None
@@ -1140,6 +1211,9 @@ def get_visual_clips(video_path, video_duration, language="en"):
 
         prompt = gemini_worker.VISUAL_PROMPT_TEMPLATE.format(
             video_duration=video_duration, language=language)
+        # Built here rather than through gemini_worker._config_for_strategy:
+        # that helper only knows the "score" and "detail" stages, and this one
+        # is neither — it uploads a file and answers with VisualResponse.
         config = genai_types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=gemini_worker.VisualResponse,
@@ -1287,7 +1361,11 @@ if __name__ == '__main__':
     if args.skip_analysis:
         print("⏩ Skipping analysis, processing entire video...")
         output_file = args.output if args.output else os.path.join(output_dir, f"{video_title}_vertical.mp4")
-        render_clip(input_video, output_file, output_format)
+        if render_clip(input_video, output_file, output_format):
+            # This path renders the whole video and never reaches the per-clip
+            # loop, so it needs its own branding call or the one output a
+            # --skip-analysis run produces comes out unmarked.
+            branding.apply_branding(output_file)
     else:
         # Get duration (needed by both the transcript and the vision path).
         cap = cv2.VideoCapture(input_video)
@@ -1398,12 +1476,9 @@ if __name__ == '__main__':
                     subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
                     success = render_clip(clip_temp_path, clip_final_path, output_format)
-                    if success and os.environ.get("WATERMARK") == "1":
-                        apply_watermark(clip_final_path)
                     if success:
-                        # Captions last, so they sit on top of the watermark and
-                        # the canonical file stays clean for re-styling.
-                        auto_caption_clip(clip_final_path, transcript, start, end)
+                        finish_rendered_clip(clip_final_path, transcript, start, end,
+                                             hook_text=clip.get('viral_hook_text'))
                         print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
                     if success and reframe_v2.VARIANT_SAFE in variants:
                         # After the auto variant, never before: app.py's partial
@@ -1411,7 +1486,8 @@ if __name__ == '__main__':
                         # canonical file exists, and the A/B toggle is only
                         # offered once that file is on disk.
                         render_safe_variant(clip_temp_path, output_dir, clip_filename,
-                                            output_format, transcript, start, end)
+                                            output_format, transcript, start, end,
+                                            hook_text=clip.get('viral_hook_text'))
                     return success
                 finally:
                     if os.path.exists(clip_temp_path):
