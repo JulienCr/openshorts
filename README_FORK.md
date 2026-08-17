@@ -24,6 +24,11 @@ en entier, et c'est ce que je déploie.
 L'amont arrive par merge, jamais par rebase. Un rebase imposerait un force-push et
 me ferait résoudre les mêmes conflits à chaque synchro. Un merge les résout une fois.
 
+Ce qu'il y a dedans, PR par PR, et les onze gestes qui le vérifient à la main :
+[`docs/release-2026-08.html`](docs/release-2026-08.html) — ouvrable tel quel, ou
+[publié ici](https://claude.ai/code/artifact/d529cdae-8e53-48b7-b24f-bb9f91d2a398).
+Rien ne tourne en CI sur ce fork, donc cette recette est la seule porte qui existe.
+
 ## Au quotidien
 
 ```bash

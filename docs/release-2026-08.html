@@ -1,0 +1,1540 @@
+<!--
+  « Recette d'août » — note de release + recette fonctionnelle du fork.
+
+  CE FICHIER EST VOLONTAIREMENT SANS DOCTYPE, ET SANS BALISE html, head NI body.
+  Il est publié tel quel en Artifact, et l'hôte l'enveloppe dans ce squelette
+  au moment du publish : les rajouter ici casse le rendu publié.
+
+  Le meta charset ci-dessous n'est pas décoratif : sans lui, le fichier ouvert
+  en file:// depuis le dépôt se décode dans la locale du système et tous les
+  accents partent en charabia. Il doit rester dans le premier kilo-octet.
+
+  Aucune ressource externe (la CSP de l'artifact bloque tout hôte distant).
+  La seule police embarquée est Anton, sous-ensemble latin, en data URI —
+  c'est la police que le pipeline brûle lui-même sur les clips.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recette d'août</title>
+
+<style>
+@font-face {
+  font-family: "Anton Sub";
+  src: url("data:font/woff;base64,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") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Lumen · Night Foundry, retourné au jour. Papier froid, accent laiton. */
+  --paper:    #f6f7fa;
+  --paper-2:  #ffffff;
+  --paper-3:  #eceef4;
+  --ink:      #171a22;
+  --ink-2:    #3a4052;
+  --muted:    #6c7488;
+  --rule:     #dde0e9;
+  --rule-2:   #c3c9d8;
+
+  --brass:        #a25a12;  /* valeurs mesurées, et rien d'autre */
+  --brass-bright: #d08a2e;  /* filets et remplissages, jamais du texte */
+  --brass-wash:   #f7ecdc;
+  --coral:        #b0342a;  /* ce qui n'est pas fait */
+  --ok:           #1b6f47;  /* ce qui est prouvé */
+
+  --font-display: "Anton Sub", "Anton", "Haettenschweiler", "Arial Narrow", sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --measure: 68ch;
+  --gutter: 10rem;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink-2);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+a { color: var(--brass); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { color: var(--ink); }
+
+code, kbd, samp { font-family: var(--font-mono); font-size: 0.86em; }
+p code, li code, td code, dd code {
+  background: var(--paper-3);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.08em 0.34em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* ─────────────────────────────  ossature  ───────────────────────────── */
+
+.doc {
+  max-width: 82rem;
+  margin-inline: auto;
+  padding: 0 clamp(1.25rem, 5vw, 4rem) 8rem;
+}
+
+.band {
+  display: grid;
+  grid-template-columns: minmax(0, var(--measure));
+  gap: 0;
+  padding-block: clamp(2.75rem, 6vw, 4.5rem);
+  border-top: 1px solid var(--rule);
+}
+.band > .gutter { display: none; }
+.band > .flow { min-width: 0; }
+
+@media (min-width: 62rem) {
+  .band {
+    grid-template-columns: var(--gutter) minmax(0, var(--measure));
+    column-gap: 3.5rem;
+  }
+  .band > .gutter { display: block; }
+}
+
+.gutter { padding-top: 0.6rem; }
+.gutter .num {
+  font-family: var(--font-display);
+  font-size: 2.6rem;
+  line-height: 0.85;
+  color: var(--ink);
+  letter-spacing: 0.005em;
+  display: block;
+}
+.gutter .num.quiet { color: var(--rule-2); }
+.gutter .stamp {
+  display: block;
+  margin-top: 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+.eyebrow.brass { color: var(--brass); }
+
+h1, h2, h3 { color: var(--ink); text-wrap: balance; }
+
+h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(1.85rem, 3.4vw, 2.7rem);
+  line-height: 1.02;
+  letter-spacing: 0.004em;
+  margin: 0 0 1.1rem;
+}
+
+h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: 2rem 0 0.6rem;
+}
+
+.flow > * + * { margin-top: 1.05rem; }
+.flow > h3 + * { margin-top: 0.5rem; }
+p { margin: 0; }
+strong { color: var(--ink); font-weight: 650; }
+
+/* ─────────────────────────────  bandeau  ───────────────────────────── */
+
+.masthead {
+  padding-block: clamp(3.5rem, 9vw, 7rem) clamp(2.5rem, 5vw, 4rem);
+  border-bottom: 1px solid var(--rule);
+}
+.masthead .kicker {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brass);
+  margin: 0 0 1.2rem;
+}
+.masthead h1 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(3rem, 11vw, 7.5rem);
+  line-height: 0.88;
+  letter-spacing: 0.002em;
+  margin: 0;
+  max-width: 15ch;
+}
+.masthead .lede {
+  margin: 1.75rem 0 0;
+  max-width: 62ch;
+  font-size: clamp(1.05rem, 1.5vw, 1.22rem);
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.masthead .lede strong { color: var(--ink); }
+
+.dateline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+  margin-top: 2.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.dateline b { color: var(--ink); font-weight: 500; }
+
+/* ─────────────────────────────  sommaire  ───────────────────────────── */
+
+.index { list-style: none; margin: 0; padding: 0; }
+.index li {
+  display: grid;
+  grid-template-columns: 3.4rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+.index li:first-child { border-top: 1px solid var(--rule); }
+.index .id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brass);
+  letter-spacing: 0.02em;
+}
+.index .what { color: var(--ink); font-weight: 600; font-size: 0.98rem; }
+.index .why { grid-column: 2; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+.index li.gap .id { color: var(--rule-2); font-weight: 500; }
+.index li.gap .what { color: var(--muted); font-weight: 500; font-style: italic; }
+
+/* ────────────────────────  bande de mesure  ──────────────────────── */
+
+.measured {
+  margin-top: 1.6rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--brass-bright);
+  background: var(--paper-2);
+  border-radius: 4px;
+  padding: 1rem 1.15rem;
+  display: grid;
+  gap: 0.9rem;
+}
+.measured .cap {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.m-row { display: grid; gap: 0.3rem; }
+.m-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+}
+.m-name { color: var(--ink-2); margin-right: auto; font-size: 12.5px; }
+.m-before { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.m-arrow { color: var(--rule-2); }
+.m-after { color: var(--brass); font-weight: 700; }
+.m-bars { display: grid; gap: 3px; }
+.m-bar { height: 4px; border-radius: 2px; background: var(--rule); }
+.m-bar span { display: block; height: 100%; border-radius: 2px; background: var(--rule-2); width: var(--w, 100%); }
+.m-bar.after span { background: var(--brass-bright); }
+
+/* ─────────────────────  le cadre 9:16 (signature)  ───────────────────── */
+
+.frame-fig {
+  margin: 1.9rem 0 0;
+  display: grid;
+  gap: 1.5rem 2rem;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+@media (min-width: 34rem) {
+  .frame-fig { grid-template-columns: 178px minmax(0, 1fr); }
+}
+
+.frame {
+  position: relative;
+  width: 178px;
+  max-width: 100%;
+  height: 316px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule-2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: repeating-linear-gradient(
+    -45deg, var(--paper-3) 0 5px, transparent 5px 10px
+  );
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  transform-origin: 50% 0;
+}
+.zone.brandband {
+  background: var(--brass-wash);
+  border-color: var(--brass-bright);
+  box-shadow: inset 0 0 0 1px var(--brass-bright);
+}
+.zone.hookline {
+  background: none;
+  border-bottom: none;
+  border-top: 1.5px dashed var(--rule-2);
+  height: 0;
+}
+/* le rail d'icônes tient le bord droit, il ne traverse pas le cadre */
+.zone.rail { left: auto; width: 22%; border-left: 1px solid var(--rule); }
+.frame .tick {
+  position: absolute;
+  left: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  transform: translateY(-50%);
+}
+.frame .tick.on { color: var(--brass); font-weight: 700; }
+
+.zone-key { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+.zone-key li {
+  display: grid;
+  grid-template-columns: 5.8rem minmax(0, 1fr);
+  gap: 0.85rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.zone-key .range {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  padding-top: 0.16rem;
+  white-space: nowrap;
+}
+.zone-key li.on .range { color: var(--brass); font-weight: 700; }
+.zone-key li.on { color: var(--ink); font-weight: 600; }
+
+figcaption {
+  grid-column: 1 / -1;
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+/* ─────────────────────────────  tableaux  ───────────────────────────── */
+
+.scroller { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; background: var(--paper-2); }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { text-align: left; padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+thead th {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--paper-3);
+}
+tbody tr:last-child td { border-bottom: none; }
+td.mono, th.mono { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; color: var(--ink); }
+td .def { color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+
+/* ─────────────────────────────  blocs code  ───────────────────────────── */
+
+pre {
+  margin: 0;
+  overflow-x: auto;
+  background: var(--ink);
+  color: #dfe3ec;
+  border-radius: 5px;
+  padding: 0.95rem 1.1rem;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  -webkit-font-smoothing: auto;
+}
+pre .c { color: #8b93a8; }
+pre .v { color: #e0a458; }
+
+/* ────────────────────────────  encadrés  ──────────────────────────── */
+
+.note {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-2);
+  background: var(--paper-2);
+  border-radius: 4px;
+  padding: 0.95rem 1.15rem;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+.note.warn { border-left-color: var(--coral); }
+.note.warn .t { color: var(--coral); }
+.note .t {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+  color: var(--muted);
+}
+
+/* ─────────────────────────────  recette  ───────────────────────────── */
+
+.cases { display: grid; gap: 0.9rem; margin-top: 1.6rem; list-style: none; padding: 0; }
+.cases > li { min-width: 0; }
+
+.case {
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 1rem 1.15rem 1.15rem;
+  scroll-margin-top: 1.5rem;
+}
+/* chaque cas est adressable : …/release-2026-08.html#t04 */
+.case:target { border-color: var(--brass); box-shadow: 0 0 0 1px var(--brass); }
+.band { scroll-margin-top: 1rem; }
+.case-head {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.7rem;
+  cursor: pointer;
+}
+.case-head input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--brass);
+  align-self: center;
+  cursor: pointer;
+  flex: none;
+}
+.case-id {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--brass);
+  letter-spacing: 0.06em;
+}
+.case-title { color: var(--ink); font-weight: 650; font-size: 0.98rem; line-height: 1.35; }
+.case-head input:checked ~ .case-title { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--rule-2); }
+
+.case dl {
+  margin: 0.9rem 0 0;
+  display: grid;
+  /* minmax(0,…) et non 1fr : la piste par défaut refuse de descendre sous la
+     largeur de son contenu, et un <pre> à lignes longues élargit alors la carte
+     jusqu'à faire défiler la page entière au lieu de défiler lui-même. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem 1rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+@media (min-width: 40rem) {
+  .case dl { grid-template-columns: 5.4rem minmax(0, 1fr); }
+}
+.case dt {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 0.24rem;
+}
+.case dd { margin: 0; min-width: 0; color: var(--ink-2); }
+.case dd.fail { color: var(--coral); }
+.case dt.fail { color: var(--coral); }
+.case dd > pre { margin-top: 0.35rem; }
+.case dd > * + * { margin-top: 0.5rem; }
+
+/* ───────────────────────────  listes simples  ─────────────────────────── */
+
+ul.plain, ol.plain { margin: 0; padding-left: 1.15rem; display: grid; gap: 0.6rem; }
+ul.plain li, ol.plain li { line-height: 1.55; }
+ul.plain li::marker { color: var(--rule-2); }
+ol.plain li::marker { color: var(--muted); font-family: var(--font-mono); font-size: 0.82em; }
+
+.open-issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.85rem; }
+.open-issues li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: baseline;
+  font-size: 0.93rem;
+  line-height: 1.55;
+}
+.open-issues .flag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--coral);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0.1rem 0.36rem;
+  white-space: nowrap;
+}
+.open-issues .flag.soft { color: var(--muted); }
+
+/* ─────────────────────────────  colophon  ───────────────────────────── */
+
+.colophon {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 68ch;
+}
+.colophon strong { color: var(--ink-2); }
+
+/* ─────────────────────────────  mouvement  ───────────────────────────── */
+
+/* Le mouvement n'existe que si le script a pu l'armer : sans JS, sans
+   IntersectionObserver ou en mouvement réduit, la classe .anim n'est jamais
+   posée et tout est visible d'emblée. Une page invisible par défaut, réparée
+   par du JavaScript, est une page blanche dès que le JavaScript casse. */
+@media (prefers-reduced-motion: no-preference) {
+  .anim .reveal { opacity: 0; transform: translateY(14px); }
+  .anim .reveal.seen {
+    opacity: 1;
+    transform: none;
+    transition: opacity 520ms cubic-bezier(0.16, 1, 0.3, 1),
+                transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .anim .frame.draw .zone { transform: scaleY(0.02); opacity: 0; }
+  .anim .frame.draw.seen .zone {
+    transform: none;
+    opacity: 1;
+    transition: transform 640ms cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 400ms linear;
+    transition-delay: calc(var(--i, 0) * 70ms);
+  }
+}
+</style>
+
+<script>
+/* Armé avant le premier rendu, sinon le contenu s'affiche puis disparaît. */
+(function () {
+  var m = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)");
+  if (m && m.matches) return;
+  if (!("IntersectionObserver" in window)) return;
+  document.documentElement.classList.add("anim");
+})();
+</script>
+
+<main class="doc" lang="fr">
+
+  <!-- ══════════════════════════ bandeau ══════════════════════════ -->
+  <header class="masthead">
+    <p class="kicker">Fork OpenShorts · 9 → 17 août 2026</p>
+    <h1>Recette d'août</h1>
+    <p class="lede">
+      Trente-huit commits, cinq PR et un lot pré-PR séparent ce fork de l'amont.
+      Aucun n'a été validé par une CI : <strong>le workflow existe et n'a jamais tourné une seule fois</strong>,
+      et les cinq PR ont mergé sans le moindre check derrière elles. Une note de release qui
+      s'arrêterait à « voilà ce qui a changé » serait donc à moitié inutile.
+      Celle-ci dit aussi <strong>quoi cliquer pour le prouver</strong>, parce que personne d'autre ne le fera.
+    </p>
+    <p class="dateline">
+      <span>arrêté au commit <b>0cd7b28</b></span>
+      <span>écart amont <b>+38 / −0</b></span>
+      <span>PR <b>#2 #3 #4 #5 #7</b></span>
+      <span>suite backend <b>809 verts</b></span>
+    </p>
+  </header>
+
+  <!-- ══════════════════════════ sommaire ══════════════════════════ -->
+  <section class="band reveal" id="sommaire">
+    <div class="gutter"><span class="stamp">Sommaire</span></div>
+    <div class="flow">
+      <p class="eyebrow">Ce que couvre cette release</p>
+      <h2>Cinq PR, et un lot arrivé avant qu'on en fasse</h2>
+      <p>
+        Les numéros ci-dessous sont ceux des vraies pull requests du fork, avec leur trou.
+        Le <code>#6</code> manquant n'est pas une PR oubliée : c'est une issue ouverte.
+      </p>
+
+      <ul class="index">
+        <li>
+          <span class="id">socle</span>
+          <span class="what">Ingest local, GPU, bibliothèque, reprise</span>
+          <span class="why">Merge direct <code>1464184</code>, écrit le 9 août — avant l'adoption des PR.</span>
+        </li>
+        <li>
+          <span class="id">#2</span>
+          <span class="what">Staging des sources lentes, et le batch</span>
+          <span class="why">Le dossier source est sur un Google Drive ; le pipeline y fait douze seeks, pas une lecture.</span>
+        </li>
+        <li>
+          <span class="id">#3</span>
+          <span class="what">La marque de chaîne brûlée dans chaque clip</span>
+          <span class="why">Les clips sortaient sans identité. Le placement est tout le design.</span>
+        </li>
+        <li>
+          <span class="id">#4</span>
+          <span class="what">Le score choisit la shortlist, les coupes évitent le silence</span>
+          <span class="why">Un plafond de prompt, pas le score, décidait ce qui remontait.</span>
+        </li>
+        <li>
+          <span class="id">#5</span>
+          <span class="what">Un look serveur par défaut, appliqué au submit</span>
+          <span class="why">Styler n'était joignable qu'après le rendu, un clip à la fois, dans une modale.</span>
+        </li>
+        <li class="gap">
+          <span class="id">#6</span>
+          <span class="what">issue ouverte, pas une PR</span>
+          <span class="why">Les effets de zoom de <code>/api/edit</code> recadrent et déplacent les marques brûlées.</span>
+        </li>
+        <li>
+          <span class="id">#7</span>
+          <span class="what">Deux rendus par clip, et la caméra qui se calme</span>
+          <span class="why">Trois symptômes remontés sur des podcasts multicam 60 fps. Deux traités, un non.</span>
+        </li>
+        <li class="gap">
+          <span class="id">#8</span>
+          <span class="what">ouverte, pas encore mergée</span>
+          <span class="why">Un montage 9p resté dans <code>/proc/mounts</code> avec son transport mort dessous. Hors périmètre de cette note.</span>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ le socle ══════════════════════════ -->
+  <section class="band reveal" id="socle">
+    <div class="gutter">
+      <span class="stamp">9 août<br>1464184</span>
+    </div>
+    <div class="flow">
+      <p class="eyebrow">Hors PR · merge direct</p>
+      <h2>Le socle</h2>
+      <p>
+        Cinq changements livrés avant que le fork n'adopte la convention PR. Ils ne sont
+        documentés nulle part ailleurs que dans leurs messages de commit, d'où leur place ici.
+      </p>
+
+      <h3>Ingest par chemin</h3>
+      <p>
+        Une source de 6 à 12 Go ne passe pas par un upload multipart : elle se recopierait
+        entièrement pour se faire refuser par <code>MAX_FILE_SIZE_MB</code> (2 Go).
+        <code>local_path</code> la traite sur place. Barrée trois fois — éteinte sans
+        <code>LOCAL_INGEST_DIR</code>, refusée dès <code>BILLING_ENABLED</code> (un locataire payant
+        ne lit jamais le disque de l'opérateur), et confinée par comparaison de <code>realpath</code>,
+        ce qui tient contre <code>../</code> comme contre un lien symbolique sortant.
+      </p>
+
+      <h3>Whisper large-v3 sur GPU</h3>
+      <p>
+        Le défaut « small » était un compromis CPU. Or le transcript n'est pas seulement du
+        sous-titre : c'est le texte que Gemini lit pour trouver les moments, donc une ligne mal
+        transcrite est un clip qui n'existera jamais. Mesuré sur RTX 4090 : ~15× le temps réel
+        en float16, soit une douzaine de minutes pour trois heures d'enregistrement.
+      </p>
+
+      <h3>Bibliothèque de projets</h3>
+      <p>
+        En self-host, un job terminé devenait injoignable dès l'onglet fermé — les routes
+        d'historique vivent derrière R2 et un compte. Le balayage de rétention supprimait
+        ensuite le dossier une heure plus tard : avec la sauvegarde S3 en option, c'était
+        de la perte de données. <code>JOB_RETENTION_SECONDS</code> passe à <code>0</code> hors
+        facturation, et <strong><code>0</code> veut dire « jamais », pas « tout de suite »</strong>.
+      </p>
+
+      <h3>Reprise d'un job interrompu</h3>
+      <p>
+        Le pipeline écrit <code>&lt;titre&gt;_metadata.json</code> quand Gemini a fini,
+        <strong>bien avant</strong> la première découpe. Les deux chemins de redémarrage
+        prenaient ce fichier pour une preuve de fin : l'un publiait le job comme terminé avec
+        une liste de clips dont chaque vidéo 404, l'autre déclarait « déjà fini » et supprimait
+        le manifeste de reprise — détruisant l'état des jobs que ce mécanisme existe pour sauver.
+      </p>
+
+      <h3>Shortlist proportionnelle</h3>
+
+      <div class="note">
+        <span class="t">Le vocabulaire de la sélection</span>
+        Le transcript est découpé en <strong>fenêtres</strong> d'environ 90 secondes, chacune
+        chevauchant la précédente d'une trentaine de secondes pour qu'aucun moment ne soit coupé
+        en deux. Une <strong>première passe</strong>, dite <em>de scoring</em>, les note toutes,
+        par lots, et on ne garde que les meilleures : c'est la <strong>shortlist</strong>. Une
+        <strong>seconde passe</strong>, dite <em>détail</em>, ne lit que celle-là, et c'est elle
+        qui fabrique les clips et écrit les titres. Une fenêtre qui n'atteint pas la passe détail
+        a donc été notée — donc payée — puis jetée.
+      </div>
+
+      <p>
+        Seules <strong>dix fenêtres</strong> franchissaient la passe détail, quelle que soit la
+        durée de la source. Sur une vidéo de 15 minutes, qui produit ~13 fenêtres, dix en couvrent
+        77 % ; sur un live de deux heures, qui en produit ~79, les dix mêmes n'en couvrent plus
+        que 13 % — les 87 % restants notés puis jetés. La shortlist devient ~30 % des fenêtres, son plafond bornée entre 10 et 24 —
+        et le résultat reste borné par le nombre de fenêtres disponibles, donc cinq fenêtres en
+        donnent cinq, pas dix. Une part des <em>fenêtres</em> et non du temps, parce que les
+        fenêtres sont construites sur la parole : un live avec vingt minutes d'écran
+        « ça commence bientôt » ne doit pas en être crédité.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ PR #2 ══════════════════════════ -->
+  <section class="band reveal" id="pr2">
+    <div class="gutter">
+      <span class="num">#2</span>
+      <span class="stamp">16 août<br>+1729 / −108</span>
+    </div>
+    <div class="flow">
+      <p class="eyebrow">feat(ingest) · feat(self-host)</p>
+      <h2>Staging des sources lentes, et le batch</h2>
+
+      <h3>Pourquoi</h3>
+      <p>
+        Le dossier source est sur un Google Drive, atteint depuis WSL en 9p. Lire une source
+        « là où elle est » est juste sur le disque du serveur et faux ici, parce que le pipeline
+        n'est pas une lecture séquentielle : ffprobe, l'extraction audio pour Whisper, le
+        détecteur de scènes qui décode tout le fichier, les douze seeks du sélecteur de layout,
+        puis un décodage par clip à l'extraction et un autre au reframe.
+      </p>
+
+      <div class="measured">
+        <p class="cap">Mesuré sur ce déploiement, même machine</p>
+        <div class="m-row">
+          <p class="m-head">
+            <span class="m-name">douze seeks + 1 Mo · 9p → ext4</span>
+            <span class="m-before">10,58 s</span>
+            <span class="m-arrow">→</span>
+            <span class="m-after">0,01 s</span>
+          </p>
+          <div class="m-bars">
+            <div class="m-bar"><span style="--w:100%"></span></div>
+            <div class="m-bar after"><span style="--w:1%"></span></div>
+          </div>
+        </div>
+        <div class="m-row">
+          <p class="m-head">
+            <span class="m-name">débit séquentiel · 9p → ext4</span>
+            <span class="m-before">110 Mo/s</span>
+            <span class="m-arrow">→</span>
+            <span class="m-after">2434 Mo/s</span>
+          </p>
+        </div>
+      </div>
+      <p>
+        C'est la colonne des seeks qui décide, pas celle du débit. Une rediffusion de 4,3 Go se
+        copie une fois en 38 s, et toutes les passes suivantes deviennent gratuites.
+      </p>
+
+      <h3>Ce qui change</h3>
+      <ul class="plain">
+        <li>
+          <strong><code>local_stage.py</code></strong> — copie une source sur le disque local quand
+          son système de fichiers est lent, décidé en lisant <code>/proc/self/mountinfo</code>
+          contre une liste blanche. Un bind mount Docker rapporte le superbloc sous-jacent, donc
+          <code>/ingest/replays</code> se lit <code>9p</code> et <code>/ingest/inbox</code>
+          <code>ext4</code>. Cache clé sur realpath + taille + mtime, TTL 12 h, éviction LRU sous
+          plafond, compté par référence pour qu'un job en cours ne soit jamais évincé.
+        </li>
+        <li>
+          <strong><code>POST /api/process/batch</code> et <code>GET /api/jobs</code></strong> —
+          soumettre une liste, sonder tout le roster en une lecture mémoire.
+        </li>
+        <li>
+          <strong>Une seconde voie de jobs</strong> — file, sémaphore et répartiteur propres,
+          plafonnés par <code>LOCAL_BATCH_CONCURRENCY</code> (défaut 1), pour que trente
+          enregistrements en attente ne fassent jamais patienter un fichier lancé à la main.
+        </li>
+        <li>
+          <strong>Dashboard</strong> — l'onglet <em>on server</em> devient une liste à cocher avec
+          filtre, plus une bande de suivi de batch repliable. Un fichier seul emprunte exactement
+          le chemin qu'il empruntait avant.
+        </li>
+      </ul>
+
+      <div class="note">
+        <span class="t">Trois choses porteuses</span>
+        La copie garde le <strong>basename d'origine</strong> (<code>stage/&lt;clé&gt;/&lt;nom&gt;</code>,
+        jamais un nom haché) — <code>main.py</code> dérive le titre du projet du basename, et un
+        hash renommerait en charabia les trente projets d'un batch.
+        Le <strong>sémaphore global est toujours pris en dernier</strong> : le répartiteur distribue
+        un slot global <em>avant</em> que le job tourne, donc un second sémaphore pris à l'intérieur
+        laisserait chaque job de batch occuper un slot pendant qu'il attend le plafond de sa voie —
+        et une <code>PriorityQueue</code> ne préempte pas.
+        La copie a lieu <strong>après</strong> la prise du slot, pas au submit : trente fichiers de
+        8 Go tenteraient sinon de poser 240 Go à l'intérieur d'un handler HTTP.
+      </div>
+
+      <h3>Bugs trouvés en chemin</h3>
+      <ul class="plain">
+        <li>
+          <code>_enforce_output_size_cap</code> purgeait les plus vieux dossiers <strong>sans
+          vérifier si l'un tournait</strong>. Trente jobs, c'est exactement la forme qui franchit
+          <code>OUTPUT_MAX_GB</code> en plein rendu — et un <code>rmtree</code> sur un job vivant
+          supprime le travail sous ses pieds sans même libérer la place.
+        </li>
+        <li>
+          Les balayages d'âge sur les uploads manquaient la garde <code>&gt; 0</code> que le
+          balayage d'<code>OUTPUT_DIR</code> possède. En self-host, <code>JOB_RETENTION_SECONDS</code>
+          vaut 0 — qui se lit « garder toujours » — donc <strong>chaque upload était supprimé dans
+          les cinq minutes</strong>, source d'un job en cours comprise.
+        </li>
+        <li>
+          Les octets échappés de <code>mountinfo</code> étaient décodés caractère par caractère,
+          transformant <code>partagés</code> en <code>partagÃ©s</code> — et un point de montage qui
+          ne matche pas se lit silencieusement « stockage rapide ». Le vrai chemin contient un
+          espace, donc celui-là aurait mordu. Attrapé par un test.
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ PR #3 ══════════════════════════ -->
+  <section class="band reveal" id="pr3">
+    <div class="gutter">
+      <span class="num">#3</span>
+      <span class="stamp">16 août<br>+1336 / −15</span>
+    </div>
+    <div class="flow">
+      <p class="eyebrow">feat(branding)</p>
+      <h2>La marque de chaîne, brûlée dans chaque clip</h2>
+
+      <h3>Pourquoi</h3>
+      <p>
+        Les clips sortaient sans identité. Le logo de la chaîne à gauche, un badge secondaire
+        (le pseudo Twitch) à droite, sur une ligne près du haut du cadre — depuis des PNG déposés
+        dans <code>assets/brand/</code>, ignorés par git, avec le README versionné pour que la
+        convention voyage.
+      </p>
+
+      <h3>Le placement est tout le design</h3>
+      <p>
+        Trois choses possèdent déjà des morceaux d'un cadre 9:16. La bande de marque doit se
+        glisser entre elles, pas par-dessus.
+      </p>
+
+      <figure class="frame-fig">
+        <div class="frame draw" aria-hidden="true">
+          <div class="zone" style="--i:0; top:0; height:12%"></div>
+          <div class="zone brandband" style="--i:1; top:13%; height:4.1%"></div>
+          <div class="zone hookline" style="--i:2; top:20%"></div>
+          <div class="zone rail" style="--i:3; top:52%; height:38%"></div>
+          <div class="zone" style="--i:4; top:59%; height:26%"></div>
+          <div class="zone" style="--i:5; top:86%; height:14%"></div>
+          <span class="tick on" style="top:15.1%">13&nbsp;–&nbsp;17,1&nbsp;%</span>
+        </div>
+        <ul class="zone-key">
+          <li><span class="range">0 → 12 %</span><span>Chrome de la plateforme — onglets TikTok, recherche Shorts</span></li>
+          <li class="on"><span class="range">13 → 17,1 %</span><span>La bande de marque</span></li>
+          <li><span class="range">20 %</span><span>Carte du hook, position <code>top</code> par défaut</span></li>
+          <li><span class="range">52 → 90 %</span><span>Rail d'icônes de droite</span></li>
+          <li><span class="range">59 → 85 %</span><span>Sous-titres brûlés (<code>SAFE_MARGIN_V</code>)</span></li>
+          <li><span class="range">86 → 100 %</span><span>Pseudo, audio, navigation</span></li>
+        </ul>
+        <figcaption>
+          Vérifié en rendant un cadre 1080×1920, en y brûlant les deux marques et en compositant
+          les zones de la plateforme par-dessus : la bande tombe à y 0,130–0,171, dégagée de tout.
+        </figcaption>
+      </figure>
+
+      <h3><code>BRAND_Y_RATIO</code> est le bord HAUT de la bande, pas son centre</h3>
+      <p>
+        Ancrer le centre a été essayé en premier et c'est faux. La hauteur de la bande dépend du
+        rapport d'aspect du logo, que l'opérateur choisit : un logo 3:1 centré sur 0,13 mettait son
+        bord haut à <strong>0,109</strong> — de retour sous les onglets TikTok. Le bord haut de la
+        marque la plus haute est maintenant épinglé à <code>BRAND_Y_RATIO</code> et les marques plus
+        courtes sont centrées contre elle, donc un asset plus grand grandit vers le bas.
+      </p>
+
+      <h3>Ce que ce n'est pas</h3>
+      <p>
+        <strong>Pas <code>apply_watermark</code>.</strong> Celui-là est la marque <em>défensive</em>
+        du plan gratuit hébergé, garée exprès à 40 % de la hauteur pour qu'un utilisateur gratuit ne
+        puisse pas la recadrer. Celle-ci est cosmétique et reste délibérément à l'écart. Les deux
+        drapeaux peuvent être levés en même temps ; leurs bandes ne se touchent jamais.
+      </p>
+
+      <div class="note warn">
+        <span class="t">Le bug qui traverse trois PR</span>
+        Éteindre un drapeau par job veut dire écrire <code>"0"</code>, <strong>jamais</strong>
+        <code>env.pop()</code>. Le processus fils lance <code>main.py</code>, qui appelle
+        <code>load_dotenv()</code>, dont le défaut est <code>override=False</code> : dotenv
+        remplit toute variable <em>absente</em>. Supprimer la clé rend donc le dernier mot à
+        <code>.env</code>, et <code>BRAND_WATERMARK=1</code> y rallumait silencieusement un job
+        que l'utilisateur avait explicitement décoché. Mesuré, pas supposé — et les tests qui
+        affirmaient <code>"BRAND_WATERMARK" not in env</code> passaient joyeusement pendant ce temps.
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ PR #4 ══════════════════════════ -->
+  <section class="band reveal" id="pr4">
+    <div class="gutter">
+      <span class="num">#4</span>
+      <span class="stamp">17 août<br>+940 / −143</span>
+    </div>
+    <div class="flow">
+      <p class="eyebrow">fix(selection)</p>
+      <h2>Le score choisit la shortlist, les coupes évitent le silence</h2>
+
+      <h3>Pourquoi</h3>
+      <p>
+        La passe de scoring ne pouvait pas rendre plus de <strong>37,5 %</strong> du matériel : le
+        prompt disait <code>Choose up to 3 windows from this batch</code> contre des lots de huit.
+        Le plafond, pas le score, était la contrainte active — et le tri global départageait des
+        candidats qui avaient déjà été élus localement, à partir de scores notés dans des appels
+        séparés, donc non comparables entre eux.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Source</th><th class="mono">Fenêtres</th><th class="mono">Max scoré</th><th class="mono">Demandé</th><th class="mono">Réel</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>15 min</td><td class="mono">13</td><td class="mono">6</td><td class="mono">10</td><td class="mono">6</td></tr>
+            <tr><td>2 h</td><td class="mono">79</td><td class="mono">30</td><td class="mono">24</td><td class="mono">24</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Rien ne dédupliquait non plus. Les fenêtres se chevauchent de ~30 s par construction : deux
+        voisines, notées pareil parce qu'elles partagent leur texte, entraient toutes les deux dans
+        la shortlist, et la passe détail recevait les mêmes phrases deux fois sous l'ordre
+        <em>« travaille chaque fenêtre »</em>. Seule une ligne <code>DIVERSITY</code> en langage
+        naturel s'y opposait.
+      </p>
+
+      <h3>Ce qui change</h3>
+      <ul class="plain">
+        <li>
+          <strong>Noter toutes les fenêtres</strong>, avec des ancres de barème (80-100 / 50-79 /
+          20-49 / 0-19) pour rendre les lots comparables. <code>shortlist_size</code> redevient le filtre.
+        </li>
+        <li>
+          <strong><code>merge_overlapping_windows</code></strong> fusionne les voisines par indices
+          de segments — jamais par recollage de chaînes, c'est ce qui garantit que la prose partagée
+          n'apparaît qu'une fois.
+        </li>
+        <li>
+          <strong><code>drop_overlapping_clips</code></strong> est la garde qui ne dépend pas de
+          l'obéissance du modèle. Seuil à 1,0 s et non zéro : <code>snap_clip_to_words</code>
+          rembourre chaque borne de 0,35 s avant et 0,45 s après, donc deux clips consécutifs
+          partagent légitimement ~0,8 s de silence.
+        </li>
+        <li>
+          <strong>Le nombre de clips visé est calculé AVANT la fusion.</strong> Fusionner remet en
+          forme le payload, ça ne sélectionne pas moins de matériel — et ce plancher repose sur une
+          mesure de rétention (0,4 % de retour pour les utilisateurs servis en 1-3 clips, contre
+          16,1 % pour 4-9) qui ne doit pas bouger parce que deux fenêtres se trouvaient adjacentes.
+        </li>
+        <li>
+          <strong>La passe détail lit des ancres <code>[SECONDS]</code></strong>, une par segment
+          Whisper. Elle ne recevait auparavant que les bornes de sa propre fenêtre et interpolait une
+          position dans 90 s de prose. Les timings par mot coûtaient ~40× plus cher et noyaient la
+          prose que le modèle est censé juger. Les marqueurs sont <strong>tronqués, jamais
+          arrondis</strong> : un marqueur arrondi vers le haut tombe dans le premier mot de la phrase
+          qu'il marque, le modèle le renvoie comme <code>end</code>, et le snapper le lit alors comme
+          de la parole et garde le mot que le clip devait exclure.
+        </li>
+      </ul>
+
+      <div class="note warn">
+        <span class="t">Assumé, et non vérifié</span>
+        Les deux changements de prompt — noter toutes les fenêtres, et les ancres temporelles —
+        <strong>n'ont pas été validés contre un vrai run Gemini</strong>. <code>SCORE_BATCH</code>,
+        <code>CLIP_SHORTLIST_MAX</code> et <code>CLIP_TARGET_MIN/MAX</code> les rendent réversibles
+        sans redéploiement. C'est le cas de test n° 9 plus bas.
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ PR #5 ══════════════════════════ -->
+  <section class="band reveal" id="pr5">
+    <div class="gutter">
+      <span class="num">#5</span>
+      <span class="stamp">17 août<br>+2823 / −167</span>
+    </div>
+    <div class="flow">
+      <p class="eyebrow">feat(style)</p>
+      <h2>Un look serveur par défaut, appliqué au submit</h2>
+
+      <h3>Pourquoi</h3>
+      <p>
+        Styler n'était joignable qu'<strong>après</strong> le rendu, un clip à la fois, dans une
+        modale : les sous-titres partaient avec un look codé en dur, identique pour tout le monde ;
+        les onze préréglages de la modale n'étaient mémorisés nulle part ; Gemini écrivait un
+        <code>viral_hook_text</code> pour chaque clip et il n'atteignait jamais la vidéo, il attendait
+        qu'on ouvre la modale ; et <code>POST /api/process</code> n'acceptait aucun paramètre de
+        style, pas plus que la CLI ou MCP. À trente enregistrements par batch, « rouvrir la modale
+        par clip » n'est pas une option.
+      </p>
+
+      <h3>Ce qui change</h3>
+      <p>
+        <code>style.json</code> à la racine (modèle : <code>style.example.json</code>, déplaçable par
+        <code>OPENSHORTS_STYLE_FILE</code>), lu <strong>au moment du submit</strong>, portant les
+        sous-titres, le hook automatique, les layouts, le format de sortie et la porte de qualité.
+        Il atteint le renderer par <code>_build_job_env</code> — la couture que
+        <code>/api/process</code> et <code>/api/process/batch</code> partageaient déjà — dans une
+        <em>seule</em> variable <code>OPENSHORTS_STYLE</code> plutôt que quinze.
+      </p>
+
+      <h3>Quatre propriétés à ne pas défaire</h3>
+      <ul class="plain">
+        <li>
+          <strong>Lu par appel, jamais gelé à l'import.</strong> Éditer le fichier s'applique au
+          job suivant sans redémarrer le conteneur. Une constante de module ferait d'un changement
+          de couleur un redéploiement.
+        </li>
+        <li>
+          <strong>Un préréglage cassé ne coûte rien.</strong> Fichier absent, JSON malformé, clé
+          inconnue : chacun se lit « pas de préréglage » et les défauts natifs tiennent.
+        </li>
+        <li>
+          <strong>La requête bat le fichier.</strong> Un objet <code>style</code> en ligne
+          <em>remplace</em> le fichier plutôt que de s'y fondre, parce qu'un hybride moitié-fichier
+          moitié-requête est imprévisible des deux côtés.
+        </li>
+        <li>
+          <strong>Le hook automatique passe dans la même passe ffmpeg que les sous-titres.</strong>
+          Ce n'est pas une optimisation, c'est une contrainte de nommage :
+          <code>auto_caption_clip</code> écrit <code>subtitled_&lt;ts&gt;_&lt;clip&gt;.mp4</code> et
+          deux fonctions reconstruisent l'original propre à partir de ce préfixe exact. Une passe
+          séparée devrait inventer un nom hors du contrat — et facturer un second réencodage complet
+          par clip. Le <code>?</code> de <code>-map 0:a?</code> est porteur : sans lui, ffmpeg
+          abandonne sur une source muette.
+        </li>
+      </ul>
+
+      <h3>Corrige un bug de reprise préexistant</h3>
+      <p>
+        Le manifeste de reprise ne portait pas les layouts du job, et l'environnement est reconstruit
+        depuis <code>os.environ</code> au redémarrage. Un job interrompu par un redéploiement
+        finissait donc silencieusement <strong>sans</strong> SPLIT, screencast ni punch-in — invisible,
+        et pire sur un batch de trente fichiers, qui livrait deux moitiés qui ne se ressemblaient pas.
+        Le style est <em>porté</em> plutôt que relu pour la même raison : éditer <code>style.json</code>
+        pendant qu'un job attend en file couperait ce job en deux.
+      </p>
+
+      <div class="note">
+        <span class="t">Compromis connu</span>
+        Re-dériver un clip (un effet, un restylage des sous-titres) fait tomber le hook automatique.
+        <code>_reapply_captions</code> refuse de le rejouer <em>exprès</em> : l'un de ses deux
+        appelants est <code>/api/hook</code>, et le rejouer empilerait la carte du préréglage sur
+        celle que l'utilisateur vient d'écrire.
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ PR #7 ══════════════════════════ -->
+  <section class="band reveal" id="pr7">
+    <div class="gutter">
+      <span class="num">#7</span>
+      <span class="stamp">17 août<br>+2232 / −301</span>
+    </div>
+    <div class="flow">
+      <p class="eyebrow">feat(clips) · fix(camera) · fix(reframe)</p>
+      <h2>Deux rendus par clip, et la caméra qui se calme</h2>
+
+      <h3>Pourquoi</h3>
+      <p>
+        Trois symptômes signalés sur des podcasts multicam — trois à quatre personnes, trois caméras,
+        60 fps : la caméra hésite et balaye, les clips coupent dans le vide, le rendu cadre quelqu'un
+        qui ne parle pas. Le deuxième est traité par la PR #4. Cette PR couvre le reste.
+      </p>
+
+      <h3>Le filet de sécurité : deux rendus par clip</h3>
+      <p>
+        <code>variants=auto,safe</code>, case pré-cochée dans le dashboard, bascule A/B sur chaque
+        carte de résultat. La version <em>safe</em> est l'image 16:9 entière sur fond flou, caméra
+        fixe, aucun choix de sujet — la version qui ne peut pas se tromper.
+      </p>
+      <p>
+        C'est une fonction dédiée, <strong>pas un drapeau qui traverse <code>render()</code></strong>.
+        Trois raisons, toutes porteuses : <code>render()</code> a déjà payé la détection de scènes et
+        l'analyse de stratégie avant sa boucle, et ceci n'a besoin d'aucune détection ;
+        <code>process_video_to_vertical</code> avale toute exception v2 et retombe silencieusement sur
+        la boucle v1, qui ignorerait le drapeau et livrerait un rendu suivi étiqueté « safe » ; et les
+        drapeaux de layout sont des globales de module qu'un sélecteur mute à l'échelle du processus
+        pendant que trois clips rendent en threads. <strong>Ne lire aucun drapeau rend « la caméra
+        ne bouge jamais » structurel plutôt que conditionnel.</strong>
+      </p>
+
+      <div class="measured">
+        <p class="cap">93 s de plans TRACK, issues de trois vrais enregistrements</p>
+        <div class="m-row">
+          <p class="m-head">
+            <span class="m-name">mouvement de recadrage à l'écran</span>
+            <span class="m-before">72,1 px/s</span>
+            <span class="m-arrow">→</span>
+            <span class="m-after">35,1 px/s</span>
+          </p>
+          <div class="m-bars">
+            <div class="m-bar"><span style="--w:100%"></span></div>
+            <div class="m-bar after"><span style="--w:49%"></span></div>
+          </div>
+        </div>
+        <div class="m-row">
+          <p class="m-head">
+            <span class="m-name">pire saut à la coupe</span>
+            <span class="m-before">517 px</span>
+            <span class="m-arrow">→</span>
+            <span class="m-after">125 px</span>
+          </p>
+          <div class="m-bars">
+            <div class="m-bar"><span style="--w:100%"></span></div>
+            <div class="m-bar after"><span style="--w:24%"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <h3>Deux causes, et trois hypothèses jetées</h3>
+      <ul class="plain">
+        <li>
+          <strong>Un plan TRACK de moins de 1,5 s est rendu statique.</strong> Il coûte un snap plus
+          un panoramique et n'a pas le temps d'établir un sujet. Les rafales de coupes sous la
+          seconde sont la source principale du « ça part à gauche, à droite, à gauche ».
+        </li>
+        <li>
+          <strong>Les deux fenêtres d'amortissement du tracker sont des durées, pas des compteurs de
+          frames.</strong> Leurs commentaires disaient « 1 s », le code disait 30 frames — vrai à
+          30 fps, moitié moins à 60. C'est le terme dominant.
+        </li>
+      </ul>
+      <p>
+        Trois correctifs plausibles ont été construits, mesurés, et <strong>jetés</strong> — chacun
+        documenté dans le code pour ne pas être retenté : un contrôleur à deux seuils qui se pose sur
+        le sujet plutôt que sur le bord de la zone morte (54,5 → 79,1 px/s, quatre scènes pires,
+        zéro meilleure), le phasage de la détection sur le début de plan (54,4 → 58,2), et la
+        réinitialisation des identités du tracker aux coupes (aucun effet, une scène 188 → 356).
+      </p>
+
+      <div class="note warn">
+        <span class="t">Le piège du harnais</span>
+        Le phasage a d'abord affiché <strong>−57 %</strong>. Artefact de la trace elle-même, qui
+        n'avait de détections qu'une frame sur quatre : rejouée à une autre foulée, la caméra
+        consulte des frames sans aucune détection, ne reçoit donc pas de cible, et la métrique de
+        déplacement s'effondre — ce qui se lit comme une victoire spectaculaire.
+        <strong>Enregistrer à <code>--detect-stride 1</code>.</strong>
+      </div>
+
+      <h3>Ce qui n'est pas fait</h3>
+      <p>
+        « Le rendu cadre quelqu'un qui ne parle pas » <strong>n'est pas résolu</strong>, et le
+        diagnostic initial — le tracker suit le plus gros visage au lieu du locuteur — n'est pas
+        confirmé par la mesure : une fois les identités stabilisées, le changement de sujet ne
+        représente presque rien du mouvement visible, et le plus long panoramique reste à 534 px dans
+        toutes les variantes. Scorer « la personne cadrée est-elle celle qui parle » demande des
+        données annotées que ce harnais n'a pas.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ recette ══════════════════════════ -->
+  <section class="band reveal" id="recette">
+    <div class="gutter">
+      <span class="stamp">Recette</span>
+    </div>
+    <div class="flow">
+      <p class="eyebrow brass">Chemin critique · onze gestes</p>
+      <h2>Ce qu'il faut faire pour prouver que ça marche</h2>
+      <p>
+        Aucune CI ne tourne sur ce fork. Cette liste <em>est</em> la porte. Chaque cas dit ce qu'il
+        faut préparer, ce qu'il faut faire, ce qui doit arriver, et — surtout — <strong>à quoi
+        ressemble l'échec</strong>, parce que la plupart de ces bugs échouaient silencieusement.
+      </p>
+
+      <div class="note warn">
+        <span class="t">À lire avant de perdre une demi-heure</span>
+        <code>docker-compose.override.yml</code> est <strong>local à cette machine et non
+        versionné</strong> (exclu via <code>.git/info/exclude</code>). Il remappe les ports publiés
+        en <strong>4050 / 4051 / 4053</strong> — mais Compose ne le charge que sur un
+        <code>docker compose up</code> nu, et <strong>l'ignore dès qu'on passe des <code>-f</code>
+        explicites</strong>. La pile ingest ci-dessous écoute donc sur <strong>8000</strong>
+        (backend) et <strong>5175</strong> (dashboard), pas sur 4050.
+      </div>
+
+      <ol class="cases">
+
+        <li class="case" id="t00">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T00</span>
+            <span class="case-title">La suite automatisée passe, dans un conteneur jetable</span>
+          </label>
+          <dl>
+            <dt>Préparer</dt>
+            <dd>L'image <code>openshorts-backend</code> construite. Elle a toutes les dépendances et <strong>pas</strong> pytest — l'hôte, lui, n'a ni <code>boto3</code> ni <code>sqlalchemy</code>, donc quatre modules explosent à la collecte.</dd>
+            <dt>Faire</dt>
+            <dd><pre>docker run --rm -u 0 -v "$PWD:/app" -w /app -e BILLING_ENABLED=0 \
+  openshorts-backend sh -c <span class="v">"pip install -q pytest; \
+  python -m pytest tests/ -q -p no:cacheprovider"</span></pre>
+            <p><span class="def"><code>-u 0</code> parce que <code>/opt/venv</code> appartient à root ; <code>-p no:cacheprovider</code> pour ne pas laisser de <code>.pytest_cache</code> derrière.</span></p></dd>
+            <dt>Attendu</dt>
+            <dd><code>809 passed</code>, aucun saut. L'image porte la pile ML, donc les tests qui ont besoin d'<code>import main</code> s'exécutent vraiment ici.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Un compte de <em>skipped</em> apparaît. Hors de cette image — sur l'hôte, ou avec le seul jeu de dépendances de la CI — tout ce qui a besoin d'<code>import main</code> passe par <code>importorskip</code> et <strong>saute en silence</strong>. Un « tout est vert » obtenu là ne prouve rien sur <code>main.py</code> : c'est de la logique non testée, pas de la logique couverte.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t01">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T01</span>
+            <span class="case-title">Le dashboard se construit</span>
+          </label>
+          <dl>
+            <dt>Faire</dt>
+            <dd><pre>cd dashboard &amp;&amp; npm install &amp;&amp; npm run build</pre></dd>
+            <dt>Attendu</dt>
+            <dd>Build réussi. C'est la seule porte front qui existe.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">On croit pouvoir s'appuyer sur <code>npm run lint</code> : il est cassé sur <code>main</code>, indépendamment de ces PR (<code>eslint ^8.57</code> épinglé face à une config plate qui importe <code>eslint/config</code>, une sous-voie ESLint 9, et un <code>--ext</code> que la config plate a supprimé). Ce n'est pas un gate.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t02">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T02</span>
+            <span class="case-title">La pile ingest est debout et l'onglet <em>on server</em> est peuplé</span>
+          </label>
+          <dl>
+            <dt>Faire</dt>
+            <dd><pre>REPLAY_DIR=/chemin/rediffs INBOX_DIR=/chemin/inbox \
+docker compose -f docker-compose.yml \
+               -f docker-compose.gpu.yml \
+               -f docker-compose.ingest.yml up -d</pre>
+            <p>Puis <code>curl -s localhost:8000/api/local-files | jq '.sources'</code>, et ouvrir le dashboard sur <code>:5175</code>, onglet <em>on server</em>.</p></dd>
+            <dt>Attendu</dt>
+            <dd>Un objet par source, avec son type de système de fichiers et son compte d'entrées — par exemple <code>{"name":"replays","fstype":"9p","entries":25}</code> et <code>{"name":"inbox","fstype":"ext4","entries":1}</code>. L'onglet liste les fichiers, du plus récent au plus ancien.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Une source qui devrait être un disque monté affiche <code>entries: 0</code> <em>sans</em> que le dashboard le dise. La ligne attendue au-dessus de la liste est « <em>… is empty (…) — if it should be a mounted drive, the mount is gone.</em> » : un montage absent doit se <strong>signaler</strong>, pas rendre l'onglet plus court en silence.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t03">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T03</span>
+            <span class="case-title">Un fichier serveur donne des clips, et garde son nom</span>
+          </label>
+          <dl>
+            <dt>Préparer</dt>
+            <dd>Un enregistrement posé sur la source <em>lente</em> (celle en 9p), pas sur l'inbox.</dd>
+            <dt>Faire</dt>
+            <dd>Le cocher dans l'onglet <em>on server</em>, lancer <em>Generate Clips</em>, suivre les logs.</dd>
+            <dt>Attendu</dt>
+            <dd>Une ligne de staging apparaît au début, la copie se fait <em>après</em> la prise du slot de concurrence, et le fichier atterrit dans <code>stage/&lt;clé&gt;/&lt;nom d'origine&gt;</code>. Le projet porte le nom du fichier dans la bibliothèque. Relancer le même fichier doit toucher le cache et ne rien recopier.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Le projet s'appelle une suite de caractères hexadécimaux : la copie a été nommée par hash, et sur un batch de trente ce sont trente projets illisibles. Ou : la source de l'inbox (<code>ext4</code>) est copiée elle aussi, alors qu'elle ne devrait pas l'être.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t04">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T04</span>
+            <span class="case-title">Le double rendu, et surtout : les deux versions sont finies pareil</span>
+          </label>
+          <dl>
+            <dt>Préparer</dt>
+            <dd>
+              <p><strong>Redémarrer le backend d'abord.</strong> <code>app.py</code> est lu <em>une seule fois</em>, au démarrage du processus ; le bind mount garde le fichier à jour sur le disque, pas en mémoire. Comme <code>main.py</code> est un sous-processus relancé à chaque job, un backend périmé applique les changements du renderer et pas ceux de l'API : on obtient un rendu unique alors que tout le reste de la PR fonctionne. C'est exactement ce qui a coûté un projet le 17 août.</p>
+              <p>Ensuite : la case <em>safe</em> pré-cochée sur le formulaire — après un <strong>rechargement franc de l'onglet</strong>, sinon le bundle en mémoire ne l'envoie pas —, un format de sortie autre que 16:9 (elle disparaît quand on choisit explicitement l'horizontal), et <code>OUTPUT_MAX_GB</code> relevé : <strong>le disque double</strong> (~82 → ~164 Mo par clip).</p>
+            </dd>
+            <dt>Faire</dt>
+            <dd>Lancer un job, puis sur une carte de résultat basculer <code>auto</code> ↔ <code>safe</code>.</dd>
+            <dt>Attendu</dt>
+            <dd>
+              <p>Deux fichiers, le second en <strong>suffixe</strong> : <code>&lt;titre&gt;_clip_3_safe.mp4</code>. Jamais un préfixe — le glob des sous-titres exige que le nom se termine sur l'index du clip, sinon les deux variantes capturent les fichiers l'une de l'autre.</p>
+              <p>La version safe montre l'image entière sur fond flou, sans jamais bouger.</p>
+              <p><strong>Le point de contrôle qui compte :</strong> la version safe porte <em>le même logo de chaîne et la même carte de hook</em> que l'auto.</p>
+            </dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">La safe sort sans logo, ou sans hook. C'est exactement ce qui est arrivé : la marque et le hook ont été ajoutés à la séquence de finition par deux branches différentes, chacune n'a câblé que le chemin auto, et <strong>aucune n'a produit de conflit de merge</strong>. Un A/B perdu sur des différences qui n'ont rien à voir avec le cadrage est la seule chose que ce comparatif ne doit pas faire. Et si <em>aucun</em> fichier <code>_safe</code> n'apparaît : le second rendu est opt-in sur le fil et n'a pas de défaut serveur — <code>resolve_variants(None)</code> répond <code>['auto']</code>. Vérifier dans l'ordre le redémarrage, le rechargement de l'onglet, puis <code>style.json</code>.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t05">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T05</span>
+            <span class="case-title">Un batch de trois fichiers ne bloque pas un job lancé à la main</span>
+          </label>
+          <dl>
+            <dt>Faire</dt>
+            <dd>Cocher trois fichiers, <em>Generate Clips · 3 files</em>. Pendant que le batch tourne, soumettre <strong>un</strong> fichier séparément (ou une URL).</dd>
+            <dt>Attendu</dt>
+            <dd>La bande de batch affiche <code>0/3 done</code> puis progresse, avec un seul job en cours à la fois (<code>LOCAL_BATCH_CONCURRENCY</code> vaut 1). Le job lancé à la main démarre <strong>sans attendre</strong> la fin du batch.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Le job interactif fait la queue derrière les trois. C'est le symptôme d'un sémaphore pris dans le mauvais ordre : les jobs de batch occupent alors un slot global pendant qu'ils attendent le plafond de leur propre voie, et une <code>PriorityQueue</code> ne préempte pas.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t06">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T06</span>
+            <span class="case-title">Une case décochée reste décochée, même avec <code>.env</code> contre elle</span>
+          </label>
+          <dl>
+            <dt>Préparer</dt>
+            <dd>Un <code>logo.png</code> dans <code>assets/brand/</code>, et <code>BRAND_WATERMARK=1</code> écrit dans <code>.env</code>. La case n'apparaît dans le formulaire que si <code>/api/config</code> répond <code>brandingAvailable: true</code> — pas de PNG, pas de case à cocher et à se demander pourquoi.</dd>
+            <dt>Faire</dt>
+            <dd><strong>Décocher</strong> « <em>Burn the channel logo into every clip</em> » et lancer le job.</dd>
+            <dt>Attendu</dt>
+            <dd>Les clips sortent <strong>sans</strong> marque. Puis recocher et relancer : la marque revient, sur une ligne, logo à gauche et badge à droite, dans la bande y 13–17 %.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">La marque est là malgré la case décochée. Le drapeau a été retiré de l'environnement au lieu d'y être écrit à <code>"0"</code>, et <code>load_dotenv()</code> a rendu la main à <code>.env</code>. Vérifier ce que le renderer <em>décide</em>, jamais quelles clés le dictionnaire d'environnement contient — c'est cette confusion qui a laissé passer le bug.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t07">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T07</span>
+            <span class="case-title">Le style par défaut s'applique au job suivant, sans redémarrage</span>
+          </label>
+          <dl>
+            <dt>Faire</dt>
+            <dd>Réglages → <em>Default style</em> : changer le préréglage de sous-titres, cocher <em>Burn the AI's hook line onto every clip</em>, <em>Save as default</em> (le bouton devient <em>Saved</em>). <strong>Sans toucher au conteneur</strong>, lancer un nouveau job.</dd>
+            <dt>Attendu</dt>
+            <dd>Les clips portent le nouveau look de sous-titres <em>et</em> la carte de hook, composée dans la même passe ffmpeg. Le fichier <code>style.json</code> nommé dans le panneau a bien été réécrit.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Il faut redémarrer pour voir le changement : le préréglage a été gelé à l'import au lieu d'être lu au submit, et un changement de couleur devient un redéploiement. À vérifier aussi : sur une instance avec facturation, le panneau doit être <strong>désactivé d'avance</strong> (<code>editable: false</code>) et pas seulement refuser l'écriture — un <code>style.json</code> resté d'un run self-host serait sinon toujours lu.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t08">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T08</span>
+            <span class="case-title">Un préréglage cassé ne coûte rien</span>
+          </label>
+          <dl>
+            <dt>Faire</dt>
+            <dd>Trois variantes, à lancer séparément : du JSON invalide dans <code>style.json</code> ; le fichier <em>renommé</em> ; puis une clé inconnue et une valeur du mauvais type, par exemple <code>"max_chars": "seize"</code>.</dd>
+            <dt>Attendu</dt>
+            <dd>Les trois fois, le job tourne normalement avec les défauts natifs, et une valeur mal typée retombe sur son défaut sans tuer les sous-titres. Le JSON invalide laisse une ligne d'avertissement dans les logs ; le fichier <strong>absent n'en laisse aucune, et c'est voulu</strong> — l'installation par défaut n'a pas de <code>style.json</code>, et journaliser à chaque soumission serait du bruit.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Le job échoue, ou pire, sort sans sous-titres du tout. Un fichier de configuration facultatif ne doit jamais pouvoir casser un rendu.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t09">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T09</span>
+            <span class="case-title">Sur une source longue : le compte des clips, et leurs bornes</span>
+          </label>
+          <dl>
+            <dt>Préparer</dt>
+            <dd>Une source d'au moins une heure, avec une vraie clé Gemini. <strong>C'est le seul cas qui teste les deux changements de prompt de la PR #4, qui n'ont jamais tourné contre un vrai modèle.</strong></dd>
+            <dt>Faire</dt>
+            <dd>Lancer, puis écouter le début et la fin de chaque clip, et comparer leurs intervalles deux à deux.</dd>
+            <dt>Attendu</dt>
+            <dd>Six à douze clips : sur une shortlist d'au moins huit fenêtres, <code>clip_count_targets</code> plancher à 6 et plafonne à 12. Aucun clip ne commence ni ne finit sur du silence. Aucune paire de clips ne se recouvre de plus d'une seconde ; ~0,8 s partagées entre deux clips consécutifs sont légitimes, c'est le rembourrage du snapper.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Deux clips racontent le même moment : la fusion des fenêtres qui se chevauchent n'a pas eu lieu, ou la garde qui ne dépend pas du modèle est passée à côté. En revanche, <strong>six clips sur deux heures n'est pas un échec</strong> : c'est le plancher légitime, pas la trace de l'ancien plafond de scoring. Ce sont le recouvrement et le silence qui jugent cette passe, pas le compte.</dd>
+          </dl>
+        </li>
+
+        <li class="case" id="t10">
+          <label class="case-head">
+            <input type="checkbox">
+            <span class="case-id">T10</span>
+            <span class="case-title">Un redémarrage en plein rendu ne dégrade pas le job</span>
+          </label>
+          <dl>
+            <dt>Faire</dt>
+            <dd>Lancer un job avec des layouts non triviaux (par le style par défaut, puisque <code>layouts=</code> par job est réservé à l'API), attendre que l'extraction des clips commence, puis <code>docker compose restart backend</code>.</dd>
+            <dt>Attendu</dt>
+            <dd>Le job reprend là où il en était, réutilise l'analyse sauvegardée, et <strong>garde ses layouts et son style</strong>. Il ne re-sollicite pas Gemini : un second appel peut renvoyer d'autres moments, et les clips finis ne correspondraient plus à ceux déjà listés.</dd>
+            <dt class="fail">Raté si</dt>
+            <dd class="fail">Le job revient sans SPLIT, sans punch-in, ou avec le look serveur au lieu du style qu'il portait. Invisible sur un job isolé, et pire sur un batch — qui livre alors deux moitiés qui ne se ressemblent pas. Ou : le job est publié comme terminé avec des clips dont chaque vidéo 404.</dd>
+          </dl>
+        </li>
+
+      </ol>
+
+      <h3>Optionnel — instrumenter la caméra</h3>
+      <p>
+        Hors chemin critique, quand un rendu « bouge trop » et qu'il faut un chiffre plutôt qu'une
+        impression. L'enregistrement a besoin de la pile ML, donc il tourne dans l'image backend ;
+        le rejeu est pur et tourne sur l'hôte. L'entrée est un <strong>clip déjà découpé</strong>,
+        jamais une vidéo source.
+      </p>
+      <pre><span class="c"># enregistrer une fois — la foulée 1 n'est pas négociable</span>
+docker run --rm --entrypoint python -v "$PWD":/app -v /chemin/clips:/data \
+  -w /app openshorts-backend \
+  scripts/replay_camera.py record /data/clip.mp4 -o /data/clip.trace.json
+
+<span class="c"># rejouer autant de fois qu'on veut, sur l'hôte</span>
+python3 scripts/replay_camera.py replay /data/clip.trace.json</pre>
+      <p>
+        Deux métriques, et choisir la mauvaise coûte la réponse : l'une exclut les frontières de
+        scène (« une coupe est censée recadrer »), l'autre les inclut. Sur du multicam la première
+        ne voit rien d'anormal et la seconde trouve les sauts de 517 px aux coupes.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ boutons d'arrêt ══════════════════════════ -->
+  <section class="band reveal" id="repli">
+    <div class="gutter"><span class="stamp">Repli</span></div>
+    <div class="flow">
+      <p class="eyebrow">Si quelque chose se passe mal en production</p>
+      <h2>Les boutons d'arrêt</h2>
+      <p>
+        Chaque nouveauté de cette release s'éteint par une variable, sans revert ni redéploiement de
+        code. Une nuance à connaître : les drapeaux de layout sont <strong>gelés à l'import</strong>
+        dans le sous-processus qui rend la vidéo, donc seule la construction de l'environnement du
+        job peut les poser par job. <code>branding.py</code> est le seul module à relire ses réglages
+        à chaque appel — ses voisins gardent le trou sur le chemin CLI direct.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Éteindre</th><th>Variable</th><th>Défaut</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>La marque de chaîne</td><td class="mono">BRAND_WATERMARK=0</td><td><span class="def">0</span></td></tr>
+            <tr><td>Le second rendu</td><td class="mono">variants=auto</td><td><span class="def">auto seul · safe si style.json</span></td></tr>
+            <tr><td>Les sous-titres automatiques</td><td class="mono">AUTO_CAPTIONS=0</td><td><span class="def">1</span></td></tr>
+            <tr><td>Le hook automatique</td><td class="mono">hook.enabled: false</td><td><span class="def">absent = éteint</span></td></tr>
+            <tr><td>Le style serveur entier</td><td class="mono">OPENSHORTS_STYLE_FILE=&lt;fichier absent&gt;</td><td><span class="def">style.json · vide y retombe</span></td></tr>
+            <tr><td>La copie sur disque local</td><td class="mono">LOCAL_STAGE=never</td><td><span class="def">auto</span></td></tr>
+            <tr><td>L'ingest serveur (et le batch)</td><td class="mono">LOCAL_INGEST_DIR=</td><td><span class="def">vide</span></td></tr>
+            <tr><td>Le débit de la voie batch</td><td class="mono">LOCAL_BATCH_CONCURRENCY</td><td><span class="def">1</span></td></tr>
+            <tr><td>La règle du plan court</td><td class="mono">MIN_TRACK_SECONDS=0</td><td><span class="def">1.5</span></td></tr>
+            <tr><td>L'amortissement du tracker</td><td class="mono">TRACKER_FORGET_SECONDS<br>TRACKER_COOLDOWN_SECONDS</td><td><span class="def">1.0 / 1.0</span></td></tr>
+            <tr><td>La taille de la shortlist</td><td class="mono">CLIP_SHORTLIST_MAX</td><td><span class="def">max(3, min(plafond, n))<br>plafond = max(10, min(24, 30 %))</span></td></tr>
+            <tr><td>Le lot de scoring</td><td class="mono">SCORE_BATCH</td><td><span class="def">8</span></td></tr>
+            <tr><td>Le plafond de disque</td><td class="mono">OUTPUT_MAX_GB</td><td><span class="def">25 · 0 désactive</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ non vérifié ══════════════════════════ -->
+  <section class="band reveal" id="reserves">
+    <div class="gutter"><span class="stamp">Réserves</span></div>
+    <div class="flow">
+      <p class="eyebrow">Sans arrondir</p>
+      <h2>Ce qui n'est pas vérifié, et ce qui reste ouvert</h2>
+
+      <ul class="open-issues">
+        <li>
+          <span class="flag">non testé</span>
+          <span>Les deux changements de prompt de la PR #4 — noter toutes les fenêtres, et les ancres <code>[SECONDS]</code> — <strong>n'ont jamais tourné contre un vrai Gemini</strong>. Réversibles par variable d'environnement, sans redéploiement. Cas de test T09.</span>
+        </li>
+        <li>
+          <span class="flag">non résolu</span>
+          <span>« Le rendu cadre quelqu'un qui ne parle pas. » Le diagnostic initial n'est pas confirmé par la mesure, et le trancher demande des données annotées que le harnais n'a pas.</span>
+        </li>
+        <li>
+          <span class="flag">code mort</span>
+          <span>Les layouts <strong>SCREENCAST, WIDE et INSET sont inatteignables en production</strong>, quoi que dise <code>layouts=</code> : le renderer est appelé sans les plages de contenu, et le détecteur qui les produirait n'a aucun appelant hors des tests. Seuls TRACK, GENERAL, SPLIT et ALTERNATE tournent vraiment.</span>
+        </li>
+        <li>
+          <span class="flag">issue #6</span>
+          <span>Les effets de zoom de <code>/api/edit</code> recadrent et déplacent les deux marques brûlées dans le clip canonique — le filigrane du plan gratuit comme la marque de chaîne. Un zoom de 15 % rogne 6,52 % de chaque bord et remonte la bande sous les onglets de la plateforme. Les sous-titres, eux, sont retirés puis réappliqués autour de l'effet.</span>
+        </li>
+        <li>
+          <span class="flag">issue #1</span>
+          <span>L'application est intégralement en anglais. Traduction française à faire, landing et surface SEO exclues.</span>
+        </li>
+        <li>
+          <span class="flag soft">capacité</span>
+          <span>Le double rendu <strong>double le disque</strong> (~82 → ~164 Mo par clip avec sous-titres). En self-host, le plafond de sortie fait un <code>rmtree</code> <em>définitif</em> sur les plus vieux projets : relever <code>OUTPUT_MAX_GB</code> <strong>avant</strong> d'activer, pas après.</span>
+        </li>
+        <li>
+          <span class="flag soft">outillage</span>
+          <span><code>npm run lint</code> est cassé sur <code>main</code>, indépendamment de ces PR. Les deux bouts (la version épinglée et la config plate) doivent être corrigés ensemble.</span>
+        </li>
+        <li>
+          <span class="flag soft">orphelin</span>
+          <span>L'interface <code>--mode score|detail</code> du worker Gemini est un point d'entrée que rien n'invoque, et le harnais de test qu'évoquent ses commentaires n'existe sur aucune machine.</span>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ colophon ══════════════════════════ -->
+  <footer class="band">
+    <div class="gutter"><span class="stamp">Colophon</span></div>
+    <div class="flow">
+      <p class="colophon">
+        Arrêté au commit <strong>0cd7b28</strong> du 17 août 2026. La PR
+        <a href="https://github.com/JulienCr/openshorts/pull/8"><strong>#8</strong></a> — un montage 9p
+        resté dans <code>/proc/mounts</code> avec son transport mort dessous, donc présent et
+        illisible — était ouverte et non mergée au moment de la rédaction. Elle n'est pas couverte
+        ici et méritera sa section : le geste qui la prouve est un <code>umount -l</code> à chaud,
+        la source doit alors rester listée et marquée cassée au lieu de disparaître du sélecteur.
+        <br><br>
+        Cette page vit dans le dépôt à <strong><code>docs/release-2026-08.html</code></strong>, sans
+        copie Markdown : deux exemplaires du même texte divergent, et c'est exactement la doctrine
+        que ce dépôt applique déjà à sa séquence de finition de clip.
+        La police d'affichage est <strong>Anton</strong>, sous-ensemble latin embarqué —
+        la même que le pipeline brûle lui-même sur les vidéos. Les couleurs sont le système
+        <em>Lumen · Night Foundry</em> du dashboard, retourné au jour.
+      </p>
+    </div>
+  </footer>
+
+</main>
+
+<script>
+(function () {
+  if (!document.documentElement.classList.contains("anim")) return;
+
+  var targets = document.querySelectorAll(".reveal, .frame.draw");
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      e.target.classList.add("seen");
+      io.unobserve(e.target);
+    });
+  }, { rootMargin: "0px 0px -12% 0px", threshold: 0.06 });
+
+  targets.forEach(function (t) { io.observe(t); });
+})();
+</script>
