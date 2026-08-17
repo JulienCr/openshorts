@@ -16,6 +16,7 @@ Deliberately stdlib-only and importing nothing from app.py: the CI installs neit
 FastAPI nor uvicorn, and this is the part worth testing.
 """
 
+import errno
 import hashlib
 import os
 import re
@@ -124,6 +125,36 @@ def fstype_for(path):
         if target == mountpoint or target.startswith(stripped + "/"):
             return fstype
     return ""
+
+
+# Errnos meaning "the mount is still in the table and the thing under it is
+# gone", as opposed to "there is nothing here". Measured on WSL: a Google Drive
+# client restart takes the 9p session down, leaves the mountpoint listed in
+# /proc/mounts, and every syscall against it answers ENODEV. FUSE reaches the
+# same state through ENOTCONN and NFS through ESTALE.
+DEAD_MOUNT_ERRNOS = frozenset({
+    errno.ENODEV, errno.ENXIO, errno.ENOTCONN, errno.ESTALE,
+    errno.EIO, errno.EREMOTEIO, errno.EHOSTDOWN,
+})
+
+
+def dir_state(path):
+    """("ok" | "dead" | "absent", entry count) for a would-be source directory.
+
+    One listdir answers all three, and that is the point: os.path.isdir()
+    swallows the OSError and returns False, so a mount whose transport died is
+    indistinguishable from a path that was never configured. A caller that
+    filters on isdir() therefore drops a broken source from the picker
+    *entirely* — which reads as "this source does not exist here", strictly
+    worse than the empty folder the isdir() guard was written to explain.
+
+    The count is every entry, not just the videos: a source folder with
+    literally nothing in it is almost always a mount that did not happen.
+    """
+    try:
+        return "ok", len(os.listdir(path))
+    except OSError as exc:
+        return ("dead" if exc.errno in DEAD_MOUNT_ERRNOS else "absent"), 0
 
 
 def is_slow(path):

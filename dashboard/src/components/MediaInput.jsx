@@ -126,7 +126,13 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const selectedSizeMb = localFiles.reduce(
         (sum, f) => (localSelected.has(f.name) ? sum + f.size_mb : sum), 0);
     // A folder the server could read but that holds nothing at all.
-    const emptySources = localSources.filter((s) => s.entries === 0);
+    // `status !== 'dead'` rather than `status === 'ok'`: a server from before
+    // this field existed sends neither, and its empty folders must still show.
+    const emptySources = localSources.filter((s) => s.status !== 'dead' && s.entries === 0);
+    // Worth its own wording: "empty" sends you looking for files that are not
+    // missing. The mount is still in the table with its transport dead under it,
+    // so the recordings are intact and it is the link to them that needs redoing.
+    const deadSources = localSources.filter((s) => s.status === 'dead');
 
     const toggleLocal = (name) => setLocalSelected((prev) => {
         const next = new Set(prev);
@@ -283,6 +289,14 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             folder — and as a short file list it looks like
                             neither. Say so instead of letting it read as "there
                             is nothing there". */}
+                        {deadSources.map((s) => (
+                            <p key={s.name} className="readout text-danger">
+                                {s.name}/ cannot be read ({s.fstype || 'unknown filesystem'}) — the mount
+                                broke under it. The recordings are still on the drive; the server needs
+                                it remounted.
+                            </p>
+                        ))}
+
                         {emptySources.map((s) => (
                             <p key={s.name} className="readout text-brass">
                                 {s.name}/ is empty ({s.fstype || 'unknown filesystem'}) — if it should be

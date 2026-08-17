@@ -3,6 +3,7 @@
 Stdlib only, no server import — the CI job installs neither FastAPI nor uvicorn.
 """
 
+import errno
 import os
 import time
 
@@ -68,6 +69,49 @@ def test_fstype_for_does_not_match_a_partial_component(monkeypatch):
 def test_fstype_for_returns_empty_without_proc(monkeypatch):
     monkeypatch.setattr(local_stage, "_mounts", list)
     assert local_stage.fstype_for("/anything") == ""
+
+
+# --- dir_state ----------------------------------------------------------------
+
+def test_dir_state_counts_a_readable_directory(tmp_path):
+    (tmp_path / "a.mkv").write_text("")
+    (tmp_path / "notes.txt").write_text("")
+    # Every entry, not just the videos: a source with literally nothing in it is
+    # the signal, and filtering by extension would hide a folder of .srt files.
+    assert local_stage.dir_state(str(tmp_path)) == ("ok", 2)
+
+
+def test_dir_state_reports_an_empty_directory_as_ok(tmp_path):
+    # Empty is not broken. It is the case the picker already words correctly.
+    assert local_stage.dir_state(str(tmp_path)) == ("ok", 0)
+
+
+@pytest.mark.parametrize("err", [errno.ENODEV, errno.ENOTCONN, errno.ESTALE,
+                                 errno.ENXIO, errno.EIO, errno.EREMOTEIO])
+def test_dir_state_reports_a_mount_whose_transport_died(monkeypatch, err):
+    """The mount is still in the table; the thing underneath it is gone.
+
+    Measured on WSL: a Google Drive client restart takes the 9p session down and
+    leaves the mountpoint in /proc/mounts, where every syscall against it then
+    returns ENODEV. sshfs and NFS reach the same state through ENOTCONN/ESTALE.
+    """
+    def dead(_path):
+        raise OSError(err, os.strerror(err))
+
+    monkeypatch.setattr(os, "listdir", dead)
+    assert local_stage.dir_state("/ingest/replays") == ("dead", 0)
+
+
+def test_dir_state_does_not_call_a_missing_directory_dead(tmp_path):
+    # "dead" has to mean something narrow, or the picker cries wolf on every
+    # typo in LOCAL_INGEST_DIR.
+    assert local_stage.dir_state(str(tmp_path / "nope"))[0] == "absent"
+
+
+def test_dir_state_does_not_call_a_plain_file_dead(tmp_path):
+    f = tmp_path / "a.mkv"
+    f.write_text("")
+    assert local_stage.dir_state(str(f))[0] == "absent"
 
 
 # --- is_slow ------------------------------------------------------------------

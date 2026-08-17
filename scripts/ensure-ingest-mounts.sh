@@ -39,6 +39,20 @@ while read -r src mountpoint fstype options; do
         continue
     fi
 
+    # A mount can sit in the table with its transport dead underneath it, which
+    # is a different failure from "never mounted" and the one that actually
+    # recurs: the cloud client restarts, the drive letter comes back, and the 9p
+    # session WSL held is gone — the mountpoint stays listed in /proc/mounts and
+    # every syscall against it answers ENODEV. Nothing above catches that.
+    # `mountpoint -q` reports "not mounted" (it cannot stat it either) so we do
+    # not skip, but `[ -d ]` below is then false and `mkdir -p` fails on the
+    # unstattable path, which sent the loop to `continue` without ever reaching
+    # the mount — forever, once a minute. Detach the corpse first; when there is
+    # simply nothing at this path, the umount fails and costs nothing.
+    if ! stat "$mountpoint" >/dev/null 2>&1; then
+        umount -l "$mountpoint" 2>/dev/null
+    fi
+
     # A previous failed start may have left a directory here — Docker creates a
     # missing bind source on the host, which is exactly how an unmounted drive
     # turns into a silently empty ingest folder. Removing it while it is empty
