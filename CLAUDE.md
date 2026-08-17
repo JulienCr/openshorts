@@ -22,14 +22,55 @@ cd dashboard
 npm install
 npm run dev       # Dev server with HMR (port 5173)
 npm run build     # Production build
-npm run lint      # ESLint (strict, --max-warnings 0)
+npm run lint      # BROKEN, see below
 ```
+
+`npm run lint` cannot run as written: `package.json` pins `eslint ^8.57.0` while
+`eslint.config.js` imports `eslint/config`, an ESLint 9 subpath, and the script
+still passes `--ext`, which flat config removed. Both ends need fixing together;
+until then the linter is not a gate anyone can use.
 
 ### Backend Only
 ```bash
 pip install -r requirements.txt
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
+
+### What actually verifies a change
+
+**Nothing runs on push.** `.github/workflows/ci.yml` exists and is active, but
+`gh run list --workflow=CI` is empty — it has never executed once on this fork,
+and PRs #3, #4 and #5 all merged with no check behind them. Wherever this file
+says "in CI", read it as "in the dependency list ci.yml *would* install", not as
+something that gates a merge.
+
+So the two real gates are local, and both have to be run by hand:
+
+```bash
+pytest tests/          # the whole backend suite
+cd dashboard && npm run build
+```
+
+**Neither runs anywhere as written.** `pytest tests/` on the host collapses at
+collection: the host interpreter has no `boto3` and no `sqlalchemy`, so the four
+modules that `import app` or `cloud.*` error out before a single test runs — and
+pytest itself is not installed there either. The backend image has every
+dependency and *also* has no pytest. What actually works is installing it into a
+throwaway container:
+
+```bash
+docker run --rm -u 0 -v "$PWD:/app" -w /app -e BILLING_ENABLED=0 \
+  openshorts-backend sh -c "pip install -q pytest; python -m pytest tests/ -q -p no:cacheprovider"
+```
+
+`-u 0` because `/opt/venv` is root-owned; `-p no:cacheprovider` so the run leaves
+no `.pytest_cache` behind. The stdlib-only modules (`clip_selection`, `branding`,
+`split_layout`…) do run on the host once pytest is present, which is the fast
+loop while iterating — but only the container run proves the suite is green.
+
+`import main` fails in both (see "How the clips are chosen"), so a test that
+needs the pipeline must go through `pytest.importorskip("main")` and will
+**silently skip** — logic put in `main.py` is untested logic, not covered logic.
 
 ## Architecture
 
@@ -286,6 +327,19 @@ Per job, the dashboard checkbox sends a **tri-state**: absent means "inherit
 `BRAND_WATERMARK`", which is what keeps older callers (CLI, MCP) working. The
 resolved decision is persisted in the resume manifest, because env is rebuilt
 from `os.environ` on resume and an unticked box would otherwise come back ticked.
+
+**Turning a per-job flag OFF means writing `"0"`, never `env.pop()`** — this
+holds for any flag `_build_job_env` or `_resume_mark_env` sets, not just this
+one. The child process runs `main.py`, which calls `load_dotenv()`, and dotenv
+fills in every variable that is **absent** (its default is `override=False`).
+Deleting the key therefore hands `.env` the last word, so `BRAND_WATERMARK=1`
+there silently re-enabled a job the user had explicitly unticked. Measured, not
+theorised. Note this bug did *not* exist while settings were frozen at import —
+freezing read the environment **before** `load_dotenv()`, so a popped variable
+stayed popped. Fixing the direct-CLI hole above is what opened this one, which
+is the argument for testing what the renderer decides rather than which keys the
+env dict happens to contain: the tests asserting `"BRAND_WATERMARK" not in env`
+passed happily throughout.
 
 ### Key Classes
 - `SmoothedCameraman` - Stabilized camera movement with safe zone logic (prevents jitter)
