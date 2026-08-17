@@ -200,21 +200,36 @@ def _log(message: str) -> None:
         stream.write(safe_text + "\n")
     stream.flush()
 
+# Score EVERY window, do not elect a few. The old wording ("choose up to 3
+# windows from this batch") capped a batch of 8 at 3 survivors, so the pass
+# could never return more than 37.5% of the material however good it was — and
+# that cap, not the score, was what reached the shortlist: a 2h source scored
+# 79 windows, returned at most 30, and shortlist_size then picked 24 of them.
+# The global sort was choosing between candidates that had already been chosen.
+# The rubric anchors exist for the same reason: batches are scored in separate
+# calls, so without a shared scale a mediocre batch spreads 40-80 and an
+# excellent one 60-95, and sorting them together compares two different markers.
 SCORE_PROMPT_TEMPLATE = """
 You are a senior short-form video strategist.
-Select the MOST viral candidate windows from this batch.
+Score every candidate window in this batch on its potential as a short.
 
 Rules:
 - Return only valid JSON.
-- Choose up to 3 windows from this batch.
-- `score` must be an integer from 0 to 100.
+- Score EVERY window in this batch. Do not omit any, however weak — a low score
+  is the right answer for weak material, silence is not.
+- `score` must be an integer from 0 to 100, on this scale:
+  - 80-100: opens on a hook, stands alone without context, clear payoff.
+  - 50-79: a real moment, but it needs a better entry point or trails off.
+  - 20-49: on-topic filler — explanation, setup, housekeeping, rambling.
+  - 0-19: no usable moment at all — outros, admin, dead air, pure transition.
+  Use the whole scale. A batch where everything scores 70 is a batch you have
+  not separated.
 - THE 2-SECOND TEST is the main criterion: would the first 2 seconds of this
   moment force a cold viewer (no context) to keep watching? Windows that only
   work with prior context score low.
 - Prefer windows with strong hooks, conflict, surprise, outrage, emotion,
   novelty, big numbers, or a clear payoff.
-- Ignore weak filler, housekeeping, outros, rambling transitions, and
-  low-signal padding unless there is an obvious hook or payoff.
+- `reason` is at most 8 words.
 
 TRANSCRIPT_LANGUAGE: {language}
 VIDEO_DURATION_SECONDS: {video_duration}
@@ -238,6 +253,16 @@ Return only:
 DETAIL_PROMPT_TEMPLATE = """
 You are a senior short-form video editor and viral copywriter.
 Choose the BEST short clips from these shortlisted candidate windows.
+
+READING THE TRANSCRIPT — each window's text is interleaved with markers like
+[123.400]. Each one is the EXACT absolute time, in seconds from the start of the
+source video, at which the sentence that follows it begins. They are measured,
+not estimated. Use them:
+- Take `start` from the marker of the sentence the clip should open on.
+- Take `end` from the marker of the sentence AFTER the last one you want, or
+  from the window's own end if you want the last sentence in it.
+- Never invent a time that is not derived from a marker. Do not interpolate
+  inside a sentence, and do not round a marker to a whole number.
 
 CLIP RULES:
 - Return only valid JSON.
@@ -278,7 +303,10 @@ COPY RULES — ALL text fields (descriptions, title, hook) MUST be written in TR
 - Descriptions (TikTok + Instagram): 1-2 punchy sentences that tease the payoff
   without spoiling it, then 3-5 topically relevant hashtags. No generic hashtag spam.
 - `video_title_for_youtube_short`: max 100 chars, curiosity-driven, no fake claims.
-- `predicted_score`: honest 0-100 estimate of viral potential.
+- `predicted_score`: honest 0-100 estimate of viral potential. Use the whole
+  range — if every clip scores the same, you have not ranked them.
+- ORDER the `shorts` array by predicted performance, best first. Do NOT return
+  them in transcript order.
 
 TRANSCRIPT_LANGUAGE: {language}
 VIDEO_DURATION_SECONDS: {video_duration}

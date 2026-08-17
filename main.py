@@ -27,7 +27,9 @@ import branding
 import gemini_worker
 import layout_picker
 from clip_selection import (build_transcript_windows, clip_count_targets,
-                            shortlist_size, snap_clip_to_words)
+                            drop_overlapping_clips, merge_overlapping_windows,
+                            reconcile_scores, shortlist_size, snap_clip_to_words,
+                            transcript_segments, window_text_with_anchors)
 from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
 from dotenv import load_dotenv
@@ -41,45 +43,6 @@ load_dotenv()
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
-
-GEMINI_PROMPT_TEMPLATE = """
-You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between 15 and 60 seconds long.
-
-⚠️ FFMPEG TIME CONTRACT — STRICT REQUIREMENTS:
-- Return timestamps in ABSOLUTE SECONDS from the start of the video (usable in: ffmpeg -ss <start> -to <end> -i <input> ...).
-- Only NUMBERS with decimal point, up to 3 decimals (examples: 0, 1.250, 17.350).
-- Ensure 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS.
-- Each clip between 15 and 60 s (inclusive).
-- Prefer starting 0.2–0.4 s BEFORE the hook and ending 0.2–0.4 s AFTER the payoff.
-- Use silence moments for natural cuts; never cut in the middle of a word or phrase.
-- STRICTLY FORBIDDEN to use time formats other than absolute seconds.
-
-VIDEO_DURATION_SECONDS: {video_duration}
-
-TRANSCRIPT_TEXT (raw):
-{transcript_text}
-
-WORDS_JSON (array of {{w, s, e}} where s/e are seconds):
-{words_json}
-
-STRICT EXCLUSIONS:
-- No generic intros/outros or purely sponsorship segments unless they contain the hook.
-- No clips < 15 s or > 60 s.
-
-OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by predicted performance (best to worst). In the descriptions, ALWAYS include a CTA like "Follow me and comment X and I'll send you the workflow" (especially if discussing an n8n workflow):
-{{
-  "shorts": [
-    {{
-      "start": <number in seconds, e.g., 12.340>,
-      "end": <number in seconds, e.g., 37.900>,
-      "video_description_for_tiktok": "<description for TikTok oriented to get views>",
-      "video_description_for_instagram": "<description for Instagram oriented to get views>",
-      "video_title_for_youtube_short": "<title for YouTube Short oriented to get views 100 chars max>",
-      "viral_hook_text": "<SHORT punchy text overlay (max 10 words). MUST BE IN THE SAME LANGUAGE AS THE VIDEO TRANSCRIPT. Examples: 'POV: You realized...', 'Did you know?', 'Stop doing this!'>"
-    }}
-  ]
-}}
-"""
 
 # Load the YOLO model once (Keep for backup or scene analysis if needed)
 model = YOLO('yolov8n.pt')
@@ -1180,13 +1143,19 @@ def transcribe_video(video_path):
 
     return transcript
 
-def _run_gemini_stage(client, model_name, prompt, schema):
+def _run_gemini_stage(client, model_name, prompt, mode):
     """One schema-enforced Gemini call with transient-error backoff.
-    Returns (parsed_dict, cost_analysis)."""
-    config = genai_types.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=schema,
-    )
+
+    ``mode`` is "score" or "detail". The config comes from
+    gemini_worker._config_for_strategy rather than being rebuilt here: this
+    path used to pass neither temperature nor thinking config, so production
+    ran the scoring stage at the model default (1.0) where the stage wants to
+    be precise, and GEMINI_THINKING_SCORE was documented but dead outside the
+    CLI worker. One definition, one behaviour.
+
+    Returns (parsed_dict, cost_analysis).
+    """
+    config = gemini_worker._config_for_strategy("structured-schema", mode, model_name)
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
@@ -1248,23 +1217,42 @@ def get_viral_clips(transcript_result, video_duration):
             words.append({'w': word['word'], 's': word['start'], 'e': word['end']})
 
     try:
+        segments = transcript_segments(transcript_result)
         windows = build_transcript_windows(transcript_result, video_duration)
         print(f"   Built {len(windows)} scoring window(s).")
         costs = []
 
-        # --- Pass 1: score windows in batches, keep the highest-scoring ---
+        # --- Pass 1: score every window in batches, keep the highest-scoring ---
         scored = []
-        SCORE_BATCH = 8
-        for b in range(0, len(windows), SCORE_BATCH):
-            batch = windows[b:b + SCORE_BATCH]
+        unscored = []
+        # A typo here must not fail the job: the whole body sits under a broad
+        # `except Exception` that would report it as "Gemini Error, no clips".
+        try:
+            score_batch = max(int(os.environ.get("SCORE_BATCH") or 8), 1)
+        except ValueError:
+            score_batch = 8
+        for b in range(0, len(windows), score_batch):
+            batch = windows[b:b + score_batch]
             payload = [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in batch]
             prompt = gemini_worker.SCORE_PROMPT_TEMPLATE.format(
                 video_duration=video_duration, language=language,
                 windows_json=json.dumps(payload, ensure_ascii=False))
-            parsed, cost = _run_gemini_stage(client, model_name, prompt, gemini_worker.ScoreResponse)
+            parsed, cost = _run_gemini_stage(client, model_name, prompt, "score")
             if cost:
                 costs.append(cost)
-            scored.extend(parsed.get("windows") or [])
+            # Reconciled against THIS batch, not the global list. A window the
+            # model silently omitted would otherwise drop out of the ranking
+            # altogether — the same loss the batch cap used to cause, through a
+            # different door — and an id hallucinated here that happens to
+            # belong to another batch would be accepted as if it had been
+            # scored, hiding the real omission behind a fabricated score.
+            batch_scored, batch_missing = reconcile_scores(
+                parsed.get("windows") or [], batch)
+            scored.extend(batch_scored)
+            unscored.extend(batch_missing)
+
+        if unscored:
+            print(f"   ⚠️ {len(unscored)} window(s) came back unscored; ranked last.")
 
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.
@@ -1274,16 +1262,25 @@ def get_viral_clips(transcript_result, video_duration):
         shortlist = [by_id[w["id"]] for w in scored[:target] if w.get("id") in by_id]
         if not shortlist:
             shortlist = windows[:target]  # scoring returned nothing usable
-        print(f"   Shortlisted {len(shortlist)} window(s) for detail.")
+        # The clip-count target is derived BEFORE merging: merging reshapes the
+        # payload, it does not select less material, and the floor rests on a
+        # retention measurement (see clip_count_targets) that must not move as a
+        # side effect of two windows happening to be adjacent.
+        min_clips, max_clips = clip_count_targets(len(shortlist))
+        merged = merge_overlapping_windows(shortlist, segments)
+        print(f"   Shortlisted {len(shortlist)} window(s) → {len(merged)} block(s) for detail.")
 
         # --- Pass 2: detailed clip extraction on the shortlist ---
-        payload = [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in shortlist]
-        min_clips, max_clips = clip_count_targets(len(shortlist))
+        # Chronological (merge_overlapping_windows sorts) and de-duplicated, with
+        # per-sentence [SECONDS] anchors so the model reads real times instead of
+        # interpolating them out of 90s of prose.
+        payload = [{"id": w["id"], "start": w["start"], "end": w["end"],
+                    "text": window_text_with_anchors(w, segments)} for w in merged]
         prompt = gemini_worker.DETAIL_PROMPT_TEMPLATE.format(
             video_duration=video_duration, language=language,
             min_clips=min_clips, max_clips=max_clips,
             windows_json=json.dumps(payload, ensure_ascii=False))
-        detail, cost = _run_gemini_stage(client, model_name, prompt, gemini_worker.DetailResponse)
+        detail, cost = _run_gemini_stage(client, model_name, prompt, "detail")
         if cost:
             costs.append(cost)
 
@@ -1292,6 +1289,14 @@ def get_viral_clips(transcript_result, video_duration):
         for s in shorts:
             ns, ne = snap_clip_to_words(s.get("start", 0), s.get("end", 0), words, video_duration)
             s["start"], s["end"] = ns, ne
+
+        # Two clips covering the same footage are two renders of one video. The
+        # DIVERSITY rule in the prompt is the first line of defence; this is the
+        # one that does not depend on the model complying.
+        deduped = drop_overlapping_clips(shorts)
+        if len(deduped) != len(shorts):
+            print(f"   ✂️ Dropped {len(shorts) - len(deduped)} overlapping/degenerate clip(s).")
+        shorts = deduped
 
         # Aggregate cost across both passes.
         cost_analysis = None
@@ -1354,6 +1359,9 @@ def get_visual_clips(video_path, video_duration, language="en"):
 
         prompt = gemini_worker.VISUAL_PROMPT_TEMPLATE.format(
             video_duration=video_duration, language=language)
+        # Built here rather than through gemini_worker._config_for_strategy:
+        # that helper only knows the "score" and "detail" stages, and this one
+        # is neither — it uploads a file and answers with VisualResponse.
         config = genai_types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=gemini_worker.VisualResponse,
