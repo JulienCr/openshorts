@@ -27,6 +27,9 @@
     "font_path": null
   },
 
+  "_comment_variants": "Renders per clip. 'auto' is the pipeline's own per-scene framing and is always delivered; adding 'safe' delivers a second render of every clip — the whole 16:9 frame on a blurred background, camera fixed, no subject choice — as a fallback when the automatic framing gets it wrong. The dashboard pre-ticks it per job, but that only covers the dashboard: without this key a batch, the CLI and MCP agents each get one render, because resolve_variants falls back to ['auto']. Disk doubles, ~82MB per clip becomes ~164MB with captions on both, so raise OUTPUT_MAX_GB before turning this on. Ignored when output_format is horizontal (nothing to reframe) and in cloud mode.",
+  "variants": ["auto", "safe"],
+
   "layouts": ["auto", "punch_in"],
   "output_format": "vertical",
   "force_low_quality": false
